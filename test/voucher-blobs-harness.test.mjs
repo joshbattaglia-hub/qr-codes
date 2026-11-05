@@ -38,14 +38,20 @@ test("evidence function is an event subscription rather than an HTTP route", () 
   assert.equal(eventSource.includes("export default async"), false);
 });
 
-test("live evidence does not run for production or other branches", () => {
+test("unpublished CLI drafts with the packed title marker run, and production does not", () => {
   const branch = "cursor/voucher-blobs-evidence-79b7";
+  const observed = {
+    context: "deploy-preview",
+    branch: null,
+    publishedAt: null,
+    title: "Draft cursor/voucher-blobs-evidence-79b7",
+    manual: true,
+  };
   assert.equal(shouldRun(null), false);
-  assert.equal(shouldRun({ context: "production", branch, publishedAt: "2026-11-05T00:00:00.000Z", manual: true }), false);
-  assert.equal(shouldRun({ context: "production", branch, publishedAt: null, manual: false }), false);
-  assert.equal(shouldRun({ context: "production", branch: "master", publishedAt: null, manual: true }), false);
-  assert.equal(shouldRun({ context: "production", branch, publishedAt: null, manual: true }), true);
-  assert.equal(shouldRun({ context: "branch-deploy", branch: "master" }), false);
-  assert.equal(shouldRun({ context: "deploy-preview", branch }), true);
-  assert.equal(shouldRun({ context: "branch-deploy", branch }), true);
+  assert.equal(shouldRun(observed), true);
+  assert.equal(shouldRun({ context: "production", branch, publishedAt: null, manual: true, title: branch }), false);
+  assert.equal(shouldRun({ context: "deploy-preview", branch: null, publishedAt: "2026-11-05T00:00:00.000Z", title: branch }), false);
+  assert.equal(shouldRun({ context: "deploy-preview", branch: null, publishedAt: null, title: "ordinary draft" }), false);
+  assert.equal(shouldRun({ context: "branch-deploy", branch: "master", publishedAt: null }), false);
+  assert.equal(shouldRun({ context: "deploy-preview", branch, publishedAt: null }), true);
 });

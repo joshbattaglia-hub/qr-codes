@@ -1,23 +1,42 @@
 import { getStore } from "@netlify/blobs";
 import { failClosedChecks, finishReport, newStoreName, runVerification } from "../../scripts/voucher-verification/verify-voucher-blobs.mjs";
 
+/** Non-secret marker. CLI drafts must pass it with --message. It is not a credential. */
+export const FIXTURE_MARKER = "voucher-blobs-evidence";
+
 /**
- * Runs only for a non-production deploy of the evidence branch.
- * Netlify signs event calls and rejects external requests before this runs.
- * There is no HTTP handler and no public path.
+ * Accepts the observed unpublished CLI draft: context deploy-preview,
+ * publishedAt null, branch null, and the marker in the deploy title.
+ * Production context never runs. External HTTP calls are rejected by Netlify's
+ * event signature before this function is invoked.
  */
 export function shouldRun(deploy) {
   if (!deploy || typeof deploy !== "object") return false;
-  if (!String(deploy.branch || "").includes("voucher-blobs-evidence")) return false;
-  if (deploy.context === "branch-deploy" || deploy.context === "deploy-preview") return true;
-  // An unpublished CLI draft can report context "production" with manual: true.
-  // A deploy that has been published to production does not run.
-  return deploy.context === "production" && deploy.publishedAt == null && deploy.manual === true;
+  if (deploy.context === "production") return false;
+  if (deploy.publishedAt) return false;
+  if (deploy.context !== "deploy-preview" && deploy.context !== "branch-deploy") return false;
+  const haystack = [deploy.title, deploy.commitMessage, deploy.branch].map((value) => String(value || ""));
+  return haystack.some((value) => value.includes(FIXTURE_MARKER));
+}
+
+export function gateSummary(deploy) {
+  const title = String(deploy?.title || "");
+  const message = String(deploy?.commitMessage || "");
+  return {
+    run: shouldRun(deploy),
+    context: deploy?.context ?? null,
+    published: Boolean(deploy?.publishedAt),
+    branchPresent: Boolean(deploy?.branch),
+    manual: deploy?.manual === true,
+    titleMarked: title.includes(FIXTURE_MARKER) || message.includes(FIXTURE_MARKER),
+  };
 }
 
 export default {
   async deploySucceeded(event) {
-    if (!shouldRun(event?.deploy)) return;
+    const deploy = event?.deploy || null;
+    console.log("VOUCHER_BLOBS_EVIDENCE_SEEN " + JSON.stringify(gateSummary(deploy)));
+    if (!shouldRun(deploy)) return;
     const storeName = newStoreName();
     const store = getStore({ name: storeName, consistency: "strong" });
     let report;
