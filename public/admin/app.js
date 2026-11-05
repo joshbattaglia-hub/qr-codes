@@ -934,6 +934,8 @@ function blankCompetition() {
     ],
     eligibility: { onePerPerson: true, dedupeEmail: true, dedupePhone: true, dedupeRego: false, dedupeReceipt: true },
     terms: "", termsUrl: "", heading: "", body: "", submitLabel: "Enter", thankYou: "You're in the draw. Good luck.",
+    heroUrl: "", heroData: "", logoData: "",
+    colors: { background: "#f4f6fb", text: "#1c2434", accent: "#0e1b4d", button: "#1f4bdb", buttonText: "#ffffff" },
     codeSlug: "", currentPeriod: 1, winners: [],
   };
 }
@@ -962,6 +964,17 @@ function captureCompDraft() {
   d.body = val("body");
   d.terms = val("terms");
   d.termsUrl = val("termsUrl");
+  d.heroUrl = val("heroUrl");
+  d.heroData = val("heroData");
+  d.logoData = val("logoData");
+  const primary = form.querySelector('[name="comp-primary"]')?.value;
+  d.colors = {
+    background: form.querySelector('[name="comp-bg"]')?.value || "#f4f6fb",
+    text: form.querySelector('[name="comp-text"]')?.value || "#1c2434",
+    button: primary || "#1f4bdb",
+    buttonText: "#ffffff",
+    accent: primary || "#0e1b4d",
+  };
   d.submitLabel = val("submitLabel") || "Enter";
   d.thankYou = val("thankYou");
   d.status = val("status") || d.status;
@@ -1020,7 +1033,8 @@ function competitionEditor() {
     '<label class="field"><span>Terms link</span><input name="termsUrl" type="url" value="' + esc(d.termsUrl) + '"></label>' +
     "<h2>One entry per period</h2><div class=\"row\">" +
     check("onePerPerson", "One entry per person") + check("dedupeEmail", "Dedupe email") + check("dedupePhone", "Dedupe phone") + check("dedupeRego", "Dedupe rego") + check("dedupeReceipt", "Dedupe receipt hash") + "</div>" +
-    '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition.</p></div>' +
+    '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition. An active competition always shows this form, including before the start date and when the link has ?qr=1.</p></div>' +
+    compDesign(d) +
     '<div class="card"><div class="card-head"><h2>Entry form</h2></div>' + (d.fields || []).map(compFieldCard).join("") +
     '<div class="row" style="margin-top:12px"><select id="new-cfield-type">' + ["text", "email", "phone", "dropdown", "checkbox", "textarea", "file"].map((t) => '<option value="' + t + '">' + t + "</option>").join("") + '</select><button class="btn ghost" type="button" data-act="add-cfield">Add field</button></div>' +
     '<label class="field"><span>Submit button</span><input name="submitLabel" value="' + esc(d.submitLabel || "Enter") + '"></label>' +
@@ -1084,7 +1098,70 @@ function compPayload(d) {
     name: d.name, sites: d.sites, prize: d.prize, status: d.status, start: d.start, end: d.end, schedule: d.schedule,
     fields: d.fields, eligibility: d.eligibility, terms: d.terms, termsUrl: d.termsUrl, heading: d.heading, body: d.body,
     submitLabel: d.submitLabel, thankYou: d.thankYou,
+    colors: d.colors, heroUrl: d.heroUrl, heroData: d.heroData, logoData: d.logoData,
   };
+}
+function compDesign(d) {
+  const colors = { background: "#f4f6fb", text: "#1c2434", accent: "#0e1b4d", button: "#1f4bdb", buttonText: "#ffffff", ...(d.colors || {}) };
+  const picker = (name, label, value) => '<label class="field"><span>' + label + '</span><span class="color-row"><input type="color" name="' + name + '" value="' + esc(value) + '"><input type="text" data-color-text="1" value="' + esc(value) + '"></span></label>';
+  const hero = d.heroData || d.heroUrl;
+  const logo = d.logoData;
+  return '<div class="card" data-testid="comp-design"><div class="card-head"><h2>Design</h2></div>' +
+    '<div class="split">' + picker("comp-bg", "Background", colors.background) + picker("comp-text", "Text", colors.text) + picker("comp-primary", "Primary / button", colors.button) + "</div>" +
+    '<label class="field"><span>Hero image URL</span><input name="heroUrl" type="url" value="' + esc(d.heroUrl || "") + '" placeholder="https://…"></label>' +
+    '<input type="hidden" name="heroData" value="' + esc(d.heroData || "") + '"><input type="hidden" name="logoData" value="' + esc(d.logoData || "") + '">' +
+    '<div class="split"><label class="field"><span>Hero image upload</span><input id="comp-hero-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>' +
+    '<label class="field"><span>Logo upload</span><input id="comp-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label></div>' +
+    '<div class="row"><button class="btn ghost" type="button" data-act="clear-comp-hero">Remove hero</button><button class="btn ghost" type="button" data-act="clear-comp-logo">Remove logo</button></div>' +
+    '<p class="muted small">Preview uses the colours and images above. Save to publish them on the public page.</p>' +
+    '<div id="comp-preview" class="phone-preview" data-testid="comp-preview"><div class="screen" style="background:' + esc(colors.background) + ";color:" + esc(colors.text) + '">' +
+    (logo ? '<img class="preview-logo" alt="" src="' + esc(logo) + '">' : '<div class="preview-mark" style="background:' + esc(colors.button) + '">L</div>') +
+    (hero ? '<img class="preview-hero" alt="" src="' + esc(hero) + '">' : '<img class="preview-hero" alt="" hidden>') +
+    '<h2 style="color:' + esc(colors.button) + '">' + esc(d.heading || d.name || "Competition") + "</h2>" +
+    '<p class="preview-prize" style="color:' + esc(colors.button) + '"' + (d.prize ? "" : " hidden") + ">" + esc(d.prize || "") + "</p>" +
+    '<p class="preview-body">' + esc(d.body || "") + "</p>" +
+    '<div class="preview-field">Name</div><div class="preview-field">Email</div>' +
+    '<div class="preview-btn" style="background:' + esc(colors.button) + '">' + esc(d.submitLabel || "Enter") + "</div></div></div></div>";
+}
+function paintCompPreview() {
+  const screen = document.querySelector("#comp-preview .screen");
+  if (!screen) return;
+  const bg = document.querySelector('[name="comp-bg"]')?.value || "#f4f6fb";
+  const text = document.querySelector('[name="comp-text"]')?.value || "#1c2434";
+  const primary = document.querySelector('[name="comp-primary"]')?.value || "#1f4bdb";
+  if (![bg, text, primary].every(hexOk)) return;
+  screen.style.background = bg;
+  screen.style.color = text;
+  const title = screen.querySelector("h2");
+  const prizeEl = screen.querySelector(".preview-prize");
+  const bodyEl = screen.querySelector(".preview-body");
+  const btn = screen.querySelector(".preview-btn");
+  const heading = document.querySelector('#comp-editor [name="heading"]')?.value;
+  const name = document.querySelector('#comp-editor [name="name"]')?.value;
+  const prize = document.querySelector('#comp-editor [name="prize"]')?.value || "";
+  const body = document.querySelector('#comp-editor [name="body"]')?.value || "";
+  if (title) { title.textContent = heading || name || "Competition"; title.style.color = primary; }
+  if (prizeEl) { prizeEl.textContent = prize; prizeEl.hidden = !prize; prizeEl.style.color = primary; }
+  if (bodyEl) bodyEl.textContent = body;
+  if (btn) { btn.style.background = primary; btn.textContent = document.querySelector('#comp-editor [name="submitLabel"]')?.value || "Enter"; }
+  const hero = document.querySelector('[name="heroData"]')?.value || document.querySelector('#comp-editor [name="heroUrl"]')?.value;
+  const heroEl = screen.querySelector(".preview-hero");
+  if (heroEl) { heroEl.hidden = !hero; if (hero) heroEl.src = hero; }
+  const logo = document.querySelector('[name="logoData"]')?.value;
+  let logoEl = screen.querySelector(".preview-logo");
+  let mark = screen.querySelector(".preview-mark");
+  if (logo) {
+    if (!logoEl) {
+      logoEl = document.createElement("img");
+      logoEl.className = "preview-logo";
+      logoEl.alt = "";
+      screen.prepend(logoEl);
+    }
+    logoEl.hidden = false;
+    logoEl.src = logo;
+    if (mark) mark.hidden = true;
+  } else if (logoEl) logoEl.hidden = true;
+  if (!logo && mark) { mark.hidden = false; mark.style.background = primary; }
 }
 async function ensureCompCode(comp) {
   if (comp.codeSlug || comp.status !== "active") return comp;
@@ -1587,6 +1664,20 @@ async function handleAction(el) {
   if (act === "comp-redraw") return drawCompetition(true, el.dataset.draw);
   if (act === "comp-csv") return downloadCompCsv();
   if (act === "comp-import") return importCompetition();
+  if (act === "clear-comp-hero") {
+    const hidden = document.querySelector('#comp-editor [name="heroData"]');
+    const url = document.querySelector('#comp-editor [name="heroUrl"]');
+    if (hidden) hidden.value = "";
+    if (url) url.value = "";
+    paintCompPreview();
+    return;
+  }
+  if (act === "clear-comp-logo") {
+    const hidden = document.querySelector('#comp-editor [name="logoData"]');
+    if (hidden) hidden.value = "";
+    paintCompPreview();
+    return;
+  }
   if (act === "comp-filter") {
     captureCompDraft();
     state.compView = { period: $("#comp-period")?.value || "current", status: $("#comp-status")?.value || "all" };
@@ -1712,12 +1803,21 @@ document.body.addEventListener("change", (e) => {
   }
   if (e.target.name === "defaultFg" || e.target.name === "defaultFgText") syncColorPair("[name=defaultFg]", "[name=defaultFgText]", e.target);
   if (e.target.name === "defaultBg" || e.target.name === "defaultBgText") syncColorPair("[name=defaultBg]", "[name=defaultBgText]", e.target);
-  if (e.target.name && String(e.target.name).startsWith("color-")) syncPageColor(e.target);
+  if (e.target.name && (String(e.target.name).startsWith("color-") || ["comp-bg", "comp-text", "comp-primary"].includes(e.target.name))) syncPageColor(e.target);
   if (e.target.dataset && e.target.dataset.colorText) syncPageColor(e.target);
   if (e.target.id === "comp-period" || e.target.id === "comp-status") {
     captureCompDraft();
     state.compView = { period: $("#comp-period")?.value || "current", status: $("#comp-status")?.value || "all" };
     render({ refetch: false, keepScroll: true });
+  }
+  if ((e.target.id === "comp-hero-file" || e.target.id === "comp-logo-file") && e.target.files?.[0]) {
+    const input = e.target;
+    fileToLogo(input.files[0]).then((url) => {
+      const name = input.id === "comp-hero-file" ? "heroData" : "logoData";
+      const hidden = document.querySelector('#comp-editor [name="' + name + '"]');
+      if (hidden) hidden.value = url;
+      paintCompPreview();
+    }).catch((err) => { const box = $("#comp-error"); if (box) box.textContent = err.message; else toast(err.message); });
   }
   if (e.target.id === "hero-file" && e.target.files?.[0]) {
     fileToLogo(e.target.files[0]).then((url) => {
@@ -1735,6 +1835,7 @@ document.body.addEventListener("input", (e) => {
     paintCustomize();
   }
   if (e.target.dataset && e.target.dataset.colorText) syncPageColor(e.target);
+  if (e.target.closest && e.target.closest("#comp-editor")) paintCompPreview();
 });
 $("#search").addEventListener("input", () => {
   state.search = $("#search").value.trim();

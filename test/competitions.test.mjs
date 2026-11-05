@@ -32,6 +32,44 @@ function cookieOf(res) {
   return (list[0] || "").split(";")[0];
 }
 
+test("an active competition shows a form before its open date, with ?qr=1, and with no saved fields", async () => {
+  const login = await auth(req("POST", "/api/auth", { body: { password: "test-pass" } }));
+  const cookie = cookieOf(login);
+  const opens = lib.addDays(melbourneDate(), 1);
+  const created = await read(await compFn(req("POST", "/api/competitions", {
+    cookie,
+    body: {
+      name: "Win Free Fuel", slug: "ex3x5n", status: "active", prize: "$1000 Free Fuel",
+      heading: "Win Free Fuel", start: opens, schedule: { type: "weekly", count: 8 },
+      fields: [], eligibility: { dedupeEmail: true, dedupePhone: true, dedupeRego: true, dedupeReceipt: true },
+      colors: { background: "#fff7ed", text: "#1c2434", accent: "#9a3412", button: "#9a3412", buttonText: "#ffffff" },
+      logoData: "data:image/png;base64,aaaa",
+      heroData: "data:image/jpeg;base64,bbbb",
+    },
+  }), {}));
+  assert.equal(created.status, 201);
+  for (const path of ["/c/ex3x5n", "/c/ex3x5n?qr=1"]) {
+    const page = await compFn(req("GET", path), { ip: "203.0.113.8" });
+    const html = await page.text();
+    assert.equal(page.status, 200, path);
+    assert.match(html, /<form/);
+    assert.match(html, /name="name"/);
+    assert.match(html, /name="email"/);
+    assert.match(html, /name="phone"/);
+    assert.match(html, /name="rego"/);
+    assert.match(html, /name="receipt"/);
+    assert.match(html, new RegExp("Entries open " + opens));
+    assert.match(html, /class="logo"/);
+    assert.match(html, /class="hero"/);
+    assert.match(html, /#9a3412/);
+  }
+  const early = await read(await compFn(req("POST", "/c/ex3x5n?qr=1", {
+    body: { name: "Ada", email: "ada@example.com", phone: "0412000001", rego: "ABC123", receipt: "R-9", over18: "yes", consent: "yes" },
+  }), { ip: "203.0.113.8" }));
+  assert.equal(early.status, 200, JSON.stringify(early.body));
+  assert.equal(early.body.status, "valid");
+});
+
 test("australian phone and email normalisation", () => {
   assert.equal(normalisePhone("0412 345 678"), "412345678");
   assert.equal(normalisePhone("+61 412 345 678"), "412345678");
