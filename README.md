@@ -49,6 +49,20 @@ A health check does not call the redirect counter. Destinations on this site's `
 
 Local UI smoke test (memory store, not production data): `ADMIN_PASSWORD=liberty-dev npm run dev`, then open `http://127.0.0.1:8888/admin`.
 
+## Voucher redemption evidence
+
+`npm run verify:vouchers:mock` runs `redeemVoucher` from `netlify/lib/vouchers.mjs` against the in-memory conditional store. That result is not a live Blobs call. The local Netlify CLI cannot run this race: `blobs:*` is sequential, and `netlify dev` / `dev:exec` use a sandbox rather than the site's Blobs.
+
+A non-production deploy runs `deploySucceeded` in `netlify/functions/voucher-blobs-evidence.mjs`. Netlify signs that event and rejects external requests before the function runs. The function has no HTTP path. Official event docs (https://docs.netlify.com/build/functions/trigger-on-events/) say this handler runs when Netlify finishes deploying a site, and the payload explicitly allows a CLI upload: `branch` null, `buildId` null, `manual` true, and `publishedAt` null. They do not say a draft is skipped. The previous draft had `branch: null`, so the old branch check returned before any log. This version logs `VOUCHER_BLOBS_EVIDENCE_SEEN` with no store write as soon as the event arrives, then runs only when `context` is `deploy-preview` or `branch-deploy`, `publishedAt` is null, and the title, commit message, or branch contains the non-secret marker `voucher-blobs-evidence`. Production context never runs.
+
+```bash
+netlify deploy --message "voucher-blobs-evidence"
+```
+
+Do not pass `--prod`. The fake voucher keys are deleted. A `result` object without the token is left in `expresshelp-voucher-verification-<id>` and printed as `VOUCHER_BLOBS_EVIDENCE`. After reading it, delete only that key: `netlify blobs:delete <store-name> result`. If the function log has neither `VOUCHER_BLOBS_EVIDENCE_SEEN` nor `VOUCHER_BLOBS_EVIDENCE`, Netlify did not invoke the event for that CLI draft.
+
+A local live run is possible only when `NETLIFY_SITE_ID` and `NETLIFY_AUTH_TOKEN` are already in the command environment. Those values must not be committed, pasted into chat, or copied out of the CLI config. `NETLIFY_AUTH_TOKEN` is a Netlify personal access token that can access this site's Blobs. The SDK does not read the CLI login by itself.
+
 ## Live
 
 | Role | URL |
