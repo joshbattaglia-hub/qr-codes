@@ -171,6 +171,14 @@ tr.clickable:hover{background:#f8fafc}
   .home-grid,.home-bottom,.detail-grid,.split,.metrics,.metrics.four,.stat-pair{grid-template-columns:1fr}
 }
 .field-card{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+.phone-preview{width:min(390px,100%);margin-top:16px;border:10px solid #1c2434;border-radius:32px;overflow:hidden;background:#1c2434}
+.phone-preview .screen{min-height:460px;padding:22px 16px 32px}
+.phone-preview h2{margin:12px 0 8px;font-size:28px;line-height:1.15}
+.phone-preview .preview-logo,.phone-preview .preview-mark{width:64px;height:64px;border-radius:14px;object-fit:contain;background:#fff}
+.phone-preview .preview-mark{display:grid;place-items:center;color:#e7c98a;font-weight:700;font-size:28px}
+.phone-preview .preview-hero{width:100%;height:140px;object-fit:cover;border-radius:14px;margin-top:12px}
+.phone-preview .preview-field{background:#fff;border-radius:10px;padding:12px;margin-top:8px;color:#98a2b3}
+.phone-preview .preview-btn{margin-top:14px;border-radius:12px;padding:14px;text-align:center;color:#fff;font-weight:700}
 @media(max-width:860px){
   .menu-btn{display:inline-flex}
   .sidebar{position:fixed;inset:0 auto 0 0;z-index:40;background:var(--bg);width:min(280px,86vw);transform:translateX(-105%);transition:transform .2s ease;padding-top:8px;box-shadow:none}

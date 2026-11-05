@@ -251,8 +251,10 @@ try {
   const compUrl = await page.$eval("[data-testid=comp-url]", (el) => el.textContent.trim());
   await waitText("View short link");
   const compPath = new URL(compUrl).pathname;
-  const compPage = await fetch(base + compPath);
+  const compPage = await fetch(base + compPath + "?qr=1");
+  const compHtml = await compPage.text();
   assert(compPage.status === 200, "competition page " + compPage.status);
+  assert(compHtml.includes("<form") && compHtml.includes('name="name"') && compHtml.includes('name="email"'), "entry form missing");
   const entered = await fetch(base + compPath, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },

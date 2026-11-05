@@ -6,7 +6,7 @@ import {
 import { recordView } from "../lib/pages.mjs";
 import {
   defaultCompetition, applyCompetitionPatch, buildIncoming, classifyEntry, dashboard,
-  chooseWinner, melbourneDate, melbourneStamp, accepting, periodCount, publicCompetition,
+  chooseWinner, melbourneDate, melbourneStamp, accepting, entryNotice, periodCount, publicCompetition,
   renderCompetitionPage, unavailableCompetition, parseImportRows, summariseEntry, normaliseEmail, normalisePhone,
 } from "../lib/competitions.mjs";
 
@@ -43,8 +43,13 @@ async function notify(subject, text) {
 
 function summary(comp, entries, views) {
   const stats = dashboard(comp, entries);
+  const pub = publicCompetition(comp);
+  delete pub.heroData;
+  delete pub.logoData;
   return {
-    ...publicCompetition(comp),
+    ...pub,
+    hasHero: !!(comp.heroData || comp.heroUrl),
+    hasLogo: !!comp.logoData,
     ...stats,
     entries: entries.length,
     views: views?.total || 0,
@@ -61,9 +66,7 @@ async function handlePublic(req, context, slug) {
       const prev = await compViews().get(slug, { type: "json" });
       await compViews().setJSON(slug, recordView(prev, { day: melbourneDate(), at: new Date().toISOString(), visitor: visitorHash(context.ip || "", req.headers.get("user-agent") || "") }));
     } catch (e) { console.error("comp-view", e && e.message); }
-    const open = accepting(comp, today);
-    const closed = open ? "" : (comp.start && today < comp.start ? "Entries open " + comp.start + "." : "This competition is closed.");
-    return html(200, renderCompetitionPage(comp, { closed }));
+    return html(200, renderCompetitionPage(comp, { notice: entryNotice(comp, today) }));
   }
   if (req.method === "POST") return submit(req, comp);
   return html(405, unavailableCompetition());
