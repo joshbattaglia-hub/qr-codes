@@ -17,10 +17,13 @@ After the password gate:
 | QR Codes | Destination, tags, created date, colour and logo customization, PNG/SVG download, dynamic routing, and scan analytics |
 | Analytics | Workspace totals from stored scans, clicks, and page views, with CSV download |
 | Pages | Landing pages at `/p/<slug>`: content, form fields, publish, submissions CSV, and page views. A page can also create a QR code or short link to itself |
-| Campaigns, Custom domains | Placeholders. Custom domains lists the live `expresshelp.site` hostname; extra names are still configured in DNS and Netlify |
+| Competitions | Site draws at `/c/<slug>`: weekly or single schedule, one entry per person per period, receipt-hash dedupe, random draw, archive, winners, and CSV import |
+| Custom domains | Placeholder. Lists the live `expresshelp.site` hostname; extra names are still configured in DNS and Netlify |
 | Settings | Workspace name, default QR colours, public URL, log out |
 
-Published pages are mobile-first and use Liberty colours unless the page sets its own. Draft pages return an unavailable page. Each visit to a published page counts as a page click on Home. Form submissions are stored in Blobs. Set `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_TO` to email a copy of each submission; without those, submissions are still saved and nothing is sent.
+Published pages are mobile-first and use Liberty colours unless the page sets its own. Draft pages return an unavailable page. Each visit to a published page counts as a page click on Home. Form submissions are stored in Blobs. Set `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_TO` to email a copy of each page submission, competition entry, or draw; without those, everything is still saved and nothing is sent.
+
+Competitions use Australia/Melbourne for entry times and weekly draw windows. Activating one creates a QR code and a short link to `https://expresshelp.site/c/<slug>`. A draw picks from that period’s valid entries, archives them, and opens the next period. The same email or phone can enter again next period; the same receipt cannot. CSV import accepts the Liberty Site Competitions columns (Entry ID, Name, Contact, Contact Type, Status, Duplicate Reason, Timestamp). Competition page views are included in Home page clicks.
 
 QR detail analytics include a date range, previous-period or code comparison, unique visitors versus total scans, scans over time, and breakdowns by country, city, browser, and operating system. There are no upgrade gates. Dynamic routing rules send a device or a location to a different http(s) destination; everyone else gets the main URL.
 
@@ -37,6 +40,7 @@ Local UI smoke test (memory store, not production data): `ADMIN_PASSWORD=liberty
 | Admin | https://expresshelp.site/admin |
 | Short link | https://expresshelp.site/r/&lt;slug&gt; |
 | Landing page | https://expresshelp.site/p/&lt;slug&gt; |
+| Competition | https://expresshelp.site/c/&lt;slug&gt; |
 | Fallback Netlify URL | https://liberty-qr-353.netlify.app |
 
 ## VentraIP DNS (external DNS — do not change nameservers)

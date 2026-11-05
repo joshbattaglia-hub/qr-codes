@@ -13,6 +13,7 @@ const codesFn = (await import("../netlify/functions/codes.mjs")).default;
 const settingsFn = (await import("../netlify/functions/settings.mjs")).default;
 const redirectFn = (await import("../netlify/functions/redirect.mjs")).default;
 const pagesFn = (await import("../netlify/functions/pages.mjs")).default;
+const compFn = (await import("../netlify/functions/competitions.mjs")).default;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
 const GEO = {
@@ -56,6 +57,10 @@ export function start(port = 8888) {
       if (url.pathname === "/api/codes" || url.pathname.startsWith("/api/codes/")) {
         const slug = url.pathname === "/api/codes" ? undefined : decodeURIComponent(url.pathname.slice("/api/codes/".length));
         return send(res, await codesFn(request, { params: { slug } }));
+      }
+      if (url.pathname === "/api/competitions" || url.pathname.startsWith("/api/competitions/") || url.pathname.startsWith("/c/")) {
+        const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1");
+        return send(res, await compFn(request, { ip }));
       }
       if (url.pathname === "/api/pages" || url.pathname.startsWith("/api/pages/") || url.pathname.startsWith("/p/")) {
         const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1");
