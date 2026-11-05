@@ -39,9 +39,13 @@ test("evidence function is an event subscription rather than an HTTP route", () 
 });
 
 test("live evidence does not run for production or other branches", () => {
+  const branch = "cursor/voucher-blobs-evidence-79b7";
   assert.equal(shouldRun(null), false);
-  assert.equal(shouldRun({ context: "production", branch: "cursor/voucher-blobs-evidence-79b7" }), false);
+  assert.equal(shouldRun({ context: "production", branch, publishedAt: "2026-11-05T00:00:00.000Z", manual: true }), false);
+  assert.equal(shouldRun({ context: "production", branch, publishedAt: null, manual: false }), false);
+  assert.equal(shouldRun({ context: "production", branch: "master", publishedAt: null, manual: true }), false);
+  assert.equal(shouldRun({ context: "production", branch, publishedAt: null, manual: true }), true);
   assert.equal(shouldRun({ context: "branch-deploy", branch: "master" }), false);
-  assert.equal(shouldRun({ context: "deploy-preview", branch: "cursor/voucher-blobs-evidence-79b7" }), true);
-  assert.equal(shouldRun({ context: "branch-deploy", branch: "cursor/voucher-blobs-evidence-79b7" }), true);
+  assert.equal(shouldRun({ context: "deploy-preview", branch }), true);
+  assert.equal(shouldRun({ context: "branch-deploy", branch }), true);
 });

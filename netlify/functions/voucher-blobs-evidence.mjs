@@ -8,8 +8,11 @@ import { failClosedChecks, finishReport, newStoreName, runVerification } from ".
  */
 export function shouldRun(deploy) {
   if (!deploy || typeof deploy !== "object") return false;
-  if (deploy.context === "production") return false;
-  return String(deploy.branch || "").includes("voucher-blobs-evidence");
+  if (!String(deploy.branch || "").includes("voucher-blobs-evidence")) return false;
+  if (deploy.context === "branch-deploy" || deploy.context === "deploy-preview") return true;
+  // An unpublished CLI draft can report context "production" with manual: true.
+  // A deploy that has been published to production does not run.
+  return deploy.context === "production" && deploy.publishedAt == null && deploy.manual === true;
 }
 
 export default {
