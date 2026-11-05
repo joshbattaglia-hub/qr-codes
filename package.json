@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/lib.test.mjs",
+    "test": "node --test test/lib.test.mjs test/pages.test.mjs",
     "dev": "node scripts/dev-server.mjs"
   },
   "keywords": [],
