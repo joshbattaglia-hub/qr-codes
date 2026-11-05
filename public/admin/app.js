@@ -21,6 +21,10 @@ const state = {
   pages: [],
   pageDetail: null,
   pageDraft: null,
+  competitions: [],
+  compDetail: null,
+  compDraft: null,
+  compView: { period: "current", status: "all" },
   createMode: "qr",
   homeRange: "7d",
   search: "",
@@ -131,7 +135,9 @@ function route() {
   const raw = (location.hash || "#/home").replace(/^#\/?/, "");
   const path = raw.split("?")[0];
   const parts = path.split("/").filter(Boolean);
-  return { name: parts[0] || "home", id: parts[1] ? decodeURIComponent(parts[1]) : "" };
+  let name = parts[0] || "home";
+  if (name === "campaigns") name = "competitions";
+  return { name, id: parts[1] ? decodeURIComponent(parts[1]) : "" };
 }
 function go(path) {
   const next = "#/" + String(path || "home").replace(/^#?\/*/, "");
@@ -317,11 +323,12 @@ function buildModel(stats, keys, channel) {
 function sumChannel(codes, keys, channel) {
   return keys.reduce((s, day) => s + codes.reduce((n, c) => n + bucketN(c.days, day, channel), 0), 0);
 }
+function viewSources() { return [...(state.pages || []), ...(state.competitions || [])]; }
 function pageHits(keys) {
-  return (state.pages || []).reduce((n, p) => n + keys.reduce((s, day) => s + (Number(p.daily?.[day]) || 0), 0), 0);
+  return viewSources().reduce((n, p) => n + keys.reduce((s, day) => s + (Number(p.daily?.[day]) || 0), 0), 0);
 }
 function pageSeries(keys) {
-  return keys.map((date) => ({ date, value: (state.pages || []).reduce((s, p) => s + (Number(p.daily?.[date]) || 0), 0) }));
+  return keys.map((date) => ({ date, value: viewSources().reduce((s, p) => s + (Number(p.daily?.[date]) || 0), 0) }));
 }
 function countryLabel(key) {
   if (!key || key === "Unknown") return "Unknown";
@@ -911,6 +918,236 @@ function downloadPageCsv() {
   for (const item of items) lines.push([item.at, ...(page.fields || []).map((f) => item.values?.[f.id] || "")].map(csvCell).join(","));
   downloadBlob((page.slug || "page") + "-submissions.csv", new Blob([lines.join("\n")], { type: "text/csv" }));
 }
+const COMP_ROLES = [["", "—"], ["name", "Name"], ["email", "Email"], ["phone", "Phone"], ["rego", "Rego"], ["receipt", "Receipt number"], ["receiptPhoto", "Receipt photo"], ["over18", "Over 18"], ["consent", "Consent"], ["site", "Site"]];
+function blankCompetition() {
+  return {
+    slug: "", name: "", sites: ["Lansvale"], prize: "", status: "draft", start: new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()), end: "",
+    schedule: { type: "weekly", count: 8 },
+    fields: [
+      { id: "name", type: "text", label: "Name", required: true, role: "name", options: [] },
+      { id: "email", type: "email", label: "Email", required: false, role: "email", options: [] },
+      { id: "phone", type: "phone", label: "Mobile", required: false, role: "phone", options: [] },
+      { id: "receipt", type: "text", label: "Receipt number", required: false, role: "receipt", options: [] },
+      { id: "photo", type: "file", label: "Receipt photo", required: false, role: "receiptPhoto", options: [] },
+      { id: "over18", type: "checkbox", label: "I am 18 or older", required: true, role: "over18", options: [] },
+      { id: "consent", type: "checkbox", label: "I agree to the terms", required: true, role: "consent", options: [] },
+    ],
+    eligibility: { onePerPerson: true, dedupeEmail: true, dedupePhone: true, dedupeRego: false, dedupeReceipt: true },
+    terms: "", termsUrl: "", heading: "", body: "", submitLabel: "Enter", thankYou: "You're in the draw. Good luck.",
+    codeSlug: "", currentPeriod: 1, winners: [],
+  };
+}
+function competitionsList() {
+  const q = state.search.toLowerCase();
+  const rows = (state.competitions || []).filter((c) => !q || [c.name, c.slug, ...(c.sites || [])].join(" ").toLowerCase().includes(q));
+  const body = rows.map((c) => {
+    const status = c.status === "active" ? '<span class="badge ok">Active</span>' : c.status === "ended" ? '<span class="badge">Ended</span>' : '<span class="badge muted">Draft</span>';
+    const dates = [c.start, c.end].filter(Boolean).join(" – ") || "—";
+    return '<tr class="clickable" data-go="competitions/' + encodeURIComponent(c.slug) + '"><td><strong>' + esc(c.name) + '</strong><div class="muted small">/c/' + esc(c.slug) + '</div></td><td>' + esc((c.sites || []).join(", ") || "—") + "</td><td>" + status + "</td><td>" + esc(dates) + '</td><td class="num">' + num(c.valid || 0) + '</td><td>' + esc(c.nextDraw || "—") + "</td></tr>";
+  }).join("");
+  return '<div class="page-head"><h1>Competitions</h1><button class="btn" type="button" data-go="competitions/new">Create competition</button></div><div class="card table-wrap" data-testid="competitions-list">' +
+    (rows.length ? "<table><thead><tr><th>Name</th><th>Sites</th><th>Status</th><th>Dates</th><th class='num'>Valid entries</th><th>Next draw</th></tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><div class="empty-mark">L</div><h2>No competitions yet</h2><p class="muted">Run a site draw with one entry per person and a fresh pool each week.</p></div>') + "</div>";
+}
+function captureCompDraft() {
+  const form = document.getElementById("comp-editor");
+  const d = state.compDraft;
+  if (!form || !d) return;
+  const val = (name) => form.querySelector('[name="' + name + '"]')?.value ?? "";
+  d.name = val("name");
+  d.sites = val("sites").split(",").map((s) => s.trim()).filter(Boolean);
+  d.prize = val("prize");
+  d.start = val("start");
+  d.end = val("end");
+  d.heading = val("heading");
+  d.body = val("body");
+  d.terms = val("terms");
+  d.termsUrl = val("termsUrl");
+  d.submitLabel = val("submitLabel") || "Enter";
+  d.thankYou = val("thankYou");
+  d.status = val("status") || d.status;
+  if (!d.slug) d.slugInput = val("slug");
+  d.schedule = { type: val("scheduleType") === "single" ? "single" : "weekly", count: Number(val("scheduleCount")) || 8 };
+  d.eligibility = {
+    onePerPerson: !!form.querySelector('[name="onePerPerson"]')?.checked,
+    dedupeEmail: !!form.querySelector('[name="dedupeEmail"]')?.checked,
+    dedupePhone: !!form.querySelector('[name="dedupePhone"]')?.checked,
+    dedupeRego: !!form.querySelector('[name="dedupeRego"]')?.checked,
+    dedupeReceipt: !!form.querySelector('[name="dedupeReceipt"]')?.checked,
+  };
+  d.fields = (d.fields || []).map((f) => {
+    const card = form.querySelector('[data-cfield="' + f.id + '"]');
+    if (!card) return f;
+    return {
+      ...f,
+      label: card.querySelector('[name="label"]')?.value ?? f.label,
+      required: !!card.querySelector('[name="required"]')?.checked,
+      role: card.querySelector('[name="role"]')?.value || "",
+      options: f.type === "dropdown" ? (card.querySelector('[name="options"]')?.value || "").split(",").map((s) => s.trim()).filter(Boolean) : [],
+    };
+  });
+}
+function compFieldCard(f) {
+  const roles = COMP_ROLES.map(([v, l]) => '<option value="' + v + '"' + (f.role === v ? " selected" : "") + ">" + l + "</option>").join("");
+  const options = f.type === "dropdown" ? '<label class="field"><span>Options, comma separated</span><input name="options" value="' + esc((f.options || []).join(", ")) + '"></label>' : "";
+  return '<div class="field-card" data-cfield="' + esc(f.id) + '"><div class="row"><strong>' + esc(f.type) + '</strong><span class="grow"></span>' +
+    '<button class="btn ghost" type="button" data-act="cfield-up" data-id="' + esc(f.id) + '">↑</button>' +
+    '<button class="btn ghost" type="button" data-act="cfield-down" data-id="' + esc(f.id) + '">↓</button>' +
+    '<button class="btn ghost" type="button" data-act="remove-cfield" data-id="' + esc(f.id) + '">Remove</button></div>' +
+    '<label class="field"><span>Label</span><input name="label" value="' + esc(f.label) + '"></label>' +
+    '<label class="field"><span>Maps to</span><select name="role">' + roles + "</select></label>" + options +
+    '<label class="check"><input name="required" type="checkbox"' + (f.required ? " checked" : "") + "> Required</label></div>";
+}
+function competitionEditor() {
+  const d = state.compDraft || blankCompetition();
+  const stats = state.compDetail?.stats;
+  const code = d.codeSlug ? codeBySlug(d.codeSlug) : null;
+  const check = (name, label) => '<label class="check"><input type="checkbox" name="' + name + '"' + (d.eligibility?.[name] ? " checked" : "") + "> " + label + "</label>";
+  return '<div class="page-head"><button class="icon-btn" type="button" data-go="competitions" aria-label="Back">←</button><h1>' + esc(d.name || "New competition") + "</h1>" +
+    (d.slug ? (d.status === "active" ? '<span class="badge ok">Active</span>' : d.status === "ended" ? '<span class="badge">Ended</span>' : '<span class="badge muted">Draft</span>') : "") + "</div>" +
+    (stats ? '<div class="metrics four"><div><div class="metric-label">Valid entries</div><div class="metric-value">' + num(stats.valid) + '</div></div><div><div class="metric-label">Unique entrants</div><div class="metric-value">' + num(stats.unique) + '</div></div><div><div class="metric-label">Duplicates</div><div class="metric-value">' + num(stats.duplicates) + '</div></div><div><div class="metric-label">Draws remaining</div><div class="metric-value">' + num(stats.drawsRemaining) + "</div></div></div>" : "") +
+    '<form id="comp-editor" data-act="save-comp" data-testid="comp-editor"><div class="card"><div class="card-head"><h2>Competition</h2></div>' +
+    '<label class="field"><span>Name</span><input name="name" required maxlength="140" value="' + esc(d.name) + '"></label>' +
+    (d.slug ? '<p data-testid="comp-url"><strong>' + esc(base() + "/c/" + d.slug) + "</strong></p>" : '<label class="field"><span>Slug (optional)</span><input name="slug" maxlength="41" placeholder="lansvale-free-fuel" value="' + esc(d.slugInput || "") + '"></label>') +
+    '<label class="field"><span>Sites, comma separated</span><input name="sites" value="' + esc((d.sites || []).join(", ")) + '"></label>' +
+    '<label class="field"><span>Prize</span><input name="prize" value="' + esc(d.prize) + '"></label>' +
+    '<div class="split"><label class="field"><span>Start</span><input name="start" type="date" value="' + esc(d.start || "") + '"></label><label class="field"><span>End</span><input name="end" type="date" value="' + esc(d.end || "") + '"></label></div>' +
+    '<div class="split"><label class="field"><span>Draw schedule</span><select name="scheduleType"><option value="weekly"' + (d.schedule?.type !== "single" ? " selected" : "") + '>Weekly</option><option value="single"' + (d.schedule?.type === "single" ? " selected" : "") + ">Single draw</option></select></label>" +
+    '<label class="field"><span>Number of draws</span><input name="scheduleCount" type="number" min="1" max="52" value="' + esc(d.schedule?.count || 8) + '"></label></div>' +
+    '<label class="field"><span>Status</span><select name="status"><option value="draft"' + (d.status === "draft" ? " selected" : "") + '>Draft</option><option value="active"' + (d.status === "active" ? " selected" : "") + '>Active</option><option value="ended"' + (d.status === "ended" ? " selected" : "") + ">Ended</option></select></label>" +
+    '<label class="field"><span>Heading</span><input name="heading" value="' + esc(d.heading) + '"></label>' +
+    '<label class="field"><span>Body</span><textarea name="body">' + esc(d.body) + "</textarea></label>" +
+    '<label class="field"><span>Terms</span><textarea name="terms">' + esc(d.terms) + "</textarea></label>" +
+    '<label class="field"><span>Terms link</span><input name="termsUrl" type="url" value="' + esc(d.termsUrl) + '"></label>' +
+    "<h2>One entry per period</h2><div class=\"row\">" +
+    check("onePerPerson", "One entry per person") + check("dedupeEmail", "Dedupe email") + check("dedupePhone", "Dedupe phone") + check("dedupeRego", "Dedupe rego") + check("dedupeReceipt", "Dedupe receipt hash") + "</div>" +
+    '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition.</p></div>' +
+    '<div class="card"><div class="card-head"><h2>Entry form</h2></div>' + (d.fields || []).map(compFieldCard).join("") +
+    '<div class="row" style="margin-top:12px"><select id="new-cfield-type">' + ["text", "email", "phone", "dropdown", "checkbox", "textarea", "file"].map((t) => '<option value="' + t + '">' + t + "</option>").join("") + '</select><button class="btn ghost" type="button" data-act="add-cfield">Add field</button></div>' +
+    '<label class="field"><span>Submit button</span><input name="submitLabel" value="' + esc(d.submitLabel || "Enter") + '"></label>' +
+    '<label class="field"><span>Thank-you message</span><textarea name="thankYou">' + esc(d.thankYou) + "</textarea></label></div>" +
+    '<div class="row"><button class="btn" type="submit">Save</button>' + (d.slug ? '<button class="btn danger" type="button" data-act="del-comp">Delete</button>' : "") + '<p class="err" id="comp-error"></p></div></form>' +
+    compManage();
+}
+function compManage() {
+  const d = state.compDraft;
+  if (!d?.slug) return '<div class="card"><h2>Entries</h2><p class="muted">Save the competition before taking entries.</p></div>';
+  const entries = state.compDetail?.entries || [];
+  const view = state.compView || { period: "current", status: "all" };
+  const period = view.period === "current" ? (d.currentPeriod || 1) : view.period;
+  const filtered = entries.filter((e) => {
+    if (view.period !== "all" && String(e.period) !== String(period)) return false;
+    if (view.status !== "all" && e.status !== view.status) return false;
+    return true;
+  });
+  const periods = Math.max(d.schedule?.type === "single" ? 1 : Number(d.schedule?.count) || 1, d.currentPeriod || 1);
+  const periodOptions = '<option value="current"' + (view.period === "current" ? " selected" : "") + ">Current period</option>" +
+    Array.from({ length: periods }, (_, i) => '<option value="' + (i + 1) + '"' + (String(view.period) === String(i + 1) ? " selected" : "") + ">Period " + (i + 1) + "</option>").join("") +
+    '<option value="all"' + (view.period === "all" ? " selected" : "") + ">All periods</option>";
+  const rows = filtered.map((e) => "<tr><td>" + esc(e.id) + "</td><td>" + esc(e.melbourne || formatCreated(e.at)) + "</td><td>" + esc(e.name) + "</td><td>" + esc(e.contact) + "</td><td>" + esc(e.contactType || "") + "</td><td>" + esc(e.site || "") + "</td><td>" + esc(e.status) + (e.duplicateReason ? '<div class="muted small">' + esc(e.duplicateReason) + "</div>" : "") + "</td><td>" + (e.receiptStored ? "Photo" : esc(e.receiptNumber || e.receiptUrl || "")) + "</td></tr>").join("");
+  const winners = (d.winners || []).filter((w) => !w.superseded);
+  const code = d.codeSlug ? codeBySlug(d.codeSlug) : null;
+  const scans = code ? (code.scans || 0) : 0;
+  const accepted = entries.filter((e) => e.status === "valid" || e.status === "archived").length;
+  const byDay = {};
+  for (const e of entries) byDay[e.formDate] = (byDay[e.formDate] || 0) + 1;
+  const keys = lastN(30);
+  const series = keys.map((date) => ({ date, value: byDay[date] || 0 }));
+  const bySite = {};
+  for (const e of entries) if (e.site) bySite[e.site] = (bySite[e.site] || 0) + 1;
+  return '<div class="card"><div class="card-head"><h2>QR code and short link</h2></div>' +
+    (code ? '<p class="break">' + esc(shortUrl(code.slug)) + ' → ' + esc(base() + "/c/" + d.slug) + '</p><div class="row"><a class="btn ghost" href="#/qrcodes/' + encodeURIComponent(code.slug) + '">View QR code</a><a class="btn ghost" href="#/links/' + encodeURIComponent(code.slug) + '">View short link</a></div>' : '<p class="muted">Saving an active competition creates both automatically.</p>') + "</div>" +
+    '<div class="card" data-testid="comp-entries"><div class="card-head"><h2>Entries</h2><div class="row"><select id="comp-period">' + periodOptions + '</select><select id="comp-status">' +
+    ["all", "valid", "duplicate", "archived"].map((s) => '<option value="' + s + '"' + (view.status === s ? " selected" : "") + ">" + s + "</option>").join("") +
+    '</select><button class="btn ghost" type="button" data-act="comp-csv">Export CSV</button><button class="btn" type="button" data-act="comp-draw">Draw winner</button></div></div>' +
+    '<p class="muted small">The draw uses valid entries in period ' + esc(d.currentPeriod || 1) + " only (" + num((state.compDetail?.stats?.currentValid) || 0) + " ready). After the draw they are archived and the next period starts empty.</p>" +
+    (filtered.length ? '<div class="table-wrap"><table><thead><tr><th>Entry</th><th>When (Melbourne)</th><th>Name</th><th>Contact</th><th>Type</th><th>Site</th><th>Status</th><th>Receipt</th></tr></thead><tbody>' + rows + "</tbody></table></div>" : '<p class="muted">No entries in this view.</p>') + "</div>" +
+    '<div class="card"><div class="card-head"><h2>Winners</h2></div>' +
+    (winners.length ? winners.map((w) => '<div class="rule"><strong>Draw ' + w.drawNumber + "</strong> " + esc(w.name) + " · " + esc(w.contact) + ' <span class="muted">' + esc(w.melbourne) + " · pool " + w.poolSize + "</span>" +
+      '<button class="btn ghost" type="button" data-act="comp-redraw" data-draw="' + w.drawNumber + '">Redraw</button></div>').join("") : '<p class="muted">No winners drawn yet.</p>') + "</div>" +
+    '<div class="card"><h2>Import</h2><p class="muted">Paste CSV with the sheet columns (Entry ID, Name, Contact, Contact Type, Status, Duplicate Reason, Timestamp) or JSON in an entries array is accepted by the API.</p>' +
+    '<textarea id="comp-import" placeholder="Entry ID,Name,Contact,Contact Type,Status"></textarea><button class="btn ghost" type="button" data-act="comp-import">Import CSV</button></div>' +
+    '<div class="card"><h2>Analytics</h2><p class="muted">Entries over the last 30 days. QR scans on the linked code: ' + num(scans) + ". Accepted entries: " + num(accepted) + (scans ? " · conversion " + Math.round((accepted / scans) * 100) + "%" : "") + ".</p>" +
+    areaChart(series) + "<div class=\"table-wrap\">" + dimTable(bySite, accepted || entries.length, "Site", "Entries") + "</div></div>";
+}
+function moveCompField(id, dir) {
+  captureCompDraft();
+  const fields = state.compDraft.fields;
+  const index = fields.findIndex((f) => f.id === id);
+  const next = index + dir;
+  if (index < 0 || next < 0 || next >= fields.length) return;
+  const [row] = fields.splice(index, 1);
+  fields.splice(next, 0, row);
+  render({ refetch: false, keepScroll: true });
+}
+function compPayload(d) {
+  return {
+    name: d.name, sites: d.sites, prize: d.prize, status: d.status, start: d.start, end: d.end, schedule: d.schedule,
+    fields: d.fields, eligibility: d.eligibility, terms: d.terms, termsUrl: d.termsUrl, heading: d.heading, body: d.body,
+    submitLabel: d.submitLabel, thankYou: d.thankYou,
+  };
+}
+async function ensureCompCode(comp) {
+  if (comp.codeSlug || comp.status !== "active") return comp;
+  const code = await api("/api/codes", { method: "POST", body: JSON.stringify({ url: base() + "/c/" + comp.slug, name: comp.name || comp.slug, type: "qr", alsoLink: true }) });
+  state.codes = await api("/api/codes");
+  return api("/api/competitions/" + encodeURIComponent(comp.slug), { method: "PATCH", body: JSON.stringify({ codeSlug: code.slug }) });
+}
+async function saveCompetition() {
+  captureCompDraft();
+  const d = state.compDraft;
+  const err = $("#comp-error");
+  try {
+    let saved;
+    if (!d.slug) saved = await api("/api/competitions", { method: "POST", body: JSON.stringify({ ...compPayload(d), slug: (d.slugInput || "").trim() }) });
+    else saved = await api("/api/competitions/" + encodeURIComponent(d.slug), { method: "PATCH", body: JSON.stringify(compPayload(d)) });
+    saved = await ensureCompCode(saved);
+    state.competitions = await api("/api/competitions");
+    toast("Saved");
+    if (!d.slug) go("competitions/" + saved.slug);
+    else render();
+  } catch (e) { if (err) err.textContent = e.message; else toast(e.message); }
+}
+async function drawCompetition(redraw, drawNumber) {
+  const slug = state.compDraft?.slug;
+  if (!slug) return;
+  const result = await api("/api/competitions/" + encodeURIComponent(slug) + "/draw", { method: "POST", body: JSON.stringify({ redraw: !!redraw, drawNumber: Number(drawNumber) || 0 }) });
+  state.competitions = await api("/api/competitions");
+  toast((redraw ? "Redraw: " : "Winner: ") + (result.winner?.name || "drawn"));
+  render();
+}
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  const headers = rows.shift() || [];
+  return rows.filter((r) => r.some(Boolean)).map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] || ""])));
+}
+async function importCompetition() {
+  const slug = state.compDraft?.slug;
+  const rows = parseCsv($("#comp-import")?.value || "");
+  if (!slug || !rows.length) { toast("Add a CSV with a header row"); return; }
+  const result = await api("/api/competitions/" + encodeURIComponent(slug) + "/import", { method: "POST", body: JSON.stringify({ entries: rows }) });
+  toast("Imported " + result.imported);
+  render();
+}
+function downloadCompCsv() {
+  const entries = state.compDetail?.entries || [];
+  const headers = ["Entry ID", "Campaign", "Timestamp", "Melbourne", "Name", "Contact", "Normalised Contact", "Contact Type", "Site", "Period", "Status", "Duplicate Reason", "Matched Entry ID", "Receipt Hash", "Over 18", "Consent"];
+  const lines = [headers.map(csvCell).join(",")];
+  for (const e of entries) lines.push([e.id, e.campaign, e.at, e.melbourne, e.name, e.contact, e.contactNorm, e.contactType, e.site, e.period, e.status, e.duplicateReason, e.matchedEntryId, e.receiptHash || e.photoHash, e.over18 ? "yes" : "", e.consent ? "yes" : ""].map(csvCell).join(","));
+  downloadBlob((state.compDraft?.slug || "competition") + "-entries.csv", new Blob([lines.join("\n")], { type: "text/csv" }));
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -920,7 +1157,7 @@ function pageFor(r) {
   if (r.name === "qrcodes") return listHtml("qr");
   if (r.name === "analytics") return analyticsPage();
   if (r.name === "pages") return pagesList();
-  if (r.name === "campaigns") return placeholder("Campaigns", "Campaigns are not set up in this workspace. Use tags on links and QR codes to group them.");
+  if (r.name === "competitions") return competitionsList();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -1077,6 +1314,25 @@ async function render(opts = {}) {
       }
     }
     view.innerHTML = pageEditor();
+  } else if (r.name === "competitions" && r.id === "new") {
+    if (routeChanged) state.compDraft = blankCompetition();
+    state.compDetail = null;
+    view.innerHTML = competitionEditor();
+  } else if (r.name === "competitions" && r.id) {
+    if (!(opts.refetch === false && state.compDraft?.slug === r.id)) {
+      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      try {
+        const data = await api("/api/competitions/" + encodeURIComponent(r.id));
+        if (gen !== renderGen) return;
+        state.compDetail = data;
+        state.compDraft = structuredClone(data.competition);
+      } catch (e) {
+        if (gen !== renderGen) return;
+        view.innerHTML = '<div class="card"><h2>Not found</h2><p>' + esc(e.message) + '</p><p><button class="btn ghost" type="button" data-go="competitions">Competitions</button></p></div>';
+        return;
+      }
+    }
+    view.innerHTML = competitionEditor();
   } else {
     if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
@@ -1299,6 +1555,44 @@ async function handleAction(el) {
   if (act === "page-qr") return attachPageCode("qr");
   if (act === "page-link") return attachPageCode("link");
   if (act === "page-csv") return downloadPageCsv();
+  if (act === "add-cfield") {
+    captureCompDraft();
+    const type = $("#new-cfield-type")?.value || "text";
+    state.compDraft.fields.push({ id: Math.random().toString(16).slice(2, 10), type, label: "New field", required: false, role: "", options: type === "dropdown" ? ["Option 1"] : [] });
+    render({ refetch: false, keepScroll: true });
+    return;
+  }
+  if (act === "remove-cfield") { captureCompDraft(); state.compDraft.fields = state.compDraft.fields.filter((f) => f.id !== el.dataset.id); render({ refetch: false, keepScroll: true }); return; }
+  if (act === "cfield-up") return moveCompField(el.dataset.id, -1);
+  if (act === "cfield-down") return moveCompField(el.dataset.id, 1);
+  if (act === "del-comp") {
+    openModal("<h2>Delete this competition?</h2><p>Entries and the public page will be removed. Linked QR codes stay until you delete them.</p><div class='row end'><button class='btn ghost' type='button' data-act='close-modal'>Cancel</button><button class='btn danger' type='button' data-act='confirm-del-comp'>Delete</button></div>");
+    return;
+  }
+  if (act === "confirm-del-comp") {
+    const slug = state.compDraft?.slug;
+    if (!slug) return;
+    await api("/api/competitions/" + encodeURIComponent(slug), { method: "DELETE" });
+    closeModal();
+    state.competitions = (state.competitions || []).filter((c) => c.slug !== slug);
+    toast("Deleted");
+    go("competitions");
+    return;
+  }
+  if (act === "comp-draw") {
+    openModal("<h2>Draw a winner?</h2><p>One person is picked at random from this period’s valid entries. Those entries are then archived.</p><div class='row end'><button class='btn ghost' type='button' data-act='close-modal'>Cancel</button><button class='btn' type='button' data-act='confirm-draw'>Draw</button></div>");
+    return;
+  }
+  if (act === "confirm-draw") { closeModal(); return drawCompetition(false); }
+  if (act === "comp-redraw") return drawCompetition(true, el.dataset.draw);
+  if (act === "comp-csv") return downloadCompCsv();
+  if (act === "comp-import") return importCompetition();
+  if (act === "comp-filter") {
+    captureCompDraft();
+    state.compView = { period: $("#comp-period")?.value || "current", status: $("#comp-status")?.value || "all" };
+    render({ refetch: false, keepScroll: true });
+    return;
+  }
   if (act === "close-modal") { closeModal(); return; }
   if (!state.detail?.code && !["close-modal", "pick-compare"].includes(act) && route().name !== "analytics") {
     if (act === "dl-workspace-csv") { downloadWorkspaceCsv(); return; }
@@ -1367,8 +1661,9 @@ function paintSearch() {
   if (!q) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   const hits = state.codes.filter((c) => [c.name, c.slug, c.url, ...(c.tags || [])].join(" ").toLowerCase().includes(q)).slice(0, 6);
   const pageHitsFound = (state.pages || []).filter((p) => [p.name, p.slug, p.title].join(" ").toLowerCase().includes(q)).slice(0, 4);
+  const compHits = (state.competitions || []).filter((c) => [c.name, c.slug, ...(c.sites || [])].join(" ").toLowerCase().includes(q)).slice(0, 4);
   box.classList.remove("hidden");
-  const buttons = hits.map((c) => '<button type="button" data-go="' + (c.hasQr ? "qrcodes/" : "links/") + encodeURIComponent(c.slug) + '"><strong>' + esc(c.name || c.slug) + '</strong><span class="muted small">' + (c.hasQr ? "QR code" : "Short link") + " · /r/" + esc(c.slug) + "</span></button>").concat(pageHitsFound.map((p) => '<button type="button" data-go="pages/' + encodeURIComponent(p.slug) + '"><strong>' + esc(p.name || p.slug) + '</strong><span class="muted small">Page · /p/' + esc(p.slug) + "</span></button>"));
+  const buttons = hits.map((c) => '<button type="button" data-go="' + (c.hasQr ? "qrcodes/" : "links/") + encodeURIComponent(c.slug) + '"><strong>' + esc(c.name || c.slug) + '</strong><span class="muted small">' + (c.hasQr ? "QR code" : "Short link") + " · /r/" + esc(c.slug) + "</span></button>").concat(pageHitsFound.map((p) => '<button type="button" data-go="pages/' + encodeURIComponent(p.slug) + '"><strong>' + esc(p.name || p.slug) + '</strong><span class="muted small">Page · /p/' + esc(p.slug) + "</span></button>"), compHits.map((c) => '<button type="button" data-go="competitions/' + encodeURIComponent(c.slug) + '"><strong>' + esc(c.name || c.slug) + '</strong><span class="muted small">Competition · /c/' + esc(c.slug) + "</span></button>"));
   box.innerHTML = buttons.join("") || '<div class="muted pad">No matches</div>';
 }
 
@@ -1397,7 +1692,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -1419,6 +1714,11 @@ document.body.addEventListener("change", (e) => {
   if (e.target.name === "defaultBg" || e.target.name === "defaultBgText") syncColorPair("[name=defaultBg]", "[name=defaultBgText]", e.target);
   if (e.target.name && String(e.target.name).startsWith("color-")) syncPageColor(e.target);
   if (e.target.dataset && e.target.dataset.colorText) syncPageColor(e.target);
+  if (e.target.id === "comp-period" || e.target.id === "comp-status") {
+    captureCompDraft();
+    state.compView = { period: $("#comp-period")?.value || "current", status: $("#comp-status")?.value || "all" };
+    render({ refetch: false, keepScroll: true });
+  }
   if (e.target.id === "hero-file" && e.target.files?.[0]) {
     fileToLogo(e.target.files[0]).then((url) => {
       const hidden = document.querySelector("[name=heroData]");
@@ -1440,7 +1740,7 @@ $("#search").addEventListener("input", () => {
   state.search = $("#search").value.trim();
   paintSearch();
   const name = route().name;
-  if (name === "links" || name === "qrcodes" || (name === "pages" && !route().id)) render({ refetch: false, keepScroll: true });
+  if (name === "links" || name === "qrcodes" || ((name === "pages" || name === "competitions") && !route().id)) render({ refetch: false, keepScroll: true });
 });
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1455,10 +1755,11 @@ window.addEventListener("hashchange", () => { if (!$("#shell").classList.contain
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePops(); document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden")); } });
 
 async function enter() {
-  const [settings, codes, pages] = await Promise.all([api("/api/settings"), api("/api/codes"), api("/api/pages")]);
+  const [settings, codes, pages, competitions] = await Promise.all([api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions")]);
   state.settings = settings;
   state.codes = codes;
   state.pages = pages;
+  state.competitions = competitions;
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");

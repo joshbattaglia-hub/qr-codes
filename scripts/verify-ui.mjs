@@ -69,7 +69,7 @@ try {
   await waitText("QR Code scans");
   await waitText("Page clicks");
   const nav = await bodyText();
-  for (const label of ["Home", "Links", "QR Codes", "Pages", "Analytics", "Campaigns", "Custom domains", "Settings", "Create new"]) {
+  for (const label of ["Home", "Links", "QR Codes", "Pages", "Analytics", "Competitions", "Custom domains", "Settings", "Create new"]) {
     assert(nav.includes(label), "missing nav " + label);
   }
   assert(!nav.includes("Integrations"), "Integrations nav should be gone");
@@ -240,8 +240,40 @@ try {
     const el = document.querySelector("[data-testid=page-clicks]");
     return el && !el.textContent.includes("—") && Number.parseInt(el.textContent, 10) >= 1;
   });
-  await page.click("#nav [data-go=campaigns]");
-  await waitText("Campaigns are not set up");
+  await page.click("#nav [data-go=competitions]");
+  await waitText("No competitions yet");
+  await page.click("[data-go='competitions/new']");
+  await waitText("Entry form");
+  await page.type("#comp-editor [name=name]", "Lansvale Free Fuel");
+  await page.select("#comp-editor [name=status]", "active");
+  await page.click("#comp-editor button[type=submit]");
+  await waitText("/c/");
+  const compUrl = await page.$eval("[data-testid=comp-url]", (el) => el.textContent.trim());
+  await waitText("View short link");
+  const compPath = new URL(compUrl).pathname;
+  const compPage = await fetch(base + compPath);
+  assert(compPage.status === 200, "competition page " + compPage.status);
+  const entered = await fetch(base + compPath, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "Ada", email: "ada@example.com", phone: "0412000111", receipt: "RCP-1", over18: "yes", consent: "yes" }),
+  });
+  const enteredBody = await entered.json();
+  assert(entered.status === 200 && enteredBody.status === "valid", JSON.stringify(enteredBody));
+  const duplicate = await fetch(base + compPath, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "Ada", email: "ada@example.com", phone: "0412000222", receipt: "RCP-2", over18: "yes", consent: "yes" }),
+  });
+  const duplicateBody = await duplicate.json();
+  assert(duplicateBody.status === "duplicate", JSON.stringify(duplicateBody));
+  await page.reload({ waitUntil: "networkidle0" });
+  await waitText("Ada");
+  await page.evaluate(() => document.querySelector("[data-act=confirm-draw]") || document.querySelector("[data-act=comp-draw]").click());
+  if (!await page.$("[data-act=confirm-draw]")) await page.click("[data-act=comp-draw]");
+  await page.click("[data-act=confirm-draw]");
+  await waitText("Winners");
+  await waitText("Draw 1");
   await page.click("[data-go=domains]");
   await waitText("expresshelp.site");
   await page.click("[data-go=settings]");
@@ -285,7 +317,9 @@ try {
   await page.click("[data-act=toggle-menu][data-menu=more]");
   await page.click("[data-act=del]");
   await page.click("[data-act=confirm-del]");
-  await waitText("Nothing here yet");
+  await page.waitForFunction(() => document.querySelector(".page-head h1")?.textContent.trim() === "QR Codes");
+  const afterDelete = await bodyText();
+  assert(!afterDelete.includes("24Xpress Help Page"), "deleted code still listed");
   const gone = await hit(desktop, true);
   assert(gone.status === 404, "deleted code still redirects");
 
