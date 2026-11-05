@@ -6,3 +6,25 @@
   from = "/admin/*"
   to = "/admin/index.html"
   status = 200
+
+# www → apex primary
+[[redirects]]
+  from = "https://www.expresshelp.site/*"
+  to = "https://expresshelp.site/:splat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "https://www.expresshelp.site"
+  to = "https://expresshelp.site/"
+  status = 301
+  force = true
+[[redirects]]
+  from = "http://www.expresshelp.site/*"
+  to = "https://expresshelp.site/:splat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "http://expresshelp.site/*"
+  to = "https://expresshelp.site/:splat"
+  status = 301
+  force = true
