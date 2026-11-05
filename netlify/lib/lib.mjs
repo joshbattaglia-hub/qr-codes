@@ -28,6 +28,10 @@ export const settingsStore = () => openStore("settings");
 export const pagesStore = () => openStore("pages");
 export const pageViews = () => openStore("page-views");
 export const submissionsStore = () => openStore("submissions");
+export const competitionsStore = () => openStore("competitions");
+export const compEntries = () => openStore("comp-entries");
+export const compFiles = () => openStore("comp-files");
+export const compViews = () => openStore("comp-views");
 
 export function env(name) {
   try {
