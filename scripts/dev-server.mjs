@@ -14,6 +14,11 @@ const settingsFn = (await import("../netlify/functions/settings.mjs")).default;
 const redirectFn = (await import("../netlify/functions/redirect.mjs")).default;
 const pagesFn = (await import("../netlify/functions/pages.mjs")).default;
 const compFn = (await import("../netlify/functions/competitions.mjs")).default;
+const sitesFn = (await import("../netlify/functions/sites.mjs")).default;
+const staffFn = (await import("../netlify/functions/staff.mjs")).default;
+const vouchersFn = (await import("../netlify/functions/vouchers.mjs")).default;
+const healthFn = (await import("../netlify/functions/health.mjs")).default;
+const templatesFn = (await import("../netlify/functions/templates.mjs")).default;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
 const GEO = {
@@ -54,6 +59,14 @@ export function start(port = 8888) {
       const request = toRequest(req, url, body);
       if (url.pathname === "/api/auth") return send(res, await auth(request));
       if (url.pathname === "/api/settings") return send(res, await settingsFn(request));
+      if (url.pathname === "/api/sites" || url.pathname.startsWith("/api/sites/")) return send(res, await sitesFn(request));
+      if (url.pathname === "/api/staff" || url.pathname.startsWith("/api/staff/")) return send(res, await staffFn(request));
+      if (url.pathname === "/api/vouchers" || url.pathname.startsWith("/api/vouchers/")) {
+        const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1");
+        return send(res, await vouchersFn(request, { ip }));
+      }
+      if (url.pathname === "/api/health" || url.pathname.startsWith("/api/health/")) return send(res, await healthFn(request));
+      if (url.pathname === "/api/templates" || url.pathname.startsWith("/api/templates/")) return send(res, await templatesFn(request));
       if (url.pathname === "/api/codes" || url.pathname.startsWith("/api/codes/")) {
         const slug = url.pathname === "/api/codes" ? undefined : decodeURIComponent(url.pathname.slice("/api/codes/".length));
         return send(res, await codesFn(request, { params: { slug } }));

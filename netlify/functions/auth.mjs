@@ -1,11 +1,31 @@
-import { checkPassword, makeCookie, clearCookie, authed, json } from "../lib/lib.mjs";
+import { checkPassword, makeCookie, clearCookie, json, staffStore } from "../lib/lib.mjs";
+import { actorFrom, clearStaffCookie, forbidden, jsonCookies, loginLimited, makeStaffCookie, originBlocked, publicStaff, verifyPassword } from "../lib/access.mjs";
+
+const DUMMY = "scrypt$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 
 export default async (req) => {
-  if (req.method === "GET") return json(200, { authenticated: authed(req) });
-  if (req.method === "DELETE") return json(200, { ok: true }, { "set-cookie": clearCookie(req) });
-  const { password } = await req.json().catch(() => ({}));
-  if (!checkPassword(password)) return json(401, { error: "Invalid password" });
-  return json(200, { ok: true }, { "set-cookie": makeCookie(req) });
+  if (originBlocked(req)) return forbidden();
+  if (req.method === "GET") {
+    const actor = await actorFrom(req);
+    if (!actor) return json(200, { authenticated: false });
+    return json(200, { authenticated: true, role: actor.role, siteIds: actor.siteIds, name: actor.name });
+  }
+  if (req.method === "DELETE") {
+    return jsonCookies(200, { ok: true }, [clearCookie(req), clearStaffCookie(req)]);
+  }
+  const body = await req.json().catch(() => ({}));
+  const email = String(body.email || "").trim().toLowerCase();
+  if (await loginLimited(req, email || "head")) return json(429, { error: "Too many attempts" });
+  if (!email) {
+    if (!checkPassword(body.password)) return json(401, { error: "Invalid password" });
+    return jsonCookies(200, { ok: true, role: "head" }, [makeCookie(req), clearStaffCookie(req)]);
+  }
+  const { blobs } = await staffStore().list().catch(() => ({ blobs: [] }));
+  const people = (await Promise.all(blobs.map((b) => staffStore().get(b.key, { type: "json" })))).filter(Boolean);
+  const staff = people.find((person) => person.email === email && !person.disabled);
+  const match = verifyPassword(body.password, staff?.passwordHash || DUMMY);
+  if (!staff || !match) return json(401, { error: "Invalid password" });
+  return jsonCookies(200, { ok: true, role: "manager", staff: publicStaff(staff) }, [clearCookie(req), makeStaffCookie(req, staff.id)]);
 };
 
 export const config = { path: "/api/auth" };

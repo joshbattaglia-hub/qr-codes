@@ -1,8 +1,14 @@
 import crypto from "node:crypto";
 import {
-  authed, json, env, publicBase, validSlug, visitorHash,
-  competitionsStore, compEntries, compFiles, compViews,
+  json, env, publicBase, validSlug, visitorHash,
+  competitionsStore, compEntries, compFiles, compViews, vouchersStore, conditionalIncrement,
 } from "../lib/lib.mjs";
+import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { competitionReminders } from "../lib/reminders.mjs";
+import { posterHtml } from "../lib/posters.mjs";
+import { issueVoucher, voucherConfig } from "../lib/vouchers.mjs";
+import { updateCollection, winnerNotice } from "../lib/notices.mjs";
+import { competitionSnapshot } from "../lib/templates.mjs";
 import { recordView } from "../lib/pages.mjs";
 import {
   defaultCompetition, applyCompetitionPatch, buildIncoming, classifyEntry, dashboard,
@@ -50,6 +56,8 @@ function summary(comp, entries, views) {
     ...pub,
     hasHero: !!(comp.heroData || comp.heroUrl),
     hasLogo: !!comp.logoData,
+    reminders: competitionReminders(comp),
+    voucher: voucherConfig(comp),
     ...stats,
     entries: entries.length,
     views: views?.total || 0,
@@ -72,11 +80,39 @@ async function handlePublic(req, context, slug) {
   return html(405, unavailableCompetition());
 }
 
+function entryIdentity(incoming) {
+  return crypto.createHash("sha256").update([incoming.emailNorm, incoming.phoneNorm, incoming.receiptHash, incoming.name].join("\n")).digest("hex");
+}
+
+async function claimEntry(comp, idem, identity) {
+  if (!idem) return { proceed: true };
+  const key = "entry-idem/" + comp.slug + "/" + idem;
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const prior = await vouchersStore().get(key, { type: "json", consistency: "strong" });
+    if (prior?.response) {
+      if (prior.identity !== identity) return { error: json(409, { error: "Idempotency key belongs to a different entry" }) };
+      return { response: prior.response };
+    }
+    if (prior?.identity && prior.identity !== identity) return { error: json(409, { error: "Idempotency key belongs to a different entry" }) };
+    if (!prior) {
+      const gate = await vouchersStore().setJSON(key, { pending: true, identity }, { onlyIfNew: true });
+      if (gate?.modified === true) return { proceed: true, key };
+      if (gate?.modified !== false) return { error: json(503, { error: "Could not save this entry" }) };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return { error: json(409, { error: "This entry is already being saved" }) };
+}
+
 async function submit(req, comp) {
   if (!accepting(comp)) return json(400, { error: "This competition is not accepting entries" });
+  const idem = String(req.headers.get("idempotency-key") || "").trim().slice(0, 80);
   const body = await req.json().catch(() => ({}));
   const incoming = buildIncoming(comp, body);
   if (incoming.error) return json(400, { error: incoming.error });
+  const claim = await claimEntry(comp, idem, entryIdentity(incoming));
+  if (claim.error) return claim.error;
+  if (claim.response) return json(200, claim.response);
   const existing = await listEntries(comp.slug);
   const verdict = classifyEntry(comp, existing, incoming);
   const now = new Date();
@@ -113,10 +149,32 @@ async function submit(req, comp) {
   };
   await compEntries().setJSON(comp.slug + "/" + id, entry);
   if (incoming.photo) await compFiles().setJSON(comp.slug + "/" + id, { data: incoming.photo });
+  let voucherToken;
+  const offer = voucherConfig(comp);
+  if (entry.status === "valid" && offer.enabled) {
+    const reserved = await conditionalIncrement(vouchersStore(), "entry-count/" + comp.slug, offer.maxIssues);
+    if (reserved.ok) {
+    const issued = await issueVoucher(vouchersStore(), {
+      competition: comp.slug,
+      siteId: comp.siteId || "",
+      source: "entry",
+      sourceId: entry.id,
+      expires: offer.expires,
+      label: offer.label,
+    });
+    if (issued?.token) {
+      voucherToken = issued.token;
+      entry.voucherId = issued.id;
+      await compEntries().setJSON(comp.slug + "/" + id, entry);
+    }
+    }
+  }
   if (entry.status === "valid") {
     await notify("New competition entry: " + (comp.name || comp.slug), [comp.name, entry.pageUrl, "", entry.name, entry.contact, "Period " + entry.period].join("\n"));
   }
-  return json(200, { ok: true, status: entry.status, id: entry.id, thankYou: comp.thankYou });
+  const response = { ok: true, status: entry.status, id: entry.id, thankYou: comp.thankYou, ...(voucherToken ? { voucherToken } : {}) };
+  if (claim.key) await vouchersStore().setJSON(claim.key, { identity: entryIdentity(incoming), response });
+  return json(200, response);
 }
 
 async function performDraw(comp, entries, { redraw = false, drawNumber = 0 } = {}) {
@@ -170,19 +228,24 @@ function winnerRecord(comp, entry, drawNumber, poolSize, redraw) {
 }
 
 export default async (req, context) => {
+  if (originBlocked(req)) return forbidden();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const pub = path.match(/^\/c\/([^/]+)$/);
   if (pub) return handlePublic(req, context, decodeURIComponent(pub[1]).toLowerCase());
-  if (!authed(req)) return json(401, { error: "Unauthorized" });
+  const actor = await actorFrom(req);
+  if (!actor) return unauthorised();
 
   if (path === "/api/competitions" && req.method === "GET") {
     const { blobs } = await competitionsStore().list();
-    const comps = (await Promise.all(blobs.map((b) => competitionsStore().get(b.key, { type: "json" })))).filter(Boolean);
+    const comps = (await Promise.all(blobs.map((b) => competitionsStore().get(b.key, { type: "json" })))).filter((comp) => comp && canSeeSite(actor, siteOf(comp)));
     const out = await Promise.all(comps.map(async (comp) => summary(comp, await listEntries(comp.slug), await compViews().get(comp.slug, { type: "json" }))));
     return json(200, out.sort((a, b) => String(b.created).localeCompare(String(a.created))));
   }
   if (path === "/api/competitions" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
+    const assigned = await assignSite(actor, null, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     let slug = String(body.slug || "").trim().toLowerCase();
     if (slug) {
       if (!validSlug(slug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
@@ -190,7 +253,7 @@ export default async (req, context) => {
     } else do slug = gen(); while (await competitionsStore().get(slug));
     const built = applyCompetitionPatch(defaultCompetition({ slug, created: new Date().toISOString() }), { name: body.name || "Untitled competition", ...body, status: body.status || "draft" });
     if (built.error) return json(400, { error: built.error });
-    const comp = { ...built.competition, slug };
+    const comp = { ...built.competition, slug, siteId: assigned.siteId, winners: built.competition.winners || [] };
     await competitionsStore().setJSON(slug, comp);
     return json(201, publicCompetition(comp));
   }
@@ -200,6 +263,7 @@ export default async (req, context) => {
     const slug = decodeURIComponent(draw[1]).toLowerCase();
     const comp = await competitionsStore().get(slug, { type: "json" });
     if (!comp) return json(404, { error: "Not found" });
+    if (!canSeeSite(actor, siteOf(comp))) return forbidden();
     const body = await req.json().catch(() => ({}));
     const entries = await listEntries(slug);
     const result = await performDraw(comp, entries, { redraw: !!body.redraw, drawNumber: Number(body.drawNumber) || 0 });
@@ -216,31 +280,53 @@ export default async (req, context) => {
   }
 
   const imp = path.match(/^\/api\/competitions\/([^/]+)\/import$/);
-  if (imp && req.method === "POST") return importEntries(decodeURIComponent(imp[1]).toLowerCase(), req);
+  if (imp && req.method === "POST") return importEntries(decodeURIComponent(imp[1]).toLowerCase(), req, actor);
 
   const file = path.match(/^\/api\/competitions\/([^/]+)\/files\/([^/]+)$/);
   if (file && req.method === "GET") {
     const slug = decodeURIComponent(file[1]).toLowerCase();
     const id = decodeURIComponent(file[2]);
+    const comp = await competitionsStore().get(slug, { type: "json" });
+    if (!comp) return json(404, { error: "Not found" });
+    if (!canSeeSite(actor, siteOf(comp))) return forbidden();
     const stored = await compFiles().get(slug + "/" + id, { type: "json" });
     if (!stored?.data) return json(404, { error: "No receipt file" });
     return json(200, stored);
   }
+
+  const poster = path.match(/^\/api\/competitions\/([^/]+)\/poster$/);
+  if (poster && req.method === "GET") return competitionPoster(decodeURIComponent(poster[1]).toLowerCase(), req, actor);
+
+  const copy = path.match(/^\/api\/competitions\/([^/]+)\/copy$/);
+  if (copy && req.method === "POST") return copyCompetition(decodeURIComponent(copy[1]).toLowerCase(), req, actor);
+
+  const exported = path.match(/^\/api\/competitions\/([^/]+)\/export$/);
+  if (exported && req.method === "GET") return exportEntries(decodeURIComponent(exported[1]).toLowerCase(), actor);
+
+  const notice = path.match(/^\/api\/competitions\/([^/]+)\/winners\/([^/]+)\/notice$/);
+  if (notice && req.method === "GET") return winnerDraft(decodeURIComponent(notice[1]).toLowerCase(), decodeURIComponent(notice[2]), actor);
+
+  const collection = path.match(/^\/api\/competitions\/([^/]+)\/winners\/([^/]+)\/collection$/);
+  if (collection && req.method === "POST") return saveCollection(decodeURIComponent(collection[1]).toLowerCase(), decodeURIComponent(collection[2]), req, actor);
 
   const one = path.match(/^\/api\/competitions\/([^/]+)$/);
   if (!one) return json(404, { error: "Not found" });
   const slug = decodeURIComponent(one[1]).toLowerCase();
   const comp = await competitionsStore().get(slug, { type: "json" });
   if (!comp) return json(404, { error: "Not found" });
+  if (!canSeeSite(actor, siteOf(comp))) return forbidden();
   if (req.method === "GET") {
     const [entries, views] = await Promise.all([listEntries(slug), compViews().get(slug, { type: "json" })]);
-    return json(200, { competition: publicCompetition(comp), entries: entries.map(summariseEntry), stats: dashboard(comp, entries), views: views || { total: 0, daily: {}, visitors: {} } });
+    return json(200, { competition: { ...publicCompetition(comp), voucher: voucherConfig(comp) }, entries: entries.map(summariseEntry), stats: dashboard(comp, entries), views: views || { total: 0, daily: {}, visitors: {} } });
   }
   if (req.method === "PATCH") {
     const body = await req.json().catch(() => ({}));
+    const assigned = await assignSite(actor, comp, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     const patched = applyCompetitionPatch(comp, body);
     if (patched.error) return json(400, { error: patched.error });
-    const next = { ...patched.competition, slug, winners: comp.winners || [], currentPeriod: body.currentPeriod ? patched.competition.currentPeriod : (comp.currentPeriod || 1) };
+    const next = { ...patched.competition, slug, siteId: assigned.siteId, winners: comp.winners || [], currentPeriod: body.currentPeriod ? patched.competition.currentPeriod : (comp.currentPeriod || 1) };
     await competitionsStore().setJSON(slug, next);
     return json(200, publicCompetition(next));
   }
@@ -256,9 +342,94 @@ export default async (req, context) => {
   return json(405, { error: "Method not allowed" });
 };
 
-async function importEntries(slug, req) {
+async function visibleComp(slug, actor) {
   const comp = await competitionsStore().get(slug, { type: "json" });
-  if (!comp) return json(404, { error: "Not found" });
+  if (!comp) return { error: json(404, { error: "Not found" }) };
+  if (!canSeeSite(actor, siteOf(comp))) return { error: forbidden() };
+  return { comp };
+}
+
+async function competitionPoster(slug, req, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const size = new URL(req.url).searchParams.get("size") === "a3" ? "a3" : "a4";
+  const html = posterHtml(found.comp, { base: publicBase(), size });
+  return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function copyCompetition(slug, req, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const body = await req.json().catch(() => ({}));
+  const assigned = await assignSite(actor, null, Object.prototype.hasOwnProperty.call(body, "siteId") ? body : { siteId: found.comp.siteId || "" });
+  const denied = assignmentResponse(assigned);
+  if (denied) return denied;
+  let nextSlug = String(body.slug || "").trim().toLowerCase();
+  if (nextSlug) {
+    if (!validSlug(nextSlug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
+    if (await competitionsStore().get(nextSlug)) return json(409, { error: "Slug already in use" });
+  } else do nextSlug = gen(); while (await competitionsStore().get(nextSlug));
+  const snap = competitionSnapshot(found.comp);
+  const built = applyCompetitionPatch(defaultCompetition({ slug: nextSlug, created: new Date().toISOString() }), {
+    ...snap,
+    name: body.name || (snap.name ? snap.name + " copy" : "Untitled competition"),
+    sites: body.sites !== undefined ? body.sites : snap.sites,
+    prize: body.prize !== undefined ? body.prize : snap.prize,
+    start: body.start !== undefined ? body.start : snap.start,
+    end: body.end !== undefined ? body.end : snap.end,
+    status: "draft",
+    codeSlug: "",
+    voucher: { enabled: false },
+  });
+  if (built.error) return json(400, { error: built.error });
+  const comp = { ...built.competition, slug: nextSlug, siteId: assigned.siteId, winners: [], currentPeriod: 1, status: "draft", codeSlug: "", voucher: { enabled: false } };
+  await competitionsStore().setJSON(nextSlug, comp);
+  return json(201, publicCompetition(comp));
+}
+
+function csvCell(value) {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+async function exportEntries(slug, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const entries = await listEntries(slug);
+  const headers = ["Entry ID", "Name", "Contact", "Status", "Period", "Site"];
+  const lines = [headers.join(",")];
+  for (const entry of entries) lines.push([entry.id, entry.name, entry.contact, entry.status, entry.period, entry.site].map(csvCell).join(","));
+  return new Response(lines.join("\n"), { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function winnerDraft(slug, winnerId, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const winner = (found.comp.winners || []).find((item) => item.id === winnerId && !item.superseded);
+  if (!winner) return json(404, { error: "Not found" });
+  return json(200, winnerNotice(found.comp, winner));
+}
+
+async function saveCollection(slug, winnerId, req, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const body = await req.json().catch(() => ({}));
+  const winners = found.comp.winners || [];
+  const index = winners.findIndex((item) => item.id === winnerId && !item.superseded);
+  if (index < 0) return json(404, { error: "Not found" });
+  const updated = updateCollection(winners[index], { status: body.status, notes: body.notes, actor: actor.id });
+  if (updated.error) return json(400, { error: updated.error });
+  const nextWinners = winners.slice();
+  nextWinners[index] = updated.winner;
+  const next = { ...found.comp, winners: nextWinners, updated: new Date().toISOString() };
+  await competitionsStore().setJSON(slug, next);
+  return json(200, { winner: updated.winner });
+}
+
+async function importEntries(slug, req, actor) {
+  const found = await visibleComp(slug, actor);
+  if (found.error) return found.error;
+  const comp = found.comp;
   const body = await req.json().catch(() => ({}));
   const rows = parseImportRows(body.entries || body.rows || []);
   if (!rows.length) return json(400, { error: "No rows to import" });
@@ -299,5 +470,17 @@ async function importEntries(slug, req) {
 }
 
 export const config = {
-  path: ["/api/competitions", "/api/competitions/:slug", "/api/competitions/:slug/draw", "/api/competitions/:slug/import", "/api/competitions/:slug/files/:entryId", "/c/:slug"],
+  path: [
+    "/api/competitions",
+    "/api/competitions/:slug",
+    "/api/competitions/:slug/draw",
+    "/api/competitions/:slug/import",
+    "/api/competitions/:slug/files/:entryId",
+    "/api/competitions/:slug/poster",
+    "/api/competitions/:slug/copy",
+    "/api/competitions/:slug/export",
+    "/api/competitions/:slug/winners/:winnerId/notice",
+    "/api/competitions/:slug/winners/:winnerId/collection",
+    "/c/:slug",
+  ],
 };

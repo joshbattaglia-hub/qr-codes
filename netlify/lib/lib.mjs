@@ -19,6 +19,8 @@ export function setStoreFactory(fn) { storeFactory = fn; }
 
 function openStore(name) {
   if (storeFactory) return storeFactory(name);
+  // Strong reads and conditional writes. @netlify/blobs 11.1.7 uses this as the
+  // client default (`opConsistency ?? this.consistency`) for get, getWithMetadata, and setJSON.
   return getStore({ name, consistency: "strong" });
 }
 
@@ -32,6 +34,37 @@ export const competitionsStore = () => openStore("competitions");
 export const compEntries = () => openStore("comp-entries");
 export const compFiles = () => openStore("comp-files");
 export const compViews = () => openStore("comp-views");
+export const sitesStore = () => openStore("sites");
+export const staffStore = () => openStore("staff");
+export const templatesStore = () => openStore("templates");
+export const vouchersStore = () => openStore("vouchers");
+export const healthStore = () => openStore("health");
+export const rateStore = () => openStore("auth-rate");
+
+/**
+ * Durable counter. Succeeds only with onlyIfNew or onlyIfMatch.
+ * Returns unsupported when the store cannot prove the conditional write.
+ */
+export async function conditionalIncrement(store, key, max) {
+  if (typeof store?.getWithMetadata !== "function" || typeof store?.setJSON !== "function") return { ok: false, reason: "unsupported" };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const meta = await store.getWithMetadata(key, { type: "json", consistency: "strong" });
+    if (!meta) {
+      const created = await store.setJSON(key, { n: 1 }, { onlyIfNew: true });
+      if (created?.modified === true) return { ok: true, n: 1 };
+      if (created?.modified === false) continue;
+      return { ok: false, reason: "unsupported" };
+    }
+    if (!meta.etag) return { ok: false, reason: "unsupported" };
+    const n = Number(meta.data?.n) || 0;
+    if (n >= max) return { ok: false, reason: "limit" };
+    const next = await store.setJSON(key, { n: n + 1 }, { onlyIfMatch: meta.etag });
+    if (next?.modified === true) return { ok: true, n: n + 1 };
+    if (next?.modified === false) continue;
+    return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "unsupported" };
+}
 
 export function env(name) {
   try {
@@ -394,6 +427,7 @@ export function normalizeCode(c) {
     style,
     logoData: typeof c.logoData === "string" ? c.logoData : "",
     rules: Array.isArray(c.rules) ? c.rules : [],
+    siteId: typeof c.siteId === "string" ? c.siteId : "",
   };
 }
 
@@ -507,7 +541,6 @@ export async function readSettings() {
   const stored = await settingsStore().get("workspace", { type: "json" }).catch(() => null);
   return {
     ...DEFAULT_SETTINGS,
-    ...(stored || {}),
     publicUrl: publicBase(),
     workspaceName: String(stored?.workspaceName || DEFAULT_SETTINGS.workspaceName).slice(0, 40) || "Liberty",
     defaultFg: validColor(stored?.defaultFg) ? stored.defaultFg : DEFAULT_SETTINGS.defaultFg,
@@ -515,24 +548,51 @@ export async function readSettings() {
   };
 }
 
-/** In-memory blob stand-in for the local dev server and tests. */
+/**
+ * In-memory blob stand-in for the local dev server and tests.
+ * `onlyIfNew` and `onlyIfMatch` are synchronous compare-and-set, matching
+ * Netlify Blobs `If-None-Match: *` and `If-Match` writes.
+ */
 export function memoryBackend() {
   const buckets = new Map();
+  let seq = 0;
   return (name) => {
     if (!buckets.has(name)) buckets.set(name, new Map());
     const m = buckets.get(name);
+    const read = (key) => {
+      if (!m.has(key)) return null;
+      const row = m.get(key);
+      if (row && row.__memblob) return row;
+      return { __memblob: true, etag: "legacy", data: row };
+    };
+    const write = (key, data, opts = {}) => {
+      const current = read(key);
+      if (opts.onlyIfNew && current) return { modified: false };
+      if (opts.onlyIfMatch != null && opts.onlyIfMatch !== "") {
+        if (!current || current.etag !== opts.onlyIfMatch) return { modified: false };
+      }
+      const etag = "m" + (++seq).toString(16);
+      m.set(key, { __memblob: true, etag, data: JSON.parse(JSON.stringify(data)) });
+      return { etag, modified: true };
+    };
     return {
       async get(key, opts) {
-        if (!m.has(key)) return null;
-        const v = m.get(key);
-        if (opts?.type === "json") return JSON.parse(JSON.stringify(v));
-        return v;
+        const row = read(key);
+        if (!row) return null;
+        if (opts?.type === "json") return JSON.parse(JSON.stringify(row.data));
+        return row.data;
       },
-      async setJSON(key, val) { m.set(key, JSON.parse(JSON.stringify(val))); },
+      async getWithMetadata(key, opts) {
+        const row = read(key);
+        if (!row) return null;
+        const data = opts?.type === "json" ? JSON.parse(JSON.stringify(row.data)) : row.data;
+        return { data, etag: row.etag, metadata: {} };
+      },
+      async setJSON(key, val, opts) { return write(key, val, opts || {}); },
       async delete(key) { m.delete(key); },
       async list(opts) {
         const prefix = opts?.prefix || "";
-        return { blobs: [...m.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })) };
+        return { blobs: [...m.keys()].filter((key) => String(key).startsWith(prefix)).map((key) => ({ key, etag: read(key)?.etag })) };
       },
     };
   };

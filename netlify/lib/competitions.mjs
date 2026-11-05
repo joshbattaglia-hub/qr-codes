@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { validUrl, validSlug, validColor, addDays } from "./lib.mjs";
+import { validateVoucher } from "./vouchers.mjs";
 
 export const MELBOURNE = "Australia/Melbourne";
 export const FIELD_TYPES = ["text", "email", "phone", "dropdown", "checkbox", "textarea", "file"];
@@ -263,6 +264,11 @@ export function applyCompetitionPatch(comp, body) {
     const period = Math.round(Number(body.currentPeriod));
     if (!period || period < 1 || period > periodCount(next) + 1) return { error: "Current period is out of range" };
     next.currentPeriod = period;
+  }
+  if (body.voucher !== undefined) {
+    const offer = validateVoucher(body);
+    if (offer.error) return offer;
+    if (offer.voucher) next.voucher = offer.voucher;
   }
   next.updated = new Date().toISOString();
   return { competition: next };

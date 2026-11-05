@@ -23,6 +23,7 @@ const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (err) => errors.push(String(err)));
 page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()); });
+page.on("response", (res) => { if (res.status() >= 400) errors.push(res.status() + " " + res.url()); });
 await page.setViewport({ width: 1440, height: 1100 });
 await page.evaluateOnNewDocument(() => {
   window.__downloads = [];
@@ -271,6 +272,11 @@ try {
   assert(duplicateBody.status === "duplicate", JSON.stringify(duplicateBody));
   await page.reload({ waitUntil: "networkidle0" });
   await waitText("Ada");
+  await page.click("#nav [data-go=home]");
+  await waitText("Draw reminders");
+  await shot("17-reminders");
+  await page.goto(base + "/admin#/competitions/" + compPath.split("/").pop(), { waitUntil: "networkidle0" });
+  await waitText("Ada");
   await page.evaluate(() => document.querySelector("[data-act=confirm-draw]") || document.querySelector("[data-act=comp-draw]").click());
   if (!await page.$("[data-act=confirm-draw]")) await page.click("[data-act=comp-draw]");
   await page.click("[data-act=confirm-draw]");
@@ -280,7 +286,52 @@ try {
   await waitText("expresshelp.site");
   await page.click("[data-go=settings]");
   await waitText("ADMIN_PASSWORD");
+  await waitText("Staff");
   await shot("06-settings");
+
+  await page.click("[data-go=sites]");
+  await waitText("New location");
+  await page.type("[data-testid=create-site] input[name=name]", "QA Yard");
+  await page.click("[data-testid=create-site] button[type=submit]");
+  await waitText("QA Yard");
+  await shot("09-sites-desktop");
+  const compSlug = compPath.split("/").pop();
+  await page.goto(base + "/admin#/competitions/" + compSlug, { waitUntil: "networkidle0" });
+  await waitText("Poster, template, and copy");
+  await waitText("Enable a single-use voucher");
+  const voucherOff = await page.$eval("[name=voucherEnabled]", (el) => el.checked);
+  assert(voucherOff === false, "voucher should stay off");
+  await shot("10-competition-tools");
+  await page.click("[data-act=winner-notice]");
+  await waitText("has not been sent");
+  await waitText("Review only");
+  const notice = await page.$eval("[data-testid=notice-text]", (el) => el.textContent);
+  assert(notice.includes("Ada"), "notice should use the recorded name");
+  assert(!notice.toLowerCase().includes("mailto:"), "notice should not send mail");
+  await shot("11-winner-notice");
+  const sessionCookie = (await page.cookies()).map((c) => c.name + "=" + c.value).join("; ");
+  const poster = await fetch(base + "/api/competitions/" + compSlug + "/poster?size=a4", { headers: { cookie: sessionCookie } });
+  const posterHtml = await poster.text();
+  assert(poster.status === 200, "poster " + poster.status);
+  assert(posterHtml.includes("https://expresshelp.site/c/" + compSlug), "poster QR target missing");
+  await page.evaluate(async () => {
+    const response = await fetch("/api/codes", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "http://127.0.0.1/health", type: "link", slug: "health-qa", name: "Health sample" }) });
+    if (!response.ok) throw new Error("health sample " + response.status);
+  });
+  fs.writeFileSync("/tmp/poster-a4.html", posterHtml);
+  await page.goto("file:///tmp/poster-a4.html", { waitUntil: "load" });
+  await shot("12-poster-a4");
+  const posterA3 = await fetch(base + "/api/competitions/" + compSlug + "/poster?size=a3", { headers: { cookie: sessionCookie } });
+  const posterA3Html = await posterA3.text();
+  assert(posterA3.status === 200 && posterA3Html.includes("A3") && posterA3Html.includes("https://expresshelp.site/c/" + compSlug), "A3 poster missing");
+  fs.writeFileSync("/tmp/poster-a3.html", posterA3Html);
+  await page.goto("file:///tmp/poster-a3.html", { waitUntil: "load" });
+  await shot("18-poster-a3");
+  await page.goto(base + "/admin#/links/health-qa", { waitUntil: "domcontentloaded" });
+  await page.click("[data-act=check-link]");
+  await waitText("Checked:");
+  await waitText("unknown");
+  await shot("13-link-health");
 
   await page.goto(base + "/admin#/qrcodes/" + slug, { waitUntil: "networkidle0" });
   await waitText("24Xpress Help Page");
@@ -312,6 +363,15 @@ try {
   await page.evaluate(() => document.querySelector("#overlay").click());
   await new Promise((r) => setTimeout(r, 350));
   await shot("08-mobile-home");
+  await page.evaluate(() => { location.hash = "#/sites"; });
+  await waitText("QA Yard");
+  await shot("14-sites-mobile");
+  await page.evaluate((id) => { location.hash = "#/competitions/" + id; }, compSlug);
+  await waitText("Poster, template, and copy");
+  await shot("15-competition-mobile");
+  await page.goto(base + compPath + "?qr=1", { waitUntil: "networkidle0" });
+  await page.waitForSelector("form");
+  await shot("16-public-entry-mobile");
 
   await page.setViewport({ width: 1440, height: 1100 });
   await page.goto(base + "/admin#/qrcodes/" + slug, { waitUntil: "networkidle0" });
@@ -325,7 +385,52 @@ try {
   const gone = await hit(desktop, true);
   assert(gone.status === 404, "deleted code still redirects");
 
-  const realErrors = errors.filter((e) => !e.includes("401"));
+  const jar = (await page.cookies()).map((c) => c.name + "=" + c.value).join("; ");
+  const north = await fetch(base + "/api/sites", { method: "POST", headers: { cookie: jar, "content-type": "application/json" }, body: JSON.stringify({ name: "North office" }) });
+  const northBody = await north.json();
+  const south = await fetch(base + "/api/sites", { method: "POST", headers: { cookie: jar, "content-type": "application/json" }, body: JSON.stringify({ name: "South office" }) });
+  const southBody = await south.json();
+  assert(north.ok && south.ok, "sites for manager check");
+  const managerPassword = "manager-local-pass";
+  const createdManager = await fetch(base + "/api/staff", { method: "POST", headers: { cookie: jar, "content-type": "application/json" }, body: JSON.stringify({ name: "North manager", email: "north.manager@example.com", password: managerPassword, siteIds: [northBody.id] }) });
+  assert(createdManager.ok, "manager create " + createdManager.status);
+  await fetch(base + "/api/competitions", { method: "POST", headers: { cookie: jar, "content-type": "application/json" }, body: JSON.stringify({ name: "South only", slug: "south-only", status: "active", siteId: southBody.id }) });
+  const managerContext = await browser.createBrowserContext();
+  const managerPage = await managerContext.newPage();
+  const managerStatuses = [];
+  managerPage.on("response", (res) => { if (res.status() >= 400) managerStatuses.push(res.status() + " " + res.url()); });
+  await managerPage.setViewport({ width: 390, height: 844 });
+  await managerPage.goto(base + "/admin", { waitUntil: "networkidle0" });
+  await managerPage.waitForSelector("#staff-email");
+  await managerPage.type("#staff-email", "north.manager@example.com");
+  await managerPage.type("#pw", managerPassword);
+  await managerPage.click("#login-form button[type=submit]");
+  try {
+    await managerPage.waitForFunction(() => document.body.innerText.includes("Your sites"), { timeout: 8000 });
+  } catch (err) {
+    const text = await managerPage.evaluate(() => document.body.innerText.slice(0, 500));
+    throw new Error("manager login did not open the home screen: " + text + " | " + managerStatuses.join(", "));
+  }
+  const managerHome = await managerPage.evaluate(() => document.body.innerText);
+  assert(!managerHome.includes("South only"), "manager home shows another site");
+  assert(!managerHome.includes("Staff"), "manager home shows staff tools");
+  await managerPage.screenshot({ path: "/opt/cursor/artifacts/19-manager-mobile.png", fullPage: true });
+  await managerPage.setViewport({ width: 1440, height: 1100 });
+  await managerPage.evaluate(() => { location.hash = "#/settings"; });
+  await managerPage.waitForFunction(() => document.body.innerText.includes("Workspace name"), { timeout: 8000 });
+  assert(await managerPage.$("[data-testid=staff-editor]") === null, "manager can see the staff editor");
+  await managerPage.screenshot({ path: "/opt/cursor/artifacts/20-manager-settings.png", fullPage: true });
+  await managerPage.evaluate(() => { location.hash = "#/sites"; });
+  await managerPage.waitForFunction(() => document.body.innerText.includes("North office"), { timeout: 8000 });
+  const sitesText = await managerPage.evaluate(() => document.body.innerText);
+  assert(!sitesText.includes("Add site"), "manager can create sites");
+  assert(!sitesText.includes("South office"), "manager sees the other site");
+  await managerPage.screenshot({ path: "/opt/cursor/artifacts/21-manager-sites.png", fullPage: true });
+  await managerPage.goto(base + "/admin#/competitions/south-only", { waitUntil: "domcontentloaded" });
+  await managerPage.waitForFunction(() => document.body.innerText.includes("Forbidden") || document.body.innerText.includes("Not found"), { timeout: 8000 });
+  await managerContext.close();
+
+  const realErrors = errors.filter((e) => !e.includes("401") && !e.includes("favicon.ico") && !e.startsWith("Failed to load resource"));
   if (realErrors.length) throw new Error("console errors:\n" + realErrors.join("\n"));
   console.log("UI verification passed");
 } catch (err) {

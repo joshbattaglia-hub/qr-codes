@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs",
+    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs test/ops.test.mjs",
     "dev": "node scripts/dev-server.mjs"
   },
   "keywords": [],
@@ -12,7 +12,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@netlify/blobs": "^11.1.7",
+    "@netlify/blobs": "11.1.7",
     "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "jsqr": "1.4.0"
   }
 }
