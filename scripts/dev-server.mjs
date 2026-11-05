@@ -1,0 +1,86 @@
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { setStoreFactory, memoryBackend } from "../netlify/lib/lib.mjs";
+
+setStoreFactory(memoryBackend());
+if (!process.env.ADMIN_PASSWORD) process.env.ADMIN_PASSWORD = "liberty-dev";
+if (!process.env.PUBLIC_URL) process.env.PUBLIC_URL = "https://expresshelp.site";
+
+const auth = (await import("../netlify/functions/auth.mjs")).default;
+const codesFn = (await import("../netlify/functions/codes.mjs")).default;
+const settingsFn = (await import("../netlify/functions/settings.mjs")).default;
+const redirectFn = (await import("../netlify/functions/redirect.mjs")).default;
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
+const GEO = {
+  US: { city: "Austin", country: { code: "US", name: "United States" }, subdivision: { code: "TX" } },
+  JP: { city: "Tokyo", country: { code: "JP", name: "Japan" } },
+  AU: { city: "Sydney", country: { code: "AU", name: "Australia" }, subdivision: { code: "NSW" } },
+};
+const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png" };
+
+function toRequest(req, url, body) {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(req.headers)) if (v) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+  const init = { method: req.method, headers };
+  if (body.length && req.method !== "GET" && req.method !== "HEAD") init.body = body;
+  return new Request(url, init);
+}
+
+async function send(res, response) {
+  const headers = {};
+  response.headers.forEach((v, k) => { headers[k] = v; });
+  if (typeof response.headers.getSetCookie === "function") {
+    const cookies = response.headers.getSetCookie();
+    if (cookies.length) headers["set-cookie"] = cookies;
+  }
+  const buf = Buffer.from(await response.arrayBuffer());
+  res.writeHead(response.status, headers);
+  res.end(buf);
+}
+
+export function start(port = 8888) {
+  const server = http.createServer(async (req, res) => {
+    try {
+      const host = req.headers.host || "127.0.0.1";
+      const url = new URL(req.url, "http://" + host);
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const body = Buffer.concat(chunks);
+      const request = toRequest(req, url, body);
+      if (url.pathname === "/api/auth") return send(res, await auth(request));
+      if (url.pathname === "/api/settings") return send(res, await settingsFn(request));
+      if (url.pathname === "/api/codes" || url.pathname.startsWith("/api/codes/")) {
+        const slug = url.pathname === "/api/codes" ? undefined : decodeURIComponent(url.pathname.slice("/api/codes/".length));
+        return send(res, await codesFn(request, { params: { slug } }));
+      }
+      if (url.pathname.startsWith("/r/")) {
+        const slug = decodeURIComponent(url.pathname.slice(3).replace(/\/$/, ""));
+        const geo = GEO[url.searchParams.get("_geo")] || GEO.AU;
+        const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1");
+        return send(res, await redirectFn(request, { params: { slug }, geo, ip }));
+      }
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      let filePath = path.normalize(path.join(root, rel));
+      if (url.pathname === "/") filePath = path.join(root, "index.html");
+      if (!filePath.startsWith(root + path.sep) && filePath !== root) { res.writeHead(403).end("Forbidden"); return; }
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) filePath = path.join(filePath, "index.html");
+      if (!fs.existsSync(filePath)) {
+        if (url.pathname.startsWith("/admin")) filePath = path.join(root, "admin/index.html");
+        else { res.writeHead(404).end("Not found"); return; }
+      }
+      res.writeHead(200, { "content-type": TYPES[path.extname(filePath)] || "application/octet-stream", "cache-control": "no-store" });
+      fs.createReadStream(filePath).pipe(res);
+    } catch (e) {
+      res.writeHead(500, { "content-type": "text/plain" }).end(e.stack || String(e));
+    }
+  });
+  return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve(server)));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.env.PORT || 8888);
+  start(port).then(() => console.log("Liberty admin dev server http://127.0.0.1:" + port));
+}
