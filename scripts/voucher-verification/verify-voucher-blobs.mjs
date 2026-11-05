@@ -6,7 +6,10 @@ import { memoryBackend } from "../../netlify/lib/lib.mjs";
 import { redeemVoucher } from "../../netlify/lib/vouchers.mjs";
 
 export const STORE_PREFIX = "expresshelp-voucher-verification-";
+export const API_STORE_PREFIX = "site:";
+export const STORE_SUFFIX_HEX = 16;
 export const CONTENDERS = 24;
+const API_STORE_LIMIT = 64;
 
 const PRODUCTION_STORES = new Set([
   "vouchers", "codes", "stats", "settings", "pages", "page-views", "submissions",
@@ -14,18 +17,30 @@ const PRODUCTION_STORES = new Set([
   "templates", "health", "auth-rate",
 ]);
 
+/** Name the Blobs API receives. @netlify/blobs prefixes site-wide stores with `site:`. */
+export function apiStoreName(name) {
+  return API_STORE_PREFIX + name;
+}
+
 export function newStoreName() {
-  const name = STORE_PREFIX + crypto.randomBytes(15).toString("hex");
+  const name = STORE_PREFIX + crypto.randomBytes(STORE_SUFFIX_HEX / 2).toString("hex");
   assertStoreName(name);
   return name;
 }
 
 export function assertStoreName(name) {
-  if (typeof name !== "string" || !name.startsWith(STORE_PREFIX) || name.length <= STORE_PREFIX.length) {
+  if (typeof name !== "string" || !name.startsWith(STORE_PREFIX)) {
     throw new Error("Refusing to use a store outside the verification prefix");
   }
-  if (name.length > 64) throw new Error("Store name exceeds the Netlify Blobs 64 byte limit");
+  const suffix = name.slice(STORE_PREFIX.length);
+  if (suffix.length !== STORE_SUFFIX_HEX || !/^[0-9a-f]+$/.test(suffix)) {
+    throw new Error("Verification store suffix must be 16 hex characters");
+  }
   if (PRODUCTION_STORES.has(name)) throw new Error("Refusing to use a production store");
+  const wire = apiStoreName(name);
+  if (wire.length >= API_STORE_LIMIT) {
+    throw new Error("Store name must be less than 64 characters, including the site: prefix sent to the Blobs API");
+  }
 }
 
 function fixture(token) {

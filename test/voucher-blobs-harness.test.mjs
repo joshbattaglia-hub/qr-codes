@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { runMock, STORE_PREFIX, CONTENDERS } from "../scripts/voucher-verification/verify-voucher-blobs.mjs";
+import { apiStoreName, newStoreName, runMock, STORE_PREFIX, STORE_SUFFIX_HEX, CONTENDERS } from "../scripts/voucher-verification/verify-voucher-blobs.mjs";
 import { shouldRun } from "../netlify/functions/voucher-blobs-evidence.mjs";
 
 test("mock harness runs production redeemVoucher with conditional storage", async () => {
@@ -27,6 +27,23 @@ test("mock harness runs production redeemVoucher with conditional storage", asyn
   assert.equal(report.failClosed.missingStorage, true);
   assert.ok(report.store.startsWith(STORE_PREFIX));
   assert.equal(JSON.stringify(report).includes("token"), false);
+});
+
+test("generated store name stays under the live API limit, including the site: prefix", () => {
+  const names = new Set();
+  for (let i = 0; i < 20; i++) names.add(newStoreName());
+  assert.equal(names.size, 20);
+  for (const name of names) {
+    const wire = apiStoreName(name);
+    assert.equal(wire, "site:" + name);
+    assert.ok(wire.length < 64, wire + " is " + wire.length);
+    assert.equal(name.startsWith(STORE_PREFIX), true);
+    assert.match(name.slice(STORE_PREFIX.length), new RegExp("^[0-9a-f]{" + STORE_SUFFIX_HEX + "}$"));
+    const token = "ab".repeat(32);
+    const key = "token/" + token;
+    assert.equal(key.startsWith("/"), false);
+    assert.ok(key.length <= 600);
+  }
 });
 
 test("evidence function is an event subscription rather than an HTTP route", () => {
