@@ -1,0 +1,8 @@
+[build]
+  command = "echo static"
+  publish = "public"
+  functions = "netlify/functions"
+[[redirects]]
+  from = "/admin/*"
+  to = "/admin/index.html"
+  status = 200
