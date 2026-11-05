@@ -49,6 +49,14 @@ A health check does not call the redirect counter. Destinations on this site's `
 
 Local UI smoke test (memory store, not production data): `ADMIN_PASSWORD=liberty-dev npm run dev`, then open `http://127.0.0.1:8888/admin`.
 
+## Voucher redemption evidence
+
+`npm run verify:vouchers:mock` runs `redeemVoucher` from `netlify/lib/vouchers.mjs` against the in-memory conditional store. That result is not a live Blobs call. The local Netlify CLI cannot run this race: `blobs:*` is sequential, and `netlify dev` / `dev:exec` use a sandbox rather than the site's Blobs.
+
+A non-production deploy of a branch whose name contains `voucher-blobs-evidence` runs `deploySucceeded` in `netlify/functions/voucher-blobs-evidence.mjs`. Netlify signs that event and rejects external requests before the function runs. The function has no HTTP path. It calls the same `redeemVoucher`, using the credentials Netlify injects into Functions, on a new store named `expresshelp-voucher-verification-<id>`. It does not run when the deploy context is production. The fake voucher keys are deleted. A `result` object without the token is left in that store and printed as `VOUCHER_BLOBS_EVIDENCE` in the function log. After reading it, delete only that key: `netlify blobs:delete <store-name> result`.
+
+A local live run is possible only when `NETLIFY_SITE_ID` and `NETLIFY_AUTH_TOKEN` are already in the command environment. Those values must not be committed, pasted into chat, or copied out of the CLI config. `NETLIFY_AUTH_TOKEN` is a Netlify personal access token that can access this site's Blobs. The SDK does not read the CLI login by itself.
+
 ## Live
 
 | Role | URL |
