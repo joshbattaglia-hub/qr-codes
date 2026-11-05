@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
 import { json, sitesStore } from "../lib/lib.mjs";
-import { actorFrom, canSeeSite, forbidden, unauthorised } from "../lib/access.mjs";
+import { actorFrom, canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
 
 function publicSite(site) {
   return { id: site.id, name: site.name, created: site.created };
 }
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { json, sitesStore, staffStore } from "../lib/lib.mjs";
-import { actorFrom, forbidden, hashPassword, publicStaff, unauthorised } from "../lib/access.mjs";
+import { actorFrom, forbidden, hashPassword, originBlocked, publicStaff, unauthorised } from "../lib/access.mjs";
 
 async function allStaff() {
   const { blobs } = await staffStore().list();
@@ -17,6 +17,7 @@ async function knownSites(ids) {
 }
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   if (actor.role !== "head") return forbidden();

@@ -1026,6 +1026,7 @@ function captureCompDraft() {
     label: val("voucherLabel"),
     terms: val("voucherTerms"),
     expires: val("voucherExpires"),
+    maxIssues: Number(val("voucherMax")) || 0,
   };
   if (!d.slug) d.slugInput = val("slug");
   d.schedule = { type: val("scheduleType") === "single" ? "single" : "weekly", count: Number(val("scheduleCount")) || 8 };
@@ -1084,11 +1085,12 @@ function competitionEditor() {
     "<h2>One entry per period</h2><div class=\"row\">" +
     check("onePerPerson", "One entry per person") + check("dedupeEmail", "Dedupe email") + check("dedupePhone", "Dedupe phone") + check("dedupeRego", "Dedupe rego") + check("dedupeReceipt", "Dedupe receipt hash") + "</div>" +
     '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition. An active competition always shows this form, including before the start date and when the link has ?qr=1.</p>' +
-    '<h2>Voucher</h2><p class="muted small">Off until you enable it. No offer is filled in for you.</p>' +
-    '<label class="check"><input type="checkbox" name="voucherEnabled"' + (d.voucher?.enabled ? " checked" : "") + "> Enable a single-use voucher</label>" +
-    '<label class="field"><span>Voucher label</span><input name="voucherLabel" value="' + esc(d.voucher?.label || "") + '"></label>' +
-    '<label class="field"><span>Voucher terms</span><textarea name="voucherTerms">' + esc(d.voucher?.terms || "") + "</textarea></label>" +
-    '<label class="field"><span>Voucher expiry</span><input name="voucherExpires" type="date" value="' + esc(d.voucher?.expires || "") + '"></label></div>' +
+    '<h2>Voucher</h2><p class="muted small">Leave this off. It is not enabled by saving the competition. An offer needs text, terms, an expiry, and a maximum number of vouchers.</p>' +
+    '<label class="check"><input type="checkbox" name="voucherEnabled" data-testid="voucher-enabled"' + (d.voucher?.enabled ? " checked" : "") + "> Enable a single-use voucher</label>" +
+    '<label class="field"><span>Offer text</span><input name="voucherLabel" value="' + esc(d.voucher?.label || "") + '" placeholder="Written by you"></label>' +
+    '<label class="field"><span>Terms</span><textarea name="voucherTerms" placeholder="Written by you">' + esc(d.voucher?.terms || "") + "</textarea></label>" +
+    '<div class="split"><label class="field"><span>Expiry</span><input name="voucherExpires" type="date" value="' + esc(d.voucher?.expires || "") + '"></label>' +
+    '<label class="field"><span>Maximum issued</span><input name="voucherMax" type="number" min="1" max="500" value="' + esc(d.voucher?.maxIssues || "") + '"></label></div></div>' +
     compDesign(d) +
     '<div class="card"><div class="card-head"><h2>Entry form</h2></div>' + (d.fields || []).map(compFieldCard).join("") +
     '<div class="row" style="margin-top:12px"><select id="new-cfield-type">' + ["text", "email", "phone", "dropdown", "checkbox", "textarea", "file"].map((t) => '<option value="' + t + '">' + t + "</option>").join("") + '</select><button class="btn ghost" type="button" data-act="add-cfield">Add field</button></div>' +
@@ -1126,7 +1128,13 @@ function compManage() {
   return '<div class="card" data-testid="poster-tools"><div class="card-head"><h2>Poster, template, and copy</h2></div>' +
     '<p class="muted small">Posters print the existing public page address. A copy is a new draft with a new link and no entries.</p>' +
     '<div class="row"><button class="btn" type="button" data-act="comp-poster" data-size="a4">A4 poster</button><button class="btn ghost" type="button" data-act="comp-poster" data-size="a3">A3 poster</button>' +
-    '<button class="btn ghost" type="button" data-act="save-template">Save as template</button><button class="btn ghost" type="button" data-act="copy-comp">Copy promotion</button></div></div>' +
+    '<button class="btn ghost" type="button" data-act="save-template">Save as template</button></div>' +
+    '<form data-act="copy-comp" data-testid="copy-comp" class="stack"><p class="muted small">The copy is a new draft. Change the location, prize, or dates before you create it.</p>' +
+    '<label class="field"><span>Copy name</span><input name="name" value="' + esc((d.name || "Competition") + " copy") + '"></label>' +
+    '<label class="field"><span>Location</span><select name="siteId">' + siteOptions(d.siteId || "") + "</select></label>" +
+    '<label class="field"><span>Prize</span><input name="prize" value="' + esc(d.prize || "") + '"></label>' +
+    '<div class="split"><label class="field"><span>Start</span><input name="start" type="date" value="' + esc(d.start || "") + '"></label><label class="field"><span>End</span><input name="end" type="date" value="' + esc(d.end || "") + '"></label></div>' +
+    '<button class="btn ghost" type="submit">Copy promotion</button></form></div>' +
     '<div class="card"><div class="card-head"><h2>QR code and short link</h2></div>' +
     (code ? '<p class="break">' + esc(shortUrl(code.slug)) + ' → ' + esc(base() + "/c/" + d.slug) + '</p><div class="row"><a class="btn ghost" href="#/qrcodes/' + encodeURIComponent(code.slug) + '">View QR code</a><a class="btn ghost" href="#/links/' + encodeURIComponent(code.slug) + '">View short link</a></div>' : '<p class="muted">Saving an active competition creates both automatically.</p>') + "</div>" +
     '<div class="card" data-testid="comp-entries"><div class="card-head"><h2>Entries</h2><div class="row"><select id="comp-period">' + periodOptions + '</select><select id="comp-status">' +
@@ -1163,7 +1171,7 @@ function compPayload(d) {
     submitLabel: d.submitLabel, thankYou: d.thankYou,
     colors: d.colors, heroUrl: d.heroUrl, heroData: d.heroData, logoData: d.logoData,
     siteId: d.siteId || "",
-    voucher: { enabled: !!d.voucher?.enabled, label: d.voucher?.label || "", terms: d.voucher?.terms || "", expires: d.voucher?.expires || "" },
+    voucher: { enabled: !!d.voucher?.enabled, label: d.voucher?.label || "", terms: d.voucher?.terms || "", expires: d.voucher?.expires || "", maxIssues: Number(d.voucher?.maxIssues) || 0 },
   };
 }
 function compDesign(d) {
@@ -1307,11 +1315,11 @@ function sitesPage() {
     (cards || '<div class="card"><p class="muted">No sites are assigned to this login.</p></div>');
 }
 function staffSettings() {
-  if (state.actor?.role !== "head") return '<div class="card"><h2>Staff</h2><p class="muted">Head office creates manager logins here. None are created automatically. The head office password stays in ADMIN_PASSWORD.</p></div>';
+  if (state.actor?.role !== "head") return "";
   const rows = (state.staff || []).map((person) => '<form class="row" data-act="save-staff"><input type="hidden" name="id" value="' + esc(person.id) + '"><strong class="grow">' + esc(person.name) + '</strong><span class="muted">' + esc(person.email) + "</span>" +
     '<select name="siteId"><option value="">No site</option>' + (state.sites || []).map((site) => '<option value="' + esc(site.id) + '"' + (person.siteIds?.[0] === site.id ? " selected" : "") + ">" + esc(site.name) + "</option>").join("") + "</select>" +
     '<label class="check"><input name="disabled" type="checkbox"' + (person.disabled ? " checked" : "") + '> Disabled</label><button class="btn ghost" type="submit">Update</button></form>').join("");
-  return '<form class="card" data-act="create-staff" data-testid="create-staff"><h2>Staff</h2><p class="muted small">Managers only see the site you assign. Passwords are stored as a hash and are not shown again.</p>' +
+  return '<form class="card" data-act="create-staff" data-testid="staff-editor"><h2>Staff</h2><p class="muted small">Managers only see the site you assign. Passwords are stored as a hash and are not shown again. Nobody is created until you submit this form.</p>' +
     '<div class="split"><label class="field"><span>Name</span><input name="name" required></label><label class="field"><span>Email</span><input name="email" type="email" required></label></div>' +
     '<div class="split"><label class="field"><span>Password</span><input name="password" type="password" minlength="10" required autocomplete="new-password"></label><label class="field"><span>Site</span><select name="siteId"><option value="">No site yet</option>' + (state.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + "</select></label></div>" +
     '<button class="btn" type="submit">Create manager</button></form>' + (rows ? '<div class="card" data-testid="staff-list">' + rows + "</div>" : "");
@@ -1662,13 +1670,6 @@ async function handleAction(el) {
     toast("Template saved");
     return;
   }
-  if (act === "copy-comp") {
-    const copy = await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/copy", { method: "POST", body: JSON.stringify({ name: (state.compDraft.name || "Competition") + " copy", siteId: state.compDraft.siteId || "", prize: state.compDraft.prize || "", start: state.compDraft.start || "", end: state.compDraft.end || "" }) });
-    state.competitions = await api("/api/competitions");
-    toast("Copied as a new draft");
-    go("competitions/" + copy.slug);
-    return;
-  }
   if (act === "winner-notice") {
     const draft = await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/winners/" + encodeURIComponent(el.dataset.winner) + "/notice");
     const box = $("#notice-draft");
@@ -1908,7 +1909,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -1974,7 +1975,13 @@ $("#login-form").addEventListener("submit", async (e) => {
   err.textContent = "";
   try {
     const email = $("#staff-email")?.value.trim();
-    await api("/api/auth", { method: "POST", body: JSON.stringify(email ? { email, password: $("#pw").value } : { password: $("#pw").value }) });
+    const session = await api("/api/auth", { method: "POST", body: JSON.stringify(email ? { email, password: $("#pw").value } : { password: $("#pw").value }) });
+    state.actor = {
+      authenticated: true,
+      role: session.role || "head",
+      name: session.staff?.name || "Head office",
+      siteIds: session.role === "manager" ? (session.staff?.siteIds || []) : null,
+    };
     await enter();
   } catch (ex) { err.textContent = ex.message; }
 });
@@ -1994,6 +2001,13 @@ async function openPoster(path) {
     a.click();
   }
   toast("Poster ready");
+}
+async function copyCompetition(form) {
+  const data = new FormData(form);
+  const copy = await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/copy", { method: "POST", body: JSON.stringify({ name: data.get("name"), siteId: data.get("siteId") || "", prize: data.get("prize") || "", start: data.get("start") || "", end: data.get("end") || "" }) });
+  state.competitions = await api("/api/competitions");
+  toast("Copied as a new draft");
+  go("competitions/" + copy.slug);
 }
 async function createSite(form) {
   await api("/api/sites", { method: "POST", body: JSON.stringify({ name: new FormData(form).get("name") }) });

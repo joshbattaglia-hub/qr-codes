@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import {
   json, env, publicBase, validSlug, visitorHash,
-  competitionsStore, compEntries, compFiles, compViews, vouchersStore,
+  competitionsStore, compEntries, compFiles, compViews, vouchersStore, conditionalIncrement,
 } from "../lib/lib.mjs";
-import { actorFrom, assignSite, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
 import { competitionReminders } from "../lib/reminders.mjs";
 import { posterHtml } from "../lib/posters.mjs";
 import { issueVoucher, voucherConfig } from "../lib/vouchers.mjs";
@@ -80,22 +80,39 @@ async function handlePublic(req, context, slug) {
   return html(405, unavailableCompetition());
 }
 
+function entryIdentity(incoming) {
+  return crypto.createHash("sha256").update([incoming.emailNorm, incoming.phoneNorm, incoming.receiptHash, incoming.name].join("\n")).digest("hex");
+}
+
+async function claimEntry(comp, idem, identity) {
+  if (!idem) return { proceed: true };
+  const key = "entry-idem/" + comp.slug + "/" + idem;
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const prior = await vouchersStore().get(key, { type: "json", consistency: "strong" });
+    if (prior?.response) {
+      if (prior.identity !== identity) return { error: json(409, { error: "Idempotency key belongs to a different entry" }) };
+      return { response: prior.response };
+    }
+    if (prior?.identity && prior.identity !== identity) return { error: json(409, { error: "Idempotency key belongs to a different entry" }) };
+    if (!prior) {
+      const gate = await vouchersStore().setJSON(key, { pending: true, identity }, { onlyIfNew: true });
+      if (gate?.modified === true) return { proceed: true, key };
+      if (gate?.modified !== false) return { error: json(503, { error: "Could not save this entry" }) };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return { error: json(409, { error: "This entry is already being saved" }) };
+}
+
 async function submit(req, comp) {
   if (!accepting(comp)) return json(400, { error: "This competition is not accepting entries" });
   const idem = String(req.headers.get("idempotency-key") || "").trim().slice(0, 80);
-  const idemKey = idem ? "entry-idem/" + comp.slug + "/" + idem : "";
-  if (idemKey) {
-    const prior = await vouchersStore().get(idemKey, { type: "json" });
-    if (prior?.response) return json(200, prior.response);
-    const gate = await vouchersStore().setJSON(idemKey, { pending: true }, { onlyIfNew: true });
-    if (!gate || gate.modified !== true) return json(409, { error: "This entry is already being saved" });
-  }
   const body = await req.json().catch(() => ({}));
   const incoming = buildIncoming(comp, body);
-  if (incoming.error) {
-    if (idemKey) await vouchersStore().delete(idemKey);
-    return json(400, { error: incoming.error });
-  }
+  if (incoming.error) return json(400, { error: incoming.error });
+  const claim = await claimEntry(comp, idem, entryIdentity(incoming));
+  if (claim.error) return claim.error;
+  if (claim.response) return json(200, claim.response);
   const existing = await listEntries(comp.slug);
   const verdict = classifyEntry(comp, existing, incoming);
   const now = new Date();
@@ -135,11 +152,13 @@ async function submit(req, comp) {
   let voucherToken;
   const offer = voucherConfig(comp);
   if (entry.status === "valid" && offer.enabled) {
+    const reserved = await conditionalIncrement(vouchersStore(), "entry-count/" + comp.slug, offer.maxIssues);
+    if (reserved.ok) {
     const issued = await issueVoucher(vouchersStore(), {
       competition: comp.slug,
       siteId: comp.siteId || "",
       source: "entry",
-      sourceId: idem || entry.id,
+      sourceId: entry.id,
       expires: offer.expires,
       label: offer.label,
     });
@@ -148,12 +167,13 @@ async function submit(req, comp) {
       entry.voucherId = issued.id;
       await compEntries().setJSON(comp.slug + "/" + id, entry);
     }
+    }
   }
   if (entry.status === "valid") {
     await notify("New competition entry: " + (comp.name || comp.slug), [comp.name, entry.pageUrl, "", entry.name, entry.contact, "Period " + entry.period].join("\n"));
   }
   const response = { ok: true, status: entry.status, id: entry.id, thankYou: comp.thankYou, ...(voucherToken ? { voucherToken } : {}) };
-  if (idemKey) await vouchersStore().setJSON(idemKey, { response });
+  if (claim.key) await vouchersStore().setJSON(claim.key, { identity: entryIdentity(incoming), response });
   return json(200, response);
 }
 
@@ -208,6 +228,7 @@ function winnerRecord(comp, entry, drawNumber, poolSize, redraw) {
 }
 
 export default async (req, context) => {
+  if (originBlocked(req)) return forbidden();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const pub = path.match(/^\/c\/([^/]+)$/);
   if (pub) return handlePublic(req, context, decodeURIComponent(pub[1]).toLowerCase());
@@ -222,8 +243,9 @@ export default async (req, context) => {
   }
   if (path === "/api/competitions" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, null, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, null, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     let slug = String(body.slug || "").trim().toLowerCase();
     if (slug) {
       if (!validSlug(slug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
@@ -299,8 +321,9 @@ export default async (req, context) => {
   }
   if (req.method === "PATCH") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, comp, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, comp, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     const patched = applyCompetitionPatch(comp, body);
     if (patched.error) return json(400, { error: patched.error });
     const next = { ...patched.competition, slug, siteId: assigned.siteId, winners: comp.winners || [], currentPeriod: body.currentPeriod ? patched.competition.currentPeriod : (comp.currentPeriod || 1) };
@@ -338,8 +361,9 @@ async function copyCompetition(slug, req, actor) {
   const found = await visibleComp(slug, actor);
   if (found.error) return found.error;
   const body = await req.json().catch(() => ({}));
-  const assigned = assignSite(actor, null, Object.prototype.hasOwnProperty.call(body, "siteId") ? body : { siteId: found.comp.siteId || "" });
-  if (assigned.error) return forbidden();
+  const assigned = await assignSite(actor, null, Object.prototype.hasOwnProperty.call(body, "siteId") ? body : { siteId: found.comp.siteId || "" });
+  const denied = assignmentResponse(assigned);
+  if (denied) return denied;
   let nextSlug = String(body.slug || "").trim().toLowerCase();
   if (nextSlug) {
     if (!validSlug(nextSlug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });

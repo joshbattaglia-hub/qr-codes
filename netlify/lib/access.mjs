@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { authed, env, json, staffStore } from "./lib.mjs";
+import { authed, conditionalIncrement, env, json, rateStore, sitesStore, staffStore } from "./lib.mjs";
 
-const secret = () => crypto.createHash("sha256").update("qr-sess:" + env("ADMIN_PASSWORD")).digest();
+const secret = () => crypto.createHash("sha256").update("qr-staff-sess:" + env("ADMIN_PASSWORD")).digest();
 
 export function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const hash = crypto.scryptSync(String(password), salt, 32).toString("hex");
@@ -86,8 +86,33 @@ export function siteOf(record) {
   return typeof record?.siteId === "string" ? record.siteId : "";
 }
 
+/** Cross-site browser requests must not ride a cookie. Missing Origin is allowed for non-browser clients. */
+export function originBlocked(req) {
+  const method = req.method || "GET";
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  if ((req.headers.get("sec-fetch-site") || "").toLowerCase() === "cross-site") return true;
+  const origin = req.headers.get("origin");
+  if (!origin) return false;
+  try { return new URL(origin).host !== new URL(req.url).host; }
+  catch { return true; }
+}
+
+export const LOGIN_LIMIT = 8;
+
+/** Counts attempts in Blobs. Fails closed when the conditional counter cannot be recorded. */
+export async function loginLimited(req, bucket) {
+  const windowId = Math.floor(Date.now() / 600000);
+  const ip = crypto.createHash("sha256").update("login-ip\n" + (req.headers.get("x-forwarded-for") || "local")).digest("hex").slice(0, 16);
+  const store = rateStore();
+  const account = await conditionalIncrement(store, `acct/${bucket}/${windowId}`, LOGIN_LIMIT);
+  const network = await conditionalIncrement(store, `ip/${ip}/${windowId}`, 80);
+  if (!account.ok && account.reason === "unsupported") return true;
+  if (!network.ok && network.reason === "unsupported") return true;
+  return account.reason === "limit" || network.reason === "limit";
+}
+
 /** Keep the current site unless this request assigns one the actor is allowed to use. */
-export function assignSite(actor, record, body) {
+export async function assignSite(actor, record, body) {
   if (!actor) return { error: "forbidden" };
   const current = record ? siteOf(record) : "";
   const changing = !!body && Object.prototype.hasOwnProperty.call(body, "siteId");
@@ -96,13 +121,25 @@ export function assignSite(actor, record, body) {
     if (!record && actor.role !== "head") return { error: "forbidden" };
     return { siteId: current };
   }
-  const next = String(body.siteId || "");
+  if (body.siteId != null && typeof body.siteId !== "string") return { error: "forbidden" };
+  const next = typeof body.siteId === "string" ? body.siteId : "";
+  if (next && !/^s[a-f0-9]{8}$/.test(next)) return { error: "forbidden" };
   if (!canAssignSite(actor, next)) return { error: "forbidden" };
+  if (next) {
+    const site = await sitesStore().get(next, { type: "json" });
+    if (!site) return { error: "unknown-site" };
+  }
   return { siteId: next };
 }
 
 export function forbidden() {
   return json(403, { error: "Forbidden" });
+}
+
+export function assignmentResponse(assigned) {
+  if (!assigned?.error) return null;
+  if (assigned.error === "unknown-site") return json(400, { error: "Unknown site" });
+  return forbidden();
 }
 
 export function jsonCookies(status, body, cookies) {

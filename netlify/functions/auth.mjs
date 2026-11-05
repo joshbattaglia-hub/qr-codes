@@ -1,9 +1,10 @@
 import { checkPassword, makeCookie, clearCookie, json, staffStore } from "../lib/lib.mjs";
-import { actorFrom, clearStaffCookie, jsonCookies, makeStaffCookie, publicStaff, verifyPassword } from "../lib/access.mjs";
+import { actorFrom, clearStaffCookie, forbidden, jsonCookies, loginLimited, makeStaffCookie, originBlocked, publicStaff, verifyPassword } from "../lib/access.mjs";
 
 const DUMMY = "scrypt$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   if (req.method === "GET") {
     const actor = await actorFrom(req);
     if (!actor) return json(200, { authenticated: false });
@@ -14,6 +15,7 @@ export default async (req) => {
   }
   const body = await req.json().catch(() => ({}));
   const email = String(body.email || "").trim().toLowerCase();
+  if (await loginLimited(req, email || "head")) return json(429, { error: "Too many attempts" });
   if (!email) {
     if (!checkPassword(body.password)) return json(401, { error: "Invalid password" });
     return jsonCookies(200, { ok: true, role: "head" }, [makeCookie(req), clearStaffCookie(req)]);

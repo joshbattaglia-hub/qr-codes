@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import qrcode from "qrcode-generator";
+import jsQR from "jsqr";
 
 process.env.ADMIN_PASSWORD = "test-pass";
 process.env.PUBLIC_URL = "https://expresshelp.site";
@@ -23,11 +24,12 @@ const { melbourneDate } = await import("../netlify/lib/competitions.mjs");
 const { checkDestination } = await import("../netlify/lib/health.mjs");
 const { redeemVoucher, issueVoucher } = await import("../netlify/lib/vouchers.mjs");
 
-function req(method, url, { cookie, body, ua, idem } = {}) {
+function req(method, url, { cookie, body, ua, idem, origin } = {}) {
   const headers = new Headers();
   if (cookie) headers.set("cookie", cookie);
   if (ua) headers.set("user-agent", ua);
   if (idem) headers.set("idempotency-key", idem);
+  if (origin) headers.set("origin", origin);
   if (body !== undefined) {
     headers.set("content-type", "application/json");
     headers.set("accept", "application/json");
@@ -49,6 +51,23 @@ async function headCookie() {
   const login = await auth(req("POST", "/api/auth", { body: { password: "test-pass" } }));
   return cookieNamed(login, "qr_admin");
 }
+function decodePosterQr(svg) {
+  const size = Number(svg.match(/viewBox="0 0 (\d+) (\d+)"/)[1]);
+  const dark = new Set();
+  for (const match of svg.matchAll(/M(-?\d+) (-?\d+)h/g)) dark.add(match[1] + "," + match[2]);
+  const data = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const on = dark.has((x - (x % 4)) + "," + (y - (y % 4)));
+      const i = (y * size + x) * 4;
+      const v = on ? 0 : 255;
+      data[i] = data[i + 1] = data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+  }
+  return jsQR(data, size, size)?.data || "";
+}
+const sampleOffer = { enabled: true, label: "Coffee", terms: "One cup, in store", expires: "2026-12-31", maxIssues: 20 };
 function qrMatches(svg, url) {
   const q = qrcode(0, "M");
   q.addData(url);
@@ -73,7 +92,7 @@ test("melbourne dates follow Australia/Melbourne across DST", () => {
   assert.equal(melbourneDate(new Date("2026-04-04T16:30:00Z")), "2026-04-05");
 });
 
-test("draw reminders use Melbourne day boundaries and ignore drawn or ended competitions", () => {
+test("draw reminders use Melbourne day boundaries and keep overdue draws after closing", () => {
   const base = { name: "Fuel", slug: "fuel", status: "active", start: "2026-11-01", end: "2026-12-01", schedule: { type: "weekly", count: 4 }, winners: [] };
   assert.deepEqual(competitionReminders(base, "2026-11-07").map((item) => item.kind), ["upcoming-draw"]);
   assert.deepEqual(competitionReminders(base, "2026-11-08").map((item) => item.kind), ["overdue-draw"]);
@@ -82,7 +101,11 @@ test("draw reminders use Melbourne day boundaries and ignore drawn or ended comp
   assert.ok(competitionReminders(closing, "2026-11-01").some((item) => item.kind === "closing"));
   assert.equal(competitionReminders({ ...base, end: "2026-11-09" }, "2026-11-01").some((item) => item.kind === "closing"), false);
   assert.ok(competitionReminders({ ...base, end: "2026-11-04" }, "2026-11-05").some((item) => item.kind === "past-close"));
-  assert.equal(competitionReminders({ ...base, status: "ended", end: "2026-11-01" }, "2026-11-08").length, 0);
+  const closed = competitionReminders({ ...base, status: "ended", end: "2026-11-01" }, "2026-11-08").map((item) => item.kind);
+  assert.ok(closed.includes("overdue-draw"), closed.join(","));
+  assert.ok(closed.includes("past-close"));
+  const finished = { ...base, status: "ended", end: "2026-11-01", winners: [{ superseded: false }, { superseded: false }, { superseded: false }, { superseded: false }] };
+  assert.equal(competitionReminders(finished, "2026-11-08").some((item) => item.kind === "overdue-draw"), false);
   const drawn = { ...base, winners: [{ superseded: false }, { superseded: false }, { superseded: false }, { superseded: false }] };
   assert.equal(competitionReminders(drawn, "2026-12-01").some((item) => String(item.kind).includes("draw")), false);
   const moved = { ...base, winners: [{ superseded: false }] };
@@ -160,6 +183,7 @@ test("poster QR modules encode the stable public URL at A4 and A3", async () => 
     assert.match(poster.body, new RegExp(size === "a3" ? "90mm" : "58mm"));
     assert.ok(poster.body.includes(url));
     qrMatches(poster.body, url);
+    assert.equal(decodePosterQr(poster.body), url);
   }
 });
 
@@ -204,6 +228,25 @@ test("managers are limited to assigned sites, including guessed ids, exports, an
   assert.equal(oldOne.status, 403);
   const draw = await read(await compFn(req("POST", "/api/competitions/south-draw/draw", { cookie: staffCookie, body: {} })));
   assert.equal(draw.status, 403);
+  const queryBypass = await read(await codesFn(req("PATCH", "/api/codes/north-code?siteId=" + south.body.id, { cookie: staffCookie, body: {} })));
+  assert.equal(queryBypass.status, 200);
+  const stillNorth = await read(await codesFn(req("GET", "/api/codes/north-code", { cookie })));
+  assert.equal(stillNorth.body.code.siteId, north.body.id);
+  const bodyBypass = await read(await codesFn(req("PATCH", "/api/codes/north-code", { cookie: staffCookie, body: { siteId: south.body.id } })));
+  assert.equal(bodyBypass.status, 403);
+  await pagesFn(req("POST", "/api/pages", { cookie, body: { name: "South page", slug: "south-page", status: "published", siteId: south.body.id } }));
+  const leaked = await read(await pagesFn(req("GET", "/api/pages/south-page", { cookie: staffCookie })));
+  assert.equal(leaked.status, 403);
+  const pushed = await read(await pagesFn(req("POST", "/api/pages/south-page/submit", { cookie: staffCookie, body: { name: "Spy", email: "spy@example.com" } })));
+  assert.equal(pushed.status, 403);
+  const staffList = await read(await staffFn(req("GET", "/api/staff", { cookie: staffCookie })));
+  assert.equal(staffList.status, 403);
+  const newSite = await read(await sitesFn(req("POST", "/api/sites", { cookie: staffCookie, body: { name: "Secret yard" } })));
+  assert.equal(newSite.status, 403);
+  const crossHealth = await read(await healthFn(req("POST", "/api/health", { cookie: staffCookie, body: { slug: "south-code" } })));
+  assert.equal(crossHealth.status, 403);
+  const csrf = await read(await codesFn(req("PATCH", "/api/codes/north-code", { cookie: staffCookie, body: { name: "Hijack" }, origin: "https://evil.example" })));
+  assert.equal(csrf.status, 403);
   const metrics = await read(await codesFn(req("GET", "/api/codes/south-code", { cookie: staffCookie })));
   assert.equal(metrics.status, 403);
   const codes = await read(await codesFn(req("GET", "/api/codes", { cookie: staffCookie })));
@@ -270,7 +313,7 @@ test("vouchers stay off, issue once, and redeem exactly once under concurrency",
   const site = await read(await sitesFn(req("POST", "/api/sites", { cookie, body: { name: "Voucher yard" } })));
   await compFn(req("POST", "/api/competitions", {
     cookie,
-    body: { name: "Offer", slug: "offer-ops", status: "active", siteId: site.body.id, voucher: { enabled: true, label: "", terms: "", expires: "2026-12-01" } },
+    body: { name: "Offer", slug: "offer-ops", status: "active", siteId: site.body.id, voucher: sampleOffer },
   }));
   const first = await read(await compFn(req("POST", "/c/offer-ops", {
     idem: "same-key",
@@ -292,12 +335,14 @@ test("vouchers stay off, issue once, and redeem exactly once under concurrency",
 
   const races = await Promise.all(Array.from({ length: 20 }, () => vouchersFn(req("POST", "/api/vouchers/redeem", { cookie, body: { token: first.body.voucherToken } })).then(read)));
   assert.equal(races.filter((row) => row.status === 200).length, 1);
+  assert.equal(races.filter((row) => row.status === 409).length, 19);
   const again = await read(await vouchersFn(req("POST", "/api/vouchers/redeem", { cookie, body: { token: first.body.voucherToken } })));
-  assert.equal(again.status, 400);
+  assert.equal(again.status, 409);
+  assert.equal(again.body.token, undefined);
 
   await codesFn(req("POST", "/api/codes", {
     cookie,
-    body: { url: "https://example.com/offer", slug: "offer-code", type: "qr", siteId: site.body.id, voucher: { enabled: true, expires: "2026-12-01" } },
+    body: { url: "https://example.com/offer", slug: "offer-code", type: "qr", siteId: site.body.id, voucher: sampleOffer },
   }));
   const statsBefore = await lib.stats().get("offer-code", { type: "json" });
   const claimA = await read(await vouchersFn(req("POST", "/api/vouchers/claim", { ua: "voucher-a", body: { code: "offer-code" } }), { ip: "203.0.113.50" }));
@@ -346,6 +391,29 @@ test("health checks block private targets and redirects and do not count visits"
   assert.equal(calls.length, 0);
   assert.equal((await checkDestination("http://10.0.0.8/", { fetch: fetchImpl, lookup })).reason, "blocked");
   assert.equal((await checkDestination("http://169.254.169.254/", { fetch: fetchImpl, lookup })).reason, "blocked");
+  assert.equal((await checkDestination("http://[::ffff:127.0.0.1]/", { fetch: fetchImpl, lookup })).reason, "blocked");
+  assert.equal((await checkDestination("http://[::ffff:7f00:1]/", { fetch: fetchImpl, lookup })).reason, "blocked");
+  assert.equal((await checkDestination("http://[::ffff:a00:1]/", { fetch: fetchImpl, lookup })).reason, "blocked");
+  assert.equal(calls.length, 0);
+  let loopCalls = 0;
+  const looped = await checkDestination("https://public.example/loop", {
+    fetch: async () => { loopCalls += 1; return new Response("", { status: 302, headers: { location: "https://public.example/loop" } }); },
+    lookup, maxRedirects: 3,
+  });
+  assert.equal(looped.status, "unknown");
+  assert.equal(looped.reason, "redirects");
+  assert.equal(loopCalls, 4);
+  let cancelled = false;
+  const bounded = await checkDestination("https://public.example/ok", {
+    fetch: async () => ({ status: 200, headers: { get() { return null; } }, body: { getReader: () => ({ async read() { return { done: false, value: new Uint8Array(1000) }; }, async cancel() { cancelled = true; } }) } }),
+    lookup, maxBytes: 1500,
+  });
+  assert.equal(bounded.status, "ok");
+  assert.equal(cancelled, true);
+  let ownCalls = 0;
+  const own = await checkDestination("https://expresshelp.site/r/health-ops?qr=1", { fetch: async () => { ownCalls += 1; return new Response("ok", { status: 200 }); }, lookup });
+  assert.equal(own.reason, "own-link");
+  assert.equal(ownCalls, 0);
   assert.equal((await checkDestination("http://user:pass@public.example/a", { fetch: fetchImpl, lookup })).reason, "credentials");
   assert.equal((await checkDestination("file:///etc/passwd", { fetch: fetchImpl, lookup })).reason, "scheme");
   assert.equal((await checkDestination("http://intranet.local/a", { fetch: fetchImpl, lookup })).reason, "blocked");
@@ -381,4 +449,61 @@ test("health checks block private targets and redirects and do not count visits"
   const report = await read(await healthFn(req("GET", "/api/health", { cookie })));
   assert.equal(report.body.promotions.find((row) => row.slug === "closed-ops").status, "expired");
   assert.equal(report.body.links.find((row) => row.slug === "health-ops").status, "unknown");
+});
+
+test("voucher issuance does not share a token across entrants and redemption conflicts are 409", async () => {
+  const cookie = await headCookie();
+  const bare = await read(await compFn(req("POST", "/api/competitions", { cookie, body: { name: "Bare", slug: "bare-offer", status: "active", voucher: { enabled: true } } })));
+  assert.equal(bare.status, 400);
+  const site = await read(await sitesFn(req("POST", "/api/sites", { cookie, body: { name: "Receipt yard" } })));
+  await compFn(req("POST", "/api/competitions", { cookie, body: { name: "Receipts", slug: "receipt-ops", status: "active", siteId: site.body.id, voucher: sampleOffer } }));
+  const first = await read(await compFn(req("POST", "/c/receipt-ops", { body: { name: "Fay", email: "fay@example.com", receipt: "SAME-1", over18: "yes", consent: "yes" } }), { ip: "203.0.113.70" }));
+  const other = await read(await compFn(req("POST", "/c/receipt-ops", { body: { name: "Gus", email: "gus@example.com", receipt: "SAME-1", over18: "yes", consent: "yes" } }), { ip: "203.0.113.71" }));
+  assert.equal(first.body.status, "valid");
+  assert.equal(other.body.voucherToken, undefined);
+  assert.equal(JSON.stringify(other.body).includes(first.body.voucherToken), false);
+  const intruder = await read(await compFn(req("POST", "/c/receipt-ops", { idem: "shared-key", body: { name: "Ida", email: "ida@example.com", receipt: "OTHER-9", over18: "yes", consent: "yes" } }), { ip: "203.0.113.72" }));
+  const owner = await read(await compFn(req("POST", "/c/receipt-ops", { idem: "shared-key", body: { name: "Ida", email: "ida@example.com", receipt: "OTHER-9", over18: "yes", consent: "yes" } }), { ip: "203.0.113.72" }));
+  assert.equal(intruder.status, 200, JSON.stringify(intruder.body));
+  assert.equal(owner.body.voucherToken, intruder.body.voucherToken);
+  const stranger = await read(await compFn(req("POST", "/c/receipt-ops", { idem: "shared-key", body: { name: "Not Ida", email: "not-ida@example.com", receipt: "OTHER-9", over18: "yes", consent: "yes" } }), { ip: "203.0.113.73" }));
+  assert.equal(stranger.status, 409);
+  assert.equal(JSON.stringify(stranger.body).includes(intruder.body.voucherToken || "none"), false);
+  const parallel = await Promise.all([0, 1].map(() => compFn(req("POST", "/c/receipt-ops", { idem: "race-key", body: { name: "Jed", email: "jed@example.com", receipt: "RACE-1", over18: "yes", consent: "yes" } }), { ip: "203.0.113.74" }).then(read)));
+  assert.equal(parallel.every((row) => row.status === 200), true, JSON.stringify(parallel.map((row) => row.body)));
+  assert.equal(parallel[0].body.id, parallel[1].body.id);
+  assert.equal(parallel[0].body.voucherToken, parallel[1].body.voucherToken);
+  const detail = await read(await compFn(req("GET", "/api/competitions/receipt-ops", { cookie })));
+  assert.equal(detail.body.entries.filter((entry) => entry.contact === "jed@example.com").length, 1);
+
+  await codesFn(req("POST", "/api/codes", { cookie, body: { url: "https://example.com/cap", slug: "cap-code", type: "qr", siteId: site.body.id, voucher: { ...sampleOffer, maxIssues: 5 } } }));
+  const claims = [];
+  for (const agent of ["agent-a", "agent-b", "agent-c", "agent-d"]) {
+    claims.push(await read(await vouchersFn(req("POST", "/api/vouchers/claim", { ua: agent, body: { code: "cap-code" } }), { ip: "203.0.113.80" })));
+  }
+  assert.equal(claims.filter((row) => row.status === 200).length, 3);
+  assert.equal(claims[3].status, 429);
+  const replay = await read(await vouchersFn(req("POST", "/api/vouchers/claim", { ua: "agent-a", body: { code: "cap-code" } }), { ip: "203.0.113.80" }));
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.token, claims[0].body.token);
+  assert.equal(replay.body.created, false);
+});
+
+test("staff login is rate limited and a cross-site origin cannot use the session", async () => {
+  const cookie = await headCookie();
+  const site = await read(await sitesFn(req("POST", "/api/sites", { cookie, body: { name: "Rate yard" } })));
+  await staffFn(req("POST", "/api/staff", { cookie, body: { name: "Rae", email: "rae@example.com", password: "correct-horse", siteIds: [site.body.id] } }));
+  for (let i = 0; i < 8; i++) {
+    const failed = await read(await auth(req("POST", "/api/auth", { body: { email: "rae@example.com", password: "wrong-password" } })));
+    assert.equal(failed.status, 401);
+  }
+  const blocked = await read(await auth(req("POST", "/api/auth", { body: { email: "rae@example.com", password: "correct-horse" } })));
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.error, "Too many attempts");
+  const head = await read(await auth(req("POST", "/api/auth", { body: { password: "test-pass" }, origin: "https://evil.example" })));
+  assert.equal(head.status, 403);
+  assert.equal(cookieNamed(head.res, "qr_admin"), "");
+  const { conditionalIncrement } = await import("../netlify/lib/lib.mjs");
+  const unsupported = await conditionalIncrement({ async setJSON() { return {}; } }, "k", 2);
+  assert.equal(unsupported.reason, "unsupported");
 });

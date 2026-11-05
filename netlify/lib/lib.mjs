@@ -19,6 +19,8 @@ export function setStoreFactory(fn) { storeFactory = fn; }
 
 function openStore(name) {
   if (storeFactory) return storeFactory(name);
+  // Strong reads and conditional writes. @netlify/blobs 11.1.7 uses this as the
+  // client default (`opConsistency ?? this.consistency`) for get, getWithMetadata, and setJSON.
   return getStore({ name, consistency: "strong" });
 }
 
@@ -37,6 +39,32 @@ export const staffStore = () => openStore("staff");
 export const templatesStore = () => openStore("templates");
 export const vouchersStore = () => openStore("vouchers");
 export const healthStore = () => openStore("health");
+export const rateStore = () => openStore("auth-rate");
+
+/**
+ * Durable counter. Succeeds only with onlyIfNew or onlyIfMatch.
+ * Returns unsupported when the store cannot prove the conditional write.
+ */
+export async function conditionalIncrement(store, key, max) {
+  if (typeof store?.getWithMetadata !== "function" || typeof store?.setJSON !== "function") return { ok: false, reason: "unsupported" };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const meta = await store.getWithMetadata(key, { type: "json", consistency: "strong" });
+    if (!meta) {
+      const created = await store.setJSON(key, { n: 1 }, { onlyIfNew: true });
+      if (created?.modified === true) return { ok: true, n: 1 };
+      if (created?.modified === false) continue;
+      return { ok: false, reason: "unsupported" };
+    }
+    if (!meta.etag) return { ok: false, reason: "unsupported" };
+    const n = Number(meta.data?.n) || 0;
+    if (n >= max) return { ok: false, reason: "limit" };
+    const next = await store.setJSON(key, { n: n + 1 }, { onlyIfMatch: meta.etag });
+    if (next?.modified === true) return { ok: true, n: n + 1 };
+    if (next?.modified === false) continue;
+    return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "unsupported" };
+}
 
 export function env(name) {
   try {
@@ -513,7 +541,6 @@ export async function readSettings() {
   const stored = await settingsStore().get("workspace", { type: "json" }).catch(() => null);
   return {
     ...DEFAULT_SETTINGS,
-    ...(stored || {}),
     publicUrl: publicBase(),
     workspaceName: String(stored?.workspaceName || DEFAULT_SETTINGS.workspaceName).slice(0, 40) || "Liberty",
     defaultFg: validColor(stored?.defaultFg) ? stored.defaultFg : DEFAULT_SETTINGS.defaultFg,

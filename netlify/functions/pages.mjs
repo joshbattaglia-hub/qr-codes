@@ -3,7 +3,7 @@ import {
   json, env, publicBase, validSlug, dayKey, visitorHash,
   pagesStore, pageViews, submissionsStore,
 } from "../lib/lib.mjs";
-import { actorFrom, assignSite, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
 import {
   defaultPage, applyPagePatch, readSubmission, recordView, publicPage,
   renderPublicPage, unavailablePage,
@@ -106,6 +106,7 @@ export default async (req, context) => {
   const pub = path.match(/^\/p\/([^/]+)$/);
   if (pub) return handlePublic(req, context, decodeURIComponent(pub[1]).toLowerCase());
 
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   if (path === "/api/pages" && req.method === "GET") {
@@ -116,8 +117,9 @@ export default async (req, context) => {
   }
   if (path === "/api/pages" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, null, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, null, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     let slug = String(body.slug || "").trim().toLowerCase();
     if (slug) {
       if (!validSlug(slug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
@@ -137,6 +139,7 @@ export default async (req, context) => {
     const slug = decodeURIComponent(sub[1]).toLowerCase();
     const page = await pagesStore().get(slug, { type: "json" });
     if (!page) return json(404, { error: "Not found" });
+    if (!canSeeSite(actor, siteOf(page))) return forbidden();
     return submit(req, context, page);
   }
   const one = path.match(/^\/api\/pages\/([^/]+)$/);
@@ -155,8 +158,9 @@ export default async (req, context) => {
   }
   if (req.method === "PATCH") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, page, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, page, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     const patched = applyPagePatch(page, body);
     if (patched.error) return json(400, { error: patched.error });
     const next = { ...patched.page, slug, siteId: assigned.siteId };

@@ -2,6 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
+import { publicBase } from "./lib.mjs";
 
 const BLOCKED_HOSTS = new Set(["localhost", "localhost.localdomain", "metadata.google.internal", "metadata.google.com"]);
 
@@ -18,8 +19,15 @@ export function isPrivateAddress(ip) {
   }
   if (kind === 6) {
     const lower = ip.toLowerCase();
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateAddress(mapped[1]);
+    const mapped = lower.match(/(?:^|:)ffff:(\d+\.\d+\.\d+\.\d+)$/) || lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mapped) {
+      if (mapped[2] != null && !mapped[0].includes(".")) {
+        const hi = parseInt(mapped[1], 16);
+        const lo = parseInt(mapped[2], 16);
+        return isPrivateAddress([(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255].join("."));
+      }
+      return isPrivateAddress(mapped[1]);
+    }
     if (lower === "::1" || lower === "::") return true;
     const head = parseInt(lower.split(":")[0] || "0", 16);
     if (head >= 0xfe80 && head <= 0xfebf) return true;
@@ -91,6 +99,12 @@ export async function checkDestination(input, deps = {}) {
   try { current = new URL(input); } catch { return { status: "unknown", reason: "invalid-url", checkedAt: new Date().toISOString() }; }
   if (current.username || current.password) return { status: "unknown", reason: "credentials", checkedAt: new Date().toISOString() };
   if (current.protocol !== "http:" && current.protocol !== "https:") return { status: "unknown", reason: "scheme", checkedAt: new Date().toISOString() };
+  try {
+    const home = new URL(publicBase());
+    if (current.host === home.host && /^\/(?:r|p|c)\//.test(current.pathname)) {
+      return { status: "unknown", reason: "own-link", checkedAt: new Date().toISOString() };
+    }
+  } catch { /* ignore a bad public base */ }
   for (let hop = 0; hop <= maxRedirects; hop++) {
     const blocked = await hostBlocked(current.hostname, lookupFn);
     if (blocked === true) return { status: "unknown", reason: "blocked", checkedAt: new Date().toISOString() };

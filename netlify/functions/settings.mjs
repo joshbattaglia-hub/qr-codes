@@ -1,7 +1,8 @@
 import { json, readSettings, settingsStore, validColor } from "../lib/lib.mjs";
-import { actorFrom, forbidden, unauthorised } from "../lib/access.mjs";
+import { actorFrom, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   if (req.method === "GET") return json(200, await readSettings());

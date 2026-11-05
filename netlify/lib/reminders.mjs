@@ -9,13 +9,13 @@ export function competitionReminders(comp, today = melbourneDate()) {
   const remaining = Math.max(0, periodCount(comp) - drawn);
   const next = nextDrawDate(comp);
   const href = "#/competitions/" + encodeURIComponent(comp.slug || "");
-  if (comp.status === "active" && remaining > 0 && next) {
-    if (next < today) items.push({ kind: "overdue-draw", date: next, href, name: comp.name, slug: comp.slug });
-    else if (next <= addDays(today, 7)) items.push({ kind: "upcoming-draw", date: next, href, name: comp.name, slug: comp.slug });
-  }
-  if (comp.end) {
-    if (comp.end < today && comp.status === "active") items.push({ kind: "past-close", date: comp.end, href, name: comp.name, slug: comp.slug });
-    else if (comp.status === "active" && comp.end >= today && comp.end <= addDays(today, 7)) items.push({ kind: "closing", date: comp.end, href, name: comp.name, slug: comp.slug });
+  const closed = comp.status === "ended" || (!!comp.end && comp.end < today);
+  // A closed or ended competition still shows a draw that is actually overdue.
+  if (remaining > 0 && next && next < today) items.push({ kind: "overdue-draw", date: next, href, name: comp.name, slug: comp.slug });
+  else if (!closed && comp.status === "active" && remaining > 0 && next && next <= addDays(today, 7)) items.push({ kind: "upcoming-draw", date: next, href, name: comp.name, slug: comp.slug });
+  if (comp.end && comp.status !== "draft") {
+    if (comp.end < today) items.push({ kind: "past-close", date: comp.end, href, name: comp.name, slug: comp.slug });
+    else if (comp.status === "active" && comp.end <= addDays(today, 7)) items.push({ kind: "closing", date: comp.end, href, name: comp.name, slug: comp.slug });
   }
   return items;
 }

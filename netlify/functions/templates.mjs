@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import {
   competitionsStore, json, pagesStore, publicBase, templatesStore, validSlug,
 } from "../lib/lib.mjs";
-import { actorFrom, assignSite, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
 import { applyCompetitionPatch, defaultCompetition, publicCompetition } from "../lib/competitions.mjs";
 import { applyPagePatch, defaultPage, publicPage } from "../lib/pages.mjs";
 import { competitionSnapshot, pageSnapshot } from "../lib/templates.mjs";
@@ -14,6 +14,7 @@ function publicTemplate(template) {
 }
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
@@ -54,8 +55,9 @@ async function useTemplate(id, req, actor) {
   if (!template) return json(404, { error: "Not found" });
   if (!canSeeSite(actor, template.siteId || "")) return forbidden();
   const body = await req.json().catch(() => ({}));
-  const assigned = assignSite(actor, null, Object.prototype.hasOwnProperty.call(body, "siteId") ? body : { siteId: template.siteId || "" });
-  if (assigned.error) return forbidden();
+  const assigned = await assignSite(actor, null, Object.prototype.hasOwnProperty.call(body, "siteId") ? body : { siteId: template.siteId || "" });
+  const denied = assignmentResponse(assigned);
+  if (denied) return denied;
   let slug = String(body.slug || "").trim().toLowerCase();
   const bucket = template.kind === "page" ? pagesStore() : competitionsStore();
   if (slug) {

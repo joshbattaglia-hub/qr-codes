@@ -1,5 +1,5 @@
 import { codes, competitionsStore, healthStore, json } from "../lib/lib.mjs";
-import { actorFrom, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFrom, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
 import { melbourneDate } from "../lib/competitions.mjs";
 import { checkDestination } from "../lib/health.mjs";
 
@@ -30,6 +30,7 @@ async function checkOne(code) {
 }
 
 export default async (req) => {
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";

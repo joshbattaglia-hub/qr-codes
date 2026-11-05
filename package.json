@@ -12,7 +12,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@netlify/blobs": "^11.1.7",
+    "@netlify/blobs": "11.1.7",
     "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "jsqr": "1.4.0"
   }
 }

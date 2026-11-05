@@ -3,17 +3,16 @@ import {
   codes, stats, json, validSlug, readSettings, buildCode, applyPatch,
   normalizeCode, publicCode, migrateStats, statsForList, publicBase, healthStore,
 } from "../lib/lib.mjs";
-import { actorFrom, assignSite, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { validateVoucher } from "../lib/vouchers.mjs";
 import { posterHtml } from "../lib/posters.mjs";
 
 const gen = () => Array.from(crypto.randomBytes(6), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
 
 function voucherOf(body) {
-  if (!body || body.voucher === undefined) return undefined;
-  const v = body.voucher || {};
-  const expires = typeof v.expires === "string" ? v.expires : "";
-  if (expires && !/^\d{4}-\d{2}-\d{2}$/.test(expires)) return { error: "Voucher expiry must be YYYY-MM-DD" };
-  return { voucher: { enabled: v.enabled === true, label: String(v.label || "").slice(0, 80), terms: String(v.terms || "").slice(0, 500), expires } };
+  const offer = validateVoucher(body);
+  if (offer.error) return offer;
+  return offer.voucher ? { voucher: offer.voucher } : undefined;
 }
 
 export default async (req, context) => {
@@ -22,6 +21,7 @@ export default async (req, context) => {
   const posterMatch = path.match(/^\/api\/codes\/([^/]+)\/poster$/);
   const oneMatch = path.match(/^\/api\/codes\/([^/]+)$/);
   const codeSlug = decodeURIComponent((posterMatch || oneMatch)?.[1] || "").toLowerCase();
+  if (originBlocked(req)) return forbidden();
   const actor = await actorFrom(req);
   if (!actor) return unauthorised();
 
@@ -40,8 +40,9 @@ export default async (req, context) => {
 
   if (req.method === "POST" && path === "/api/codes") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, null, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, null, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     const settings = await readSettings();
     const built = buildCode(body, settings);
     if (built.error) return json(400, { error: built.error });
@@ -81,8 +82,9 @@ export default async (req, context) => {
 
   if (req.method === "PATCH") {
     const body = await req.json().catch(() => ({}));
-    const assigned = assignSite(actor, existing, body);
-    if (assigned.error) return forbidden();
+    const assigned = await assignSite(actor, existing, body);
+    const denied = assignmentResponse(assigned);
+    if (denied) return denied;
     const patched = applyPatch(normalizeCode(existing), body);
     if (patched.error) return json(400, { error: patched.error });
     const offer = voucherOf(body);
