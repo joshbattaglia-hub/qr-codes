@@ -7,6 +7,11 @@
   to = "/admin/index.html"
   status = 200
 
+[[headers]]
+  for = "/admin/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 # www → apex primary
 [[redirects]]
   from = "https://www.expresshelp.site/*"
