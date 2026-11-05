@@ -25,6 +25,9 @@ function openStore(name) {
 export const codes = () => openStore("codes");
 export const stats = () => openStore("stats");
 export const settingsStore = () => openStore("settings");
+export const pagesStore = () => openStore("pages");
+export const pageViews = () => openStore("page-views");
+export const submissionsStore = () => openStore("submissions");
 
 export function env(name) {
   try {
@@ -523,7 +526,10 @@ export function memoryBackend() {
       },
       async setJSON(key, val) { m.set(key, JSON.parse(JSON.stringify(val))); },
       async delete(key) { m.delete(key); },
-      async list() { return { blobs: [...m.keys()].map((key) => ({ key })) }; },
+      async list(opts) {
+        const prefix = opts?.prefix || "";
+        return { blobs: [...m.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })) };
+      },
     };
   };
 }

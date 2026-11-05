@@ -69,9 +69,11 @@ try {
   await waitText("QR Code scans");
   await waitText("Page clicks");
   const nav = await bodyText();
-  for (const label of ["Home", "Links", "QR Codes", "Pages", "Analytics", "Campaigns", "Custom domains", "Integrations", "Settings", "Create new"]) {
+  for (const label of ["Home", "Links", "QR Codes", "Pages", "Analytics", "Campaigns", "Custom domains", "Settings", "Create new"]) {
     assert(nav.includes(label), "missing nav " + label);
   }
+  assert(!nav.includes("Integrations"), "Integrations nav should be gone");
+  assert(await page.$("#nav [data-go=integrations]") === null, "Integrations nav button still present");
   assert(!nav.includes("Bitly") && !nav.toLowerCase().includes("upgrade"), "trademark or upgrade copy leaked");
 
   await page.type("#dest-url", "https://example.com/keep-me");
@@ -208,14 +210,40 @@ try {
   await waitText("24Xpress Help Page");
   await page.click("[data-go=links]");
   await waitText("24Xpress Help Page");
-  await page.click("[data-go=pages]");
-  await waitText("Landing pages are not set up");
-  await page.click("[data-go=campaigns]");
+  await page.click("#nav [data-go=pages]");
+  await waitText("Create page");
+  await page.click("[data-go='pages/new']");
+  await waitText("Form");
+  await page.type("#page-editor [name=name]", "Open day");
+  await page.type("#page-editor [name=heading]", "Welcome aboard");
+  await page.click("#page-editor button[type=submit]");
+  await waitText("/p/");
+  const pageUrl = await page.$eval("[data-testid=page-url]", (el) => el.textContent.trim());
+  await page.click("[data-act=publish-page]");
+  await waitText("Published");
+  await page.click("[data-act=page-link]");
+  await waitText("View short link");
+  const publicPath = new URL(pageUrl).pathname;
+  const published = await fetch(base + publicPath);
+  assert(published.status === 200, "published page status " + published.status);
+  assert((await published.text()).includes("Welcome aboard"), "public page missing heading");
+  const submitted = await fetch(base + publicPath, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "Ada", email: "ada@example.com" }),
+  });
+  assert(submitted.status === 200, "submit status " + submitted.status);
+  await page.reload({ waitUntil: "networkidle0" });
+  await waitText("ada@example.com");
+  await page.click("#nav [data-go=home]");
+  await page.waitForFunction(() => {
+    const el = document.querySelector("[data-testid=page-clicks]");
+    return el && !el.textContent.includes("—") && Number.parseInt(el.textContent, 10) >= 1;
+  });
+  await page.click("#nav [data-go=campaigns]");
   await waitText("Campaigns are not set up");
   await page.click("[data-go=domains]");
   await waitText("expresshelp.site");
-  await page.click("[data-go=integrations]");
-  await waitText("Not connected");
   await page.click("[data-go=settings]");
   await waitText("ADMIN_PASSWORD");
   await shot("06-settings");

@@ -15,9 +15,12 @@ After the password gate:
 | Home | Quick create for a QR code or a short link, 1d / 7d / 30d engagements, link clicks, QR scans, and page clicks |
 | Links | Short links as their own records, with click analytics |
 | QR Codes | Destination, tags, created date, colour and logo customization, PNG/SVG download, dynamic routing, and scan analytics |
-| Analytics | Workspace totals from stored scans and clicks, with CSV download |
-| Pages, Campaigns, Custom domains, Integrations | Placeholders. Custom domains lists the live `expresshelp.site` hostname; extra names are still configured in DNS and Netlify |
+| Analytics | Workspace totals from stored scans, clicks, and page views, with CSV download |
+| Pages | Landing pages at `/p/<slug>`: content, form fields, publish, submissions CSV, and page views. A page can also create a QR code or short link to itself |
+| Campaigns, Custom domains | Placeholders. Custom domains lists the live `expresshelp.site` hostname; extra names are still configured in DNS and Netlify |
 | Settings | Workspace name, default QR colours, public URL, log out |
+
+Published pages are mobile-first and use Liberty colours unless the page sets its own. Draft pages return an unavailable page. Each visit to a published page counts as a page click on Home. Form submissions are stored in Blobs. Set `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_TO` to email a copy of each submission; without those, submissions are still saved and nothing is sent.
 
 QR detail analytics include a date range, previous-period or code comparison, unique visitors versus total scans, scans over time, and breakdowns by country, city, browser, and operating system. There are no upgrade gates. Dynamic routing rules send a device or a location to a different http(s) destination; everyone else gets the main URL.
 
@@ -33,6 +36,7 @@ Local UI smoke test (memory store, not production data): `ADMIN_PASSWORD=liberty
 | Alias | https://www.expresshelp.site → apex |
 | Admin | https://expresshelp.site/admin |
 | Short link | https://expresshelp.site/r/&lt;slug&gt; |
+| Landing page | https://expresshelp.site/p/&lt;slug&gt; |
 | Fallback Netlify URL | https://liberty-qr-353.netlify.app |
 
 ## VentraIP DNS (external DNS — do not change nameservers)
@@ -58,4 +62,5 @@ npx netlify deploy --prod --build
 Env (Netlify site `liberty-qr-353`):
 
 - `ADMIN_PASSWORD` — admin login
-- `PUBLIC_URL=https://expresshelp.site` — documents public short-link base
+- `PUBLIC_URL=https://expresshelp.site` — documents public short-link and page base
+- `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_TO` — optional email when a landing page receives a submission

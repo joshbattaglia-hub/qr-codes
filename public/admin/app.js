@@ -18,6 +18,9 @@ const state = {
   codes: [],
   settings: { workspaceName: "Liberty", publicUrl: PUBLIC_FALLBACK, defaultFg: "#111827", defaultBg: "#ffffff" },
   detail: null,
+  pages: [],
+  pageDetail: null,
+  pageDraft: null,
   createMode: "qr",
   homeRange: "7d",
   search: "",
@@ -314,6 +317,12 @@ function buildModel(stats, keys, channel) {
 function sumChannel(codes, keys, channel) {
   return keys.reduce((s, day) => s + codes.reduce((n, c) => n + bucketN(c.days, day, channel), 0), 0);
 }
+function pageHits(keys) {
+  return (state.pages || []).reduce((n, p) => n + keys.reduce((s, day) => s + (Number(p.daily?.[day]) || 0), 0), 0);
+}
+function pageSeries(keys) {
+  return keys.map((date) => ({ date, value: (state.pages || []).reduce((s, p) => s + (Number(p.daily?.[date]) || 0), 0) }));
+}
 function countryLabel(key) {
   if (!key || key === "Unknown") return "Unknown";
   if (/^[A-Z]{2}$/.test(key)) {
@@ -424,17 +433,20 @@ function homeHtml() {
   const n = state.homeRange === "1d" ? 1 : state.homeRange === "30d" ? 30 : 7;
   const keys = lastN(n);
   const prev = previousKeys(keys);
-  const engagements = sumChannel(state.codes, keys, "all");
-  const prevEng = sumChannel(state.codes, prev, "all");
+  const pageNow = pageHits(keys);
+  const pagePrev = pageHits(prev);
+  const engagements = sumChannel(state.codes, keys, "all") + pageNow;
+  const prevEng = sumChannel(state.codes, prev, "all") + pagePrev;
   const clicks = sumChannel(state.codes, keys, "click");
   const prevClicks = sumChannel(state.codes, prev, "click");
   const scans = sumChannel(state.codes, keys, "scan");
   const prevScans = sumChannel(state.codes, prev, "scan");
-  const series = keys.map((date) => ({ date, value: state.codes.reduce((s, c) => s + bucketN(c.days, date, "all"), 0) }));
-  const compare = prev.map((date) => ({ date, value: state.codes.reduce((s, c) => s + bucketN(c.days, date, "all"), 0) }));
+  const series = keys.map((date, i) => ({ date, value: state.codes.reduce((s, c) => s + bucketN(c.days, date, "all"), 0) + pageSeries(keys)[i].value }));
+  const compare = prev.map((date, i) => ({ date, value: state.codes.reduce((s, c) => s + bucketN(c.days, date, "all"), 0) + pageSeries(prev)[i].value }));
   const dEng = metricDelta(engagements, prevEng);
   const dClick = metricDelta(clicks, prevClicks);
   const dScan = metricDelta(scans, prevScans);
+  const dPage = metricDelta(pageNow, pagePrev);
   const label = n === 1 ? "last 1 day" : "last " + n + " days";
   const rangeLabel = keys.length === 1 ? shortDate(keys[0]) : shortDate(keys[0]) + " – " + shortDate(keys.at(-1));
   const prevLabel = prev.length === 1 ? shortDate(prev[0]) : shortDate(prev[0]) + " – " + shortDate(prev.at(-1));
@@ -466,18 +478,11 @@ function homeHtml() {
     '<div class="legend"><span><i class="swatch"></i> This period</span><span><i class="swatch alt"></i> Previous period</span></div>' +
     '<div class="metrics"><div><div class="metric-label">Link clicks</div><div class="metric-value">' + num(clicks) + ' <span class="delta ' + dClick.cls + '">' + dClick.text + "</span></div></div>" +
     '<div><div class="metric-label">QR Code scans</div><div class="metric-value">' + num(scans) + ' <span class="delta ' + dScan.cls + '">' + dScan.text + "</span></div></div>" +
-    '<div><div class="metric-label">Page clicks</div><div class="metric-value">0 <span class="muted">— no data</span></div></div></div>' +
+    '<div><div class="metric-label">Page clicks</div><div class="metric-value" data-testid="page-clicks">' + num(pageNow) + ' <span class="delta ' + dPage.cls + '">' + dPage.text + "</span></div></div></div>" +
     '<div class="row end" style="margin-top:12px"><button class="btn ghost" type="button" data-go="analytics">Explore Analytics →</button></div></div>' +
-    '<div class="home-bottom"><div class="card"><div class="card-head"><h2>Connect your account</h2><a href="#/integrations">Explore Integrations →</a></div><div class="muted small">Recommended for you</div>' +
-    connectRow("a", "C", "Chrome Extension", "Instant links and QR Codes from anywhere", "Install") +
-    connectRow("b", "C", "Canva", "Popular pick in productivity and design", "Connect") +
-    connectRow("c", "S", "Shopify", "Connect marketing activity to revenue", "Connect") +
-    '</div><div class="card"><div class="card-head"><h2>Do more with Liberty</h2><div class="ring-wrap">' + pct + "%" + ring(pct) + "</div></div>" +
+    '<div class="card" style="margin-top:16px"><div class="card-head"><h2>Do more with Liberty</h2><div class="ring-wrap">' + pct + "%" + ring(pct) + "</div></div>" +
     items.map((item) => '<div class="check-item"><div class="dot' + (item.done ? " on" : "") + '">' + (item.done ? "✓" : "") + '</div><div><strong>' + esc(item.title) + '</strong><div class="muted small">' + esc(item.body) + "</div></div></div>").join("") +
-    "</div></div>";
-}
-function connectRow(cls, letter, title, body, action) {
-  return '<div class="connect-row"><div class="app-ico ' + cls + '">' + letter + '</div><div class="grow"><strong>' + esc(title) + '</strong><div class="muted small">' + esc(body) + '</div></div><a class="btn ghost" href="#/integrations">' + esc(action) + "</a></div>";
+    "</div>";
 }
 function ring(pct) {
   return '<svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="#e6e8ee" stroke-width="4"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="#12b76a" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + pct + ' 100" pathLength="100" transform="rotate(-90 18 18)"></circle></svg>';
@@ -648,20 +653,30 @@ function analyticsPage() {
   const prev = previousKeys(keys);
   const model = workspaceModel(from, to);
   const prevModel = workspaceModel(prev[0], prev.at(-1));
+  const breakdownTotal = model.all.total;
+  const pagesNow = pageHits(keys);
+  const pagesPrev = pageHits(prev);
+  const dPages = metricDelta(pagesNow, pagesPrev);
+  model.all.total += pagesNow;
+  prevModel.all.total += pagesPrev;
+  const pageLine = pageSeries(keys);
+  const prevPageLine = pageSeries(prev);
+  model.all.series = model.all.series.map((row, i) => ({ date: row.date, value: row.value + pageLine[i].value }));
+  prevModel.all.series = prevModel.all.series.map((row, i) => ({ date: row.date, value: row.value + (prevPageLine[i]?.value || 0) }));
   const dAll = metricDelta(model.all.total, prevModel.all.total);
   const ranked = (channel) => state.codes.map((c) => ({ ...c, count: c.days ? rangeKeys(from, to).reduce((s, day) => s + bucketN(c.days, day, channel), 0) : 0 })).filter((c) => c.count > 0).sort((a, b) => b.count - a.count).slice(0, 8);
   return '<div class="page-head"><h1>Analytics</h1><button class="btn ghost" type="button" data-act="dl-workspace-csv">Download CSV</button></div>' +
     '<div class="card"><div class="toolbar"><div class="range-wrap"><button class="btn ghost" type="button" data-act="toggle-dates">' + esc(longDate(from) + " → " + longDate(to)) + "</button>" + datePop("analytics", from, to) + "</div></div>" +
-    '<div class="metrics"><div><div class="metric-label">Total engagements</div><div class="metric-value">' + num(model.all.total) + ' <span class="delta ' + dAll.cls + '">' + dAll.text + "</span></div></div>" +
+    '<div class="metrics four"><div><div class="metric-label">Total engagements</div><div class="metric-value">' + num(model.all.total) + ' <span class="delta ' + dAll.cls + '">' + dAll.text + "</span></div></div>" +
     '<div><div class="metric-label">Link clicks</div><div class="metric-value">' + num(model.click.total) + "</div></div>" +
-    '<div><div class="metric-label">QR Code scans</div><div class="metric-value">' + num(model.scan.total) + "</div></div></div>" +
+    '<div><div class="metric-label">QR Code scans</div><div class="metric-value">' + num(model.scan.total) + "</div></div>" +
+    '<div><div class="metric-label">Page clicks</div><div class="metric-value">' + num(pagesNow) + ' <span class="delta ' + dPages.cls + '">' + dPages.text + "</span></div></div></div>" +
     areaChart(model.all.series, prevModel.all.series) +
-    '<div class="legend"><span><i class="swatch"></i> This period</span><span><i class="swatch alt"></i> Previous period</span></div>' +
-    '<div class="muted small" style="margin-top:8px">Page clicks: 0 — no data. Pages are not tracked in this workspace.</div></div>' +
+    '<div class="legend"><span><i class="swatch"></i> This period</span><span><i class="swatch alt"></i> Previous period</span></div></div>' +
     '<div class="split"><div class="card"><h2>Top links</h2><div class="table-wrap">' + topTable(ranked("click").filter((c) => c.hasLink), "Clicks") + '</div></div><div class="card"><h2>Top QR codes</h2><div class="table-wrap">' + topTable(ranked("scan").filter((c) => c.hasQr), "Scans") + "</div></div></div>" +
-    '<div class="split"><div class="card" data-testid="by-location"><div class="card-head"><h2>By location</h2><div class="tabs"><button type="button" data-act="loc-tab" data-tab="countries" class="' + (state.locTab !== "cities" ? "on" : "") + '">Countries</button><button type="button" data-act="loc-tab" data-tab="cities" class="' + (state.locTab === "cities" ? "on" : "") + '">Cities</button></div></div><div class="table-wrap">' + dimTable(state.locTab === "cities" ? model.all.city : model.all.country, model.all.total, state.locTab === "cities" ? "City" : "Country", "Engagements") + '</div></div>' +
-    '<div class="card" data-testid="by-browser"><h2>By browser</h2><div class="table-wrap">' + dimTable(model.all.browser, model.all.total, "Browser", "Engagements") + "</div></div></div>" +
-    '<div class="card" data-testid="by-os"><h2>By operating system</h2><div class="table-wrap">' + dimTable(model.all.os, model.all.total, "Operating system", "Engagements") + "</div></div>";
+    '<div class="split"><div class="card" data-testid="by-location"><div class="card-head"><h2>By location</h2><div class="tabs"><button type="button" data-act="loc-tab" data-tab="countries" class="' + (state.locTab !== "cities" ? "on" : "") + '">Countries</button><button type="button" data-act="loc-tab" data-tab="cities" class="' + (state.locTab === "cities" ? "on" : "") + '">Cities</button></div></div><div class="table-wrap">' + dimTable(state.locTab === "cities" ? model.all.city : model.all.country, breakdownTotal, state.locTab === "cities" ? "City" : "Country", "Engagements") + '</div></div>' +
+    '<div class="card" data-testid="by-browser"><h2>By browser</h2><div class="table-wrap">' + dimTable(model.all.browser, breakdownTotal, "Browser", "Engagements") + "</div></div></div>" +
+    '<div class="card" data-testid="by-os"><h2>By operating system</h2><div class="table-wrap">' + dimTable(model.all.os, breakdownTotal, "Operating system", "Engagements") + "</div></div>";
 }
 function domainsPage() {
   return '<div class="page-head"><h1>Custom domains</h1></div><div class="card"><div class="card-head"><h2>' + esc(host()) + '</h2><span class="badge ok">Active</span></div><p>Primary domain for every short link and QR code.</p><p class="break"><strong>' + esc(base()) + "/r/&lt;slug&gt;</strong></p></div>" +
@@ -669,15 +684,6 @@ function domainsPage() {
     '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Host</th><th>Value</th></tr></thead><tbody>' +
     "<tr><td>A</td><td>@</td><td>75.2.60.5</td></tr><tr><td>CNAME</td><td>www</td><td>liberty-qr-353.netlify.app</td></tr>" +
     "</tbody></table></div></div>";
-}
-function integrationsPage() {
-  const cards = [
-    ["Chrome Extension", "Instant links and QR Codes from anywhere"],
-    ["Canva", "Popular pick in productivity and design"],
-    ["Shopify", "Connect marketing activity to revenue"],
-  ];
-  return '<div class="page-head"><h1>Integrations</h1></div><p class="muted">These are placeholders. Nothing here is connected.</p>' +
-    cards.map(([t, b]) => '<div class="card"><div class="card-head"><h2>' + t + '</h2><span class="badge muted">Not connected</span></div><p class="muted">' + b + "</p></div>").join("");
 }
 function settingsPage() {
   const s = state.settings;
@@ -688,6 +694,223 @@ function settingsPage() {
     '<p class="muted small">Short links stay on ' + esc(base()) + "/r/&lt;slug&gt;. The admin password is the ADMIN_PASSWORD environment variable and is not changed here. This session cookie lasts 7 days.</p>" +
     '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>';
 }
+const PAGE_COLORS = [
+  ["background", "Background"],
+  ["text", "Text"],
+  ["accent", "Accent"],
+  ["button", "Button"],
+  ["buttonText", "Button text"],
+];
+const FIELD_TYPES = [["text", "Text"], ["email", "Email"], ["phone", "Phone"], ["dropdown", "Dropdown"], ["checkbox", "Checkbox"], ["textarea", "Text area"]];
+function blankPage() {
+  return {
+    slug: "", name: "", title: "", heading: "", body: "", heroUrl: "", heroData: "",
+    buttonLabel: "", buttonUrl: "",
+    colors: { background: "#f4f6fb", text: "#1c2434", accent: "#0e1b4d", button: "#1f4bdb", buttonText: "#ffffff" },
+    fields: [
+      { id: "name", type: "text", label: "Name", required: true, options: [] },
+      { id: "email", type: "email", label: "Email", required: true, options: [] },
+    ],
+    submitLabel: "Send", thankYou: "Thanks, we have your message.", status: "draft", codeSlug: "",
+  };
+}
+function pagesList() {
+  const q = state.search.toLowerCase();
+  const rows = (state.pages || []).filter((p) => !q || [p.name, p.slug, p.title, p.heading].join(" ").toLowerCase().includes(q));
+  const body = rows.map((p) => '<tr class="clickable" data-go="pages/' + encodeURIComponent(p.slug) + '"><td><strong>' + esc(p.name || p.slug) + '</strong><div class="muted small">/p/' + esc(p.slug) + '</div></td><td class="break">' + esc(base() + "/p/" + p.slug) + '</td><td>' + (p.status === "published" ? '<span class="badge ok">Published</span>' : '<span class="badge muted">Draft</span>') + '</td><td class="num">' + num(p.submissions || 0) + '</td><td>' + esc(formatCreated(p.created)) + "</td></tr>").join("");
+  return '<div class="page-head"><h1>Pages</h1><button class="btn" type="button" data-go="pages/new">Create page</button></div><div class="card table-wrap" data-testid="pages-list">' +
+    (rows.length ? "<table><thead><tr><th>Name</th><th>Public URL</th><th>Status</th><th class='num'>Submissions</th><th>Created</th></tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><div class="empty-mark">L</div><h2>No pages yet</h2><p class="muted">' + (state.search ? "No matches for that search." : "Create a landing page to collect a form on expresshelp.site.") + "</p></div>") + "</div>";
+}
+function capturePageDraft() {
+  const form = document.getElementById("page-editor");
+  const d = state.pageDraft;
+  if (!form || !d) return;
+  const val = (name) => form.querySelector('[name="' + name + '"]')?.value ?? "";
+  d.name = val("name");
+  d.title = val("title");
+  d.heading = val("heading");
+  d.body = val("body");
+  d.heroUrl = val("heroUrl");
+  d.heroData = val("heroData");
+  d.buttonLabel = val("buttonLabel");
+  d.buttonUrl = val("buttonUrl");
+  d.submitLabel = val("submitLabel") || "Send";
+  d.thankYou = val("thankYou");
+  if (!d.slug) d.slugInput = val("slug");
+  d.colors = { ...d.colors };
+  for (const [key] of PAGE_COLORS) {
+    const color = form.querySelector('[name="color-' + key + '"]')?.value;
+    if (hexOk(color)) d.colors[key] = color;
+  }
+  d.fields = (d.fields || []).map((f) => {
+    const card = form.querySelector('[data-field="' + f.id + '"]');
+    if (!card) return f;
+    const options = card.querySelector('[name="options"]')?.value || "";
+    return {
+      ...f,
+      label: card.querySelector('[name="label"]')?.value ?? f.label,
+      required: !!card.querySelector('[name="required"]')?.checked,
+      options: f.type === "dropdown" ? options.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    };
+  });
+}
+function fieldCard(f) {
+  const options = f.type === "dropdown" ? '<label class="field"><span>Options, comma separated</span><input name="options" value="' + esc((f.options || []).join(", ")) + '"></label>' : "";
+  return '<div class="field-card" data-field="' + esc(f.id) + '"><div class="row"><strong>' + esc(FIELD_TYPES.find((t) => t[0] === f.type)?.[1] || f.type) + '</strong><span class="grow"></span>' +
+    '<button class="btn ghost" type="button" data-act="field-up" data-id="' + esc(f.id) + '">↑</button>' +
+    '<button class="btn ghost" type="button" data-act="field-down" data-id="' + esc(f.id) + '">↓</button>' +
+    '<button class="btn ghost" type="button" data-act="remove-field" data-id="' + esc(f.id) + '">Remove</button></div>' +
+    '<label class="field"><span>Label</span><input name="label" maxlength="80" value="' + esc(f.label) + '"></label>' + options +
+    '<label class="check"><input name="required" type="checkbox"' + (f.required ? " checked" : "") + "> Required</label></div>";
+}
+function pageEditor() {
+  const d = state.pageDraft || blankPage();
+  const code = d.codeSlug ? codeBySlug(d.codeSlug) : null;
+  const colors = PAGE_COLORS.map(([key, label]) => '<label class="field"><span>' + label + '</span><span class="color-row"><input type="color" name="color-' + key + '" value="' + esc(d.colors[key]) + '"><input type="text" value="' + esc(d.colors[key]) + '" data-color-text="' + key + '"></span></label>').join("");
+  const heroSrc = d.heroData || d.heroUrl;
+  const linked = !d.slug ? '<p class="muted">Save the page before creating a QR code or short link.</p>' : '<div class="row">' +
+    (code?.hasQr ? '<a class="btn ghost" href="#/qrcodes/' + encodeURIComponent(code.slug) + '">View QR code</a>' : '<button class="btn ghost" type="button" data-act="page-qr">Create QR code</button>') +
+    (code?.hasLink ? '<a class="btn ghost" href="#/links/' + encodeURIComponent(code.slug) + '">View short link</a>' : '<button class="btn ghost" type="button" data-act="page-link">Create short link</button>') +
+    "</div>" + (code ? '<p class="muted small break">' + esc(shortUrl(code.slug)) + " → " + esc(base() + "/p/" + d.slug) + "</p>" : "");
+  const views = pageAnalytics();
+  return '<div class="page-head"><button class="icon-btn" type="button" data-go="pages" aria-label="Back">←</button><h1>' + esc(d.name || "New page") + "</h1>" +
+    (d.slug ? (d.status === "published" ? '<span class="badge ok">Published</span>' : '<span class="badge muted">Draft</span>') : "") + "</div>" +
+    '<form id="page-editor" data-act="save-page" data-testid="page-editor">' +
+    '<div class="card"><div class="card-head"><h2>Content</h2></div>' +
+    '<label class="field"><span>Name</span><input name="name" required maxlength="140" value="' + esc(d.name) + '"></label>' +
+    (d.slug ? '<p class="break" data-testid="page-url"><strong>' + esc(base() + "/p/" + d.slug) + "</strong></p>" : '<label class="field"><span>Slug (optional)</span><input name="slug" maxlength="41" placeholder="auto-generated" value="' + esc(d.slugInput || "") + '"></label>') +
+    '<label class="field"><span>Title</span><input name="title" maxlength="140" value="' + esc(d.title) + '" placeholder="Browser title"></label>' +
+    '<label class="field"><span>Heading</span><input name="heading" maxlength="180" value="' + esc(d.heading) + '"></label>' +
+    '<label class="field"><span>Body</span><textarea name="body" maxlength="8000">' + esc(d.body) + "</textarea></label>" +
+    '<label class="field"><span>Hero image URL</span><input name="heroUrl" type="url" value="' + esc(d.heroUrl) + '" placeholder="https://…"></label>' +
+    '<input type="hidden" name="heroData" value="' + esc(d.heroData || "") + '">' +
+    '<label class="field"><span>Or upload a logo / hero image</span><input id="hero-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>' +
+    (heroSrc ? '<div class="row"><img id="hero-preview" alt="" src="' + esc(heroSrc) + '" style="width:72px;height:72px;object-fit:contain;border-radius:12px;background:#fff"><button class="btn ghost" type="button" data-act="clear-hero">Remove upload</button></div>' : '<img id="hero-preview" alt="" hidden>') +
+    '<div class="split"><label class="field"><span>Button label</span><input name="buttonLabel" maxlength="40" value="' + esc(d.buttonLabel) + '"></label><label class="field"><span>Button URL</span><input name="buttonUrl" type="url" value="' + esc(d.buttonUrl) + '" placeholder="https://…"></label></div>' +
+    '<div class="split">' + colors + "</div></div>" +
+    '<div class="card"><div class="card-head"><h2>Form</h2></div><p class="muted">Text, email, phone, dropdown, checkbox, and text area. Required fields must be filled before a submission is stored.</p>' +
+    (d.fields || []).map(fieldCard).join("") +
+    '<div class="row" style="margin-top:12px"><select id="new-field-type" aria-label="Field type">' + FIELD_TYPES.map(([v, l]) => '<option value="' + v + '">' + l + "</option>").join("") + '</select><button class="btn ghost" type="button" data-act="add-field">Add field</button></div>' +
+    '<label class="field"><span>Submit button text</span><input name="submitLabel" maxlength="40" value="' + esc(d.submitLabel || "Send") + '"></label>' +
+    '<label class="field"><span>Thank-you message</span><textarea name="thankYou" maxlength="1000">' + esc(d.thankYou) + "</textarea></label></div>" +
+    '<div class="row"><button class="btn" type="submit">Save</button>' +
+    (d.slug ? '<button class="btn ghost" type="button" data-act="publish-page">' + (d.status === "published" ? "Unpublish" : "Publish") + '</button><button class="btn danger" type="button" data-act="del-page">Delete</button>' : "") +
+    '<p class="err" id="page-error"></p></div></form>' +
+    '<div class="card"><div class="card-head"><h2>Settings</h2></div>' +
+    (d.slug && d.status === "published" ? '<p><a href="' + esc(base() + "/p/" + d.slug) + '" target="_blank" rel="noreferrer">Open public page</a></p>' : '<p class="muted">Draft pages are not publicly reachable.</p>') +
+    "<h2>QR code and short link</h2><p class=\"muted\">Optional. Both point at this page’s public URL.</p>" + linked + "</div>" +
+    submissionsBlock() + views;
+}
+function submissionsBlock() {
+  const d = state.pageDraft;
+  const items = state.pageDetail?.submissions || [];
+  if (!d?.slug) return '<div class="card"><h2>Submissions</h2><p class="muted">Save the page before it can collect responses.</p></div>';
+  const head = "<th>Submitted</th>" + (d.fields || []).map((f) => "<th>" + esc(f.label) + "</th>").join("");
+  const body = items.map((item) => "<tr><td>" + esc(formatCreated(item.at)) + "</td>" + (d.fields || []).map((f) => "<td>" + esc(item.values?.[f.id] || "") + "</td>").join("") + "</tr>").join("");
+  return '<div class="card" data-testid="submissions"><div class="card-head"><h2>Submissions (' + items.length + ')</h2><button class="btn ghost" type="button" data-act="page-csv">Export CSV</button></div>' +
+    (items.length ? '<div class="table-wrap"><table><thead><tr>' + head + "</tr></thead><tbody>" + body + "</tbody></table></div>" : '<p class="muted">No submissions yet.</p>') + "</div>";
+}
+function pageAnalytics() {
+  const stats = state.pageDetail?.stats;
+  if (!state.pageDraft?.slug || !stats) return '<div class="card"><h2>Analytics</h2><p class="muted">Page views appear here after the page is published and visited.</p></div>';
+  const keys = lastN(30);
+  const series = keys.map((date) => ({ date, value: stats.daily?.[date] || 0 }));
+  const total = series.reduce((s, row) => s + row.value, 0);
+  const seen = new Set();
+  for (const key of keys) for (const hash of stats.visitors?.[key] || []) seen.add(hash);
+  return '<div class="card" data-testid="page-analytics"><h2>Analytics</h2><div class="stat-pair"><div class="stat-box"><div class="muted">Page views</div><div class="num">' + num(total) + '</div><div class="sub">Last 30 days</div></div><div class="stat-box"><div class="muted">Unique</div><div class="num">' + num(seen.size) + '</div><div class="sub">Visitors</div></div></div>' +
+    areaChart(series) + '<p class="muted small">All-time views: ' + num(stats.total || 0) + ". These views are the Home page clicks for this page.</p></div>";
+}
+function moveField(id, dir) {
+  capturePageDraft();
+  const fields = state.pageDraft.fields;
+  const index = fields.findIndex((f) => f.id === id);
+  const next = index + dir;
+  if (index < 0 || next < 0 || next >= fields.length) return;
+  const [row] = fields.splice(index, 1);
+  fields.splice(next, 0, row);
+  render({ refetch: false, keepScroll: true });
+}
+function syncPageColor(source) {
+  const row = source.closest(".color-row");
+  if (!row) return;
+  const color = row.querySelector('input[type="color"]');
+  const text = row.querySelector('input[type="text"]');
+  if (!color || !text) return;
+  if (source === color) text.value = color.value;
+  else if (hexOk(text.value.trim())) color.value = text.value.trim();
+}
+function pagePayload(d) {
+  return {
+    name: d.name, title: d.title, heading: d.heading, body: d.body, heroUrl: d.heroUrl, heroData: d.heroData,
+    buttonLabel: d.buttonLabel, buttonUrl: d.buttonUrl, colors: d.colors, fields: d.fields,
+    submitLabel: d.submitLabel, thankYou: d.thankYou,
+  };
+}
+async function savePage() {
+  capturePageDraft();
+  const d = state.pageDraft;
+  const err = $("#page-error");
+  try {
+    if (!d.slug) {
+      const created = await api("/api/pages", { method: "POST", body: JSON.stringify({ ...pagePayload(d), slug: (d.slugInput || "").trim() }) });
+      state.pages = await api("/api/pages");
+      toast("Page created");
+      go("pages/" + created.slug);
+    } else {
+      await api("/api/pages/" + encodeURIComponent(d.slug), { method: "PATCH", body: JSON.stringify(pagePayload(d)) });
+      state.pages = await api("/api/pages");
+      toast("Saved");
+      render();
+    }
+  } catch (e) { if (err) err.textContent = e.message; else toast(e.message); }
+}
+async function publishPage() {
+  const d = state.pageDraft;
+  if (!d?.slug) { toast("Save the page first"); return; }
+  const status = d.status === "published" ? "draft" : "published";
+  await api("/api/pages/" + encodeURIComponent(d.slug), { method: "PATCH", body: JSON.stringify({ status }) });
+  state.pages = await api("/api/pages");
+  toast(status === "published" ? "Published" : "Unpublished");
+  render();
+}
+async function deletePage() {
+  const slug = state.pageDraft?.slug;
+  if (!slug) return;
+  await api("/api/pages/" + encodeURIComponent(slug), { method: "DELETE" });
+  closeModal();
+  state.pages = (state.pages || []).filter((p) => p.slug !== slug);
+  state.pageDraft = null;
+  state.pageDetail = null;
+  toast("Deleted");
+  go("pages");
+}
+async function attachPageCode(kind) {
+  const page = state.pageDraft;
+  if (!page?.slug) { toast("Save the page first"); return; }
+  const url = base() + "/p/" + page.slug;
+  let code = page.codeSlug ? codeBySlug(page.codeSlug) : null;
+  if (!code) {
+    code = await api("/api/codes", { method: "POST", body: JSON.stringify({ url, name: page.name || page.slug, type: kind === "link" ? "link" : "qr" }) });
+    await api("/api/pages/" + encodeURIComponent(page.slug), { method: "PATCH", body: JSON.stringify({ codeSlug: code.slug }) });
+  } else if (kind === "link" && !code.hasLink) {
+    await api("/api/codes/" + encodeURIComponent(code.slug), { method: "PATCH", body: JSON.stringify({ hasLink: true }) });
+  } else if (kind === "qr" && !code.hasQr) {
+    await api("/api/codes/" + encodeURIComponent(code.slug), { method: "PATCH", body: JSON.stringify({ hasQr: true }) });
+  }
+  state.codes = await api("/api/codes");
+  toast(kind === "link" ? "Short link ready" : "QR code ready");
+  render();
+}
+function downloadPageCsv() {
+  const page = state.pageDetail?.page || state.pageDraft;
+  const items = state.pageDetail?.submissions || [];
+  if (!page) return;
+  const headers = ["submitted_at", ...(page.fields || []).map((f) => f.label)];
+  const lines = [headers.map(csvCell).join(",")];
+  for (const item of items) lines.push([item.at, ...(page.fields || []).map((f) => item.values?.[f.id] || "")].map(csvCell).join(","));
+  downloadBlob((page.slug || "page") + "-submissions.csv", new Blob([lines.join("\n")], { type: "text/csv" }));
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -696,10 +919,9 @@ function pageFor(r) {
   if (r.name === "links") return listHtml("link");
   if (r.name === "qrcodes") return listHtml("qr");
   if (r.name === "analytics") return analyticsPage();
-  if (r.name === "pages") return placeholder("Pages", "Landing pages are not set up in this workspace. QR codes and short links cover what you share today.");
+  if (r.name === "pages") return pagesList();
   if (r.name === "campaigns") return placeholder("Campaigns", "Campaigns are not set up in this workspace. Use tags on links and QR codes to group them.");
   if (r.name === "domains") return domainsPage();
-  if (r.name === "integrations") return integrationsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
 }
@@ -836,8 +1058,27 @@ async function render(opts = {}) {
     if (routeChanged) { state.compareMode = "none"; state.compareSlug = ""; state.compareReady = false; }
     view.innerHTML = r.name === "links" ? detailHtml(false) : detailHtml(true);
     if (state.openCustomize && r.name === "qrcodes") { state.openCustomize = false; openCustomize(); }
+  } else if (r.name === "pages" && r.id === "new") {
+    if (routeChanged) state.pageDraft = blankPage();
+    state.pageDetail = null;
+    view.innerHTML = pageEditor();
+  } else if (r.name === "pages" && r.id) {
+    if (!(opts.refetch === false && state.pageDraft?.slug === r.id)) {
+      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      try {
+        const data = await api("/api/pages/" + encodeURIComponent(r.id));
+        if (gen !== renderGen) return;
+        state.pageDetail = data;
+        state.pageDraft = structuredClone(data.page);
+      } catch (e) {
+        if (gen !== renderGen) return;
+        view.innerHTML = '<div class="card"><h2>Not found</h2><p>' + esc(e.message) + '</p><p><button class="btn ghost" type="button" data-go="pages">Pages</button></p></div>';
+        return;
+      }
+    }
+    view.innerHTML = pageEditor();
   } else {
-    state.detail = r.id ? state.detail : state.detail;
+    if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
   }
   if (state.focus) {
@@ -1032,6 +1273,32 @@ async function handleAction(el) {
     return;
   }
   if (act === "bulk") { openBulk(); return; }
+  if (act === "add-field") {
+    capturePageDraft();
+    const type = $("#new-field-type")?.value || "text";
+    state.pageDraft.fields.push({ id: Math.random().toString(16).slice(2, 10), type, label: "New field", required: false, options: type === "dropdown" ? ["Option 1"] : [] });
+    render({ refetch: false, keepScroll: true });
+    return;
+  }
+  if (act === "remove-field") { capturePageDraft(); state.pageDraft.fields = state.pageDraft.fields.filter((f) => f.id !== el.dataset.id); render({ refetch: false, keepScroll: true }); return; }
+  if (act === "field-up") return moveField(el.dataset.id, -1);
+  if (act === "field-down") return moveField(el.dataset.id, 1);
+  if (act === "clear-hero") {
+    const hidden = document.querySelector("[name=heroData]");
+    if (hidden) hidden.value = "";
+    const preview = $("#hero-preview");
+    if (preview) { preview.hidden = true; preview.removeAttribute("src"); }
+    return;
+  }
+  if (act === "publish-page") return publishPage();
+  if (act === "del-page") {
+    openModal("<h2>Delete this page?</h2><p>The public URL and its submissions will be removed.</p><div class='row end'><button class='btn ghost' type='button' data-act='close-modal'>Cancel</button><button class='btn danger' type='button' data-act='confirm-del-page'>Delete</button></div>");
+    return;
+  }
+  if (act === "confirm-del-page") return deletePage();
+  if (act === "page-qr") return attachPageCode("qr");
+  if (act === "page-link") return attachPageCode("link");
+  if (act === "page-csv") return downloadPageCsv();
   if (act === "close-modal") { closeModal(); return; }
   if (!state.detail?.code && !["close-modal", "pick-compare"].includes(act) && route().name !== "analytics") {
     if (act === "dl-workspace-csv") { downloadWorkspaceCsv(); return; }
@@ -1098,9 +1365,11 @@ function paintSearch() {
   const box = $("#search-results");
   const q = state.search.toLowerCase();
   if (!q) { box.classList.add("hidden"); box.innerHTML = ""; return; }
-  const hits = state.codes.filter((c) => [c.name, c.slug, c.url, ...(c.tags || [])].join(" ").toLowerCase().includes(q)).slice(0, 8);
+  const hits = state.codes.filter((c) => [c.name, c.slug, c.url, ...(c.tags || [])].join(" ").toLowerCase().includes(q)).slice(0, 6);
+  const pageHitsFound = (state.pages || []).filter((p) => [p.name, p.slug, p.title].join(" ").toLowerCase().includes(q)).slice(0, 4);
   box.classList.remove("hidden");
-  box.innerHTML = hits.map((c) => '<button type="button" data-go="' + (c.hasQr ? "qrcodes/" : "links/") + encodeURIComponent(c.slug) + '"><strong>' + esc(c.name || c.slug) + '</strong><span class="muted small">' + (c.hasQr ? "QR code" : "Short link") + " · /r/" + esc(c.slug) + "</span></button>").join("") || '<div class="muted pad">No matches</div>';
+  const buttons = hits.map((c) => '<button type="button" data-go="' + (c.hasQr ? "qrcodes/" : "links/") + encodeURIComponent(c.slug) + '"><strong>' + esc(c.name || c.slug) + '</strong><span class="muted small">' + (c.hasQr ? "QR code" : "Short link") + " · /r/" + esc(c.slug) + "</span></button>").concat(pageHitsFound.map((p) => '<button type="button" data-go="pages/' + encodeURIComponent(p.slug) + '"><strong>' + esc(p.name || p.slug) + '</strong><span class="muted small">Page · /p/' + esc(p.slug) + "</span></button>"));
+  box.innerHTML = buttons.join("") || '<div class="muted pad">No matches</div>';
 }
 
 document.body.addEventListener("click", (e) => {
@@ -1128,7 +1397,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -1148,6 +1417,16 @@ document.body.addEventListener("change", (e) => {
   }
   if (e.target.name === "defaultFg" || e.target.name === "defaultFgText") syncColorPair("[name=defaultFg]", "[name=defaultFgText]", e.target);
   if (e.target.name === "defaultBg" || e.target.name === "defaultBgText") syncColorPair("[name=defaultBg]", "[name=defaultBgText]", e.target);
+  if (e.target.name && String(e.target.name).startsWith("color-")) syncPageColor(e.target);
+  if (e.target.dataset && e.target.dataset.colorText) syncPageColor(e.target);
+  if (e.target.id === "hero-file" && e.target.files?.[0]) {
+    fileToLogo(e.target.files[0]).then((url) => {
+      const hidden = document.querySelector("[name=heroData]");
+      if (hidden) hidden.value = url;
+      const preview = $("#hero-preview");
+      if (preview) { preview.hidden = false; preview.src = url; }
+    }).catch((err) => { const box = $("#page-error"); if (box) box.textContent = err.message; else toast(err.message); });
+  }
 });
 document.body.addEventListener("input", (e) => {
   if (e.target.id === "c-fg-text" || e.target.id === "c-bg-text") {
@@ -1155,12 +1434,13 @@ document.body.addEventListener("input", (e) => {
     else syncColorPair("#c-bg", "#c-bg-text", e.target);
     paintCustomize();
   }
+  if (e.target.dataset && e.target.dataset.colorText) syncPageColor(e.target);
 });
 $("#search").addEventListener("input", () => {
   state.search = $("#search").value.trim();
   paintSearch();
   const name = route().name;
-  if (name === "links" || name === "qrcodes") render({ refetch: false, keepScroll: true });
+  if (name === "links" || name === "qrcodes" || (name === "pages" && !route().id)) render({ refetch: false, keepScroll: true });
 });
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1175,8 +1455,10 @@ window.addEventListener("hashchange", () => { if (!$("#shell").classList.contain
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePops(); document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden")); } });
 
 async function enter() {
-  state.settings = await api("/api/settings");
-  state.codes = await api("/api/codes");
+  const [settings, codes, pages] = await Promise.all([api("/api/settings"), api("/api/codes"), api("/api/pages")]);
+  state.settings = settings;
+  state.codes = codes;
+  state.pages = pages;
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");
