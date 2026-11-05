@@ -32,6 +32,11 @@ export const competitionsStore = () => openStore("competitions");
 export const compEntries = () => openStore("comp-entries");
 export const compFiles = () => openStore("comp-files");
 export const compViews = () => openStore("comp-views");
+export const sitesStore = () => openStore("sites");
+export const staffStore = () => openStore("staff");
+export const templatesStore = () => openStore("templates");
+export const vouchersStore = () => openStore("vouchers");
+export const healthStore = () => openStore("health");
 
 export function env(name) {
   try {
@@ -394,6 +399,7 @@ export function normalizeCode(c) {
     style,
     logoData: typeof c.logoData === "string" ? c.logoData : "",
     rules: Array.isArray(c.rules) ? c.rules : [],
+    siteId: typeof c.siteId === "string" ? c.siteId : "",
   };
 }
 
@@ -515,24 +521,51 @@ export async function readSettings() {
   };
 }
 
-/** In-memory blob stand-in for the local dev server and tests. */
+/**
+ * In-memory blob stand-in for the local dev server and tests.
+ * `onlyIfNew` and `onlyIfMatch` are synchronous compare-and-set, matching
+ * Netlify Blobs `If-None-Match: *` and `If-Match` writes.
+ */
 export function memoryBackend() {
   const buckets = new Map();
+  let seq = 0;
   return (name) => {
     if (!buckets.has(name)) buckets.set(name, new Map());
     const m = buckets.get(name);
+    const read = (key) => {
+      if (!m.has(key)) return null;
+      const row = m.get(key);
+      if (row && row.__memblob) return row;
+      return { __memblob: true, etag: "legacy", data: row };
+    };
+    const write = (key, data, opts = {}) => {
+      const current = read(key);
+      if (opts.onlyIfNew && current) return { modified: false };
+      if (opts.onlyIfMatch != null && opts.onlyIfMatch !== "") {
+        if (!current || current.etag !== opts.onlyIfMatch) return { modified: false };
+      }
+      const etag = "m" + (++seq).toString(16);
+      m.set(key, { __memblob: true, etag, data: JSON.parse(JSON.stringify(data)) });
+      return { etag, modified: true };
+    };
     return {
       async get(key, opts) {
-        if (!m.has(key)) return null;
-        const v = m.get(key);
-        if (opts?.type === "json") return JSON.parse(JSON.stringify(v));
-        return v;
+        const row = read(key);
+        if (!row) return null;
+        if (opts?.type === "json") return JSON.parse(JSON.stringify(row.data));
+        return row.data;
       },
-      async setJSON(key, val) { m.set(key, JSON.parse(JSON.stringify(val))); },
+      async getWithMetadata(key, opts) {
+        const row = read(key);
+        if (!row) return null;
+        const data = opts?.type === "json" ? JSON.parse(JSON.stringify(row.data)) : row.data;
+        return { data, etag: row.etag, metadata: {} };
+      },
+      async setJSON(key, val, opts) { return write(key, val, opts || {}); },
       async delete(key) { m.delete(key); },
       async list(opts) {
         const prefix = opts?.prefix || "";
-        return { blobs: [...m.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })) };
+        return { blobs: [...m.keys()].filter((key) => String(key).startsWith(prefix)).map((key) => ({ key, etag: read(key)?.etag })) };
       },
     };
   };

@@ -23,6 +23,7 @@ const page = await browser.newPage();
 const errors = [];
 page.on("pageerror", (err) => errors.push(String(err)));
 page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()); });
+page.on("response", (res) => { if (res.status() >= 400) errors.push(res.status() + " " + res.url()); });
 await page.setViewport({ width: 1440, height: 1100 });
 await page.evaluateOnNewDocument(() => {
   window.__downloads = [];
@@ -271,6 +272,11 @@ try {
   assert(duplicateBody.status === "duplicate", JSON.stringify(duplicateBody));
   await page.reload({ waitUntil: "networkidle0" });
   await waitText("Ada");
+  await page.click("#nav [data-go=home]");
+  await waitText("Draw reminders");
+  await shot("17-reminders");
+  await page.goto(base + "/admin#/competitions/" + compPath.split("/").pop(), { waitUntil: "networkidle0" });
+  await waitText("Ada");
   await page.evaluate(() => document.querySelector("[data-act=confirm-draw]") || document.querySelector("[data-act=comp-draw]").click());
   if (!await page.$("[data-act=confirm-draw]")) await page.click("[data-act=comp-draw]");
   await page.click("[data-act=confirm-draw]");
@@ -280,7 +286,45 @@ try {
   await waitText("expresshelp.site");
   await page.click("[data-go=settings]");
   await waitText("ADMIN_PASSWORD");
+  await waitText("Staff");
   await shot("06-settings");
+
+  await page.click("[data-go=sites]");
+  await waitText("New location");
+  await page.type("[data-testid=create-site] input[name=name]", "QA Yard");
+  await page.click("[data-testid=create-site] button[type=submit]");
+  await waitText("QA Yard");
+  await shot("09-sites-desktop");
+  const compSlug = compPath.split("/").pop();
+  await page.goto(base + "/admin#/competitions/" + compSlug, { waitUntil: "networkidle0" });
+  await waitText("Poster, template, and copy");
+  await waitText("Enable a single-use voucher");
+  const voucherOff = await page.$eval("[name=voucherEnabled]", (el) => el.checked);
+  assert(voucherOff === false, "voucher should stay off");
+  await shot("10-competition-tools");
+  await page.click("[data-act=winner-notice]");
+  await waitText("has not been sent");
+  await waitText("Review only");
+  const notice = await page.$eval("[data-testid=notice-text]", (el) => el.textContent);
+  assert(notice.includes("Ada"), "notice should use the recorded name");
+  assert(!notice.toLowerCase().includes("mailto:"), "notice should not send mail");
+  await shot("11-winner-notice");
+  const poster = await fetch(base + "/api/competitions/" + compSlug + "/poster?size=a4", { headers: { cookie: (await page.cookies()).map((c) => c.name + "=" + c.value).join("; ") } });
+  const posterHtml = await poster.text();
+  assert(poster.status === 200, "poster " + poster.status);
+  assert(posterHtml.includes("https://expresshelp.site/c/" + compSlug), "poster QR target missing");
+  await page.evaluate(async () => {
+    const response = await fetch("/api/codes", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "http://127.0.0.1/health", type: "link", slug: "health-qa", name: "Health sample" }) });
+    if (!response.ok) throw new Error("health sample " + response.status);
+  });
+  fs.writeFileSync("/tmp/poster-a4.html", posterHtml);
+  await page.goto("file:///tmp/poster-a4.html", { waitUntil: "load" });
+  await shot("12-poster-a4");
+  await page.goto(base + "/admin#/links/health-qa", { waitUntil: "domcontentloaded" });
+  await page.click("[data-act=check-link]");
+  await waitText("Checked:");
+  await waitText("unknown");
+  await shot("13-link-health");
 
   await page.goto(base + "/admin#/qrcodes/" + slug, { waitUntil: "networkidle0" });
   await waitText("24Xpress Help Page");
@@ -312,6 +356,15 @@ try {
   await page.evaluate(() => document.querySelector("#overlay").click());
   await new Promise((r) => setTimeout(r, 350));
   await shot("08-mobile-home");
+  await page.evaluate(() => { location.hash = "#/sites"; });
+  await waitText("QA Yard");
+  await shot("14-sites-mobile");
+  await page.evaluate((id) => { location.hash = "#/competitions/" + id; }, compSlug);
+  await waitText("Poster, template, and copy");
+  await shot("15-competition-mobile");
+  await page.goto(base + compPath + "?qr=1", { waitUntil: "networkidle0" });
+  await page.waitForSelector("form");
+  await shot("16-public-entry-mobile");
 
   await page.setViewport({ width: 1440, height: 1100 });
   await page.goto(base + "/admin#/qrcodes/" + slug, { waitUntil: "networkidle0" });
@@ -325,7 +378,7 @@ try {
   const gone = await hit(desktop, true);
   assert(gone.status === 404, "deleted code still redirects");
 
-  const realErrors = errors.filter((e) => !e.includes("401"));
+  const realErrors = errors.filter((e) => !e.includes("401") && !e.includes("favicon.ico") && !e.startsWith("Failed to load resource"));
   if (realErrors.length) throw new Error("console errors:\n" + realErrors.join("\n"));
   console.log("UI verification passed");
 } catch (err) {

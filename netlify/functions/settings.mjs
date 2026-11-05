@@ -1,9 +1,12 @@
-import { authed, json, readSettings, settingsStore, validColor } from "../lib/lib.mjs";
+import { json, readSettings, settingsStore, validColor } from "../lib/lib.mjs";
+import { actorFrom, forbidden, unauthorised } from "../lib/access.mjs";
 
 export default async (req) => {
-  if (!authed(req)) return json(401, { error: "Unauthorized" });
+  const actor = await actorFrom(req);
+  if (!actor) return unauthorised();
   if (req.method === "GET") return json(200, await readSettings());
   if (req.method === "PATCH") {
+    if (actor.role !== "head") return forbidden();
     const body = await req.json().catch(() => ({}));
     const current = await readSettings();
     const next = {

@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import {
-  authed, json, env, publicBase, validSlug, dayKey, visitorHash,
+  json, env, publicBase, validSlug, dayKey, visitorHash,
   pagesStore, pageViews, submissionsStore,
 } from "../lib/lib.mjs";
+import { actorFrom, assignSite, canSeeSite, forbidden, siteOf, unauthorised } from "../lib/access.mjs";
 import {
   defaultPage, applyPagePatch, readSubmission, recordView, publicPage,
   renderPublicPage, unavailablePage,
@@ -105,15 +106,18 @@ export default async (req, context) => {
   const pub = path.match(/^\/p\/([^/]+)$/);
   if (pub) return handlePublic(req, context, decodeURIComponent(pub[1]).toLowerCase());
 
-  if (!authed(req)) return json(401, { error: "Unauthorized" });
+  const actor = await actorFrom(req);
+  if (!actor) return unauthorised();
   if (path === "/api/pages" && req.method === "GET") {
     const { blobs } = await pagesStore().list();
-    const pages = (await Promise.all(blobs.map((b) => pagesStore().get(b.key, { type: "json" })))).filter(Boolean);
+    const pages = (await Promise.all(blobs.map((b) => pagesStore().get(b.key, { type: "json" })))).filter((page) => page && canSeeSite(actor, siteOf(page)));
     const out = await Promise.all(pages.map(summary));
     return json(200, out.sort((a, b) => String(b.created).localeCompare(String(a.created))));
   }
   if (path === "/api/pages" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
+    const assigned = assignSite(actor, null, body);
+    if (assigned.error) return forbidden();
     let slug = String(body.slug || "").trim().toLowerCase();
     if (slug) {
       if (!validSlug(slug)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
@@ -123,7 +127,7 @@ export default async (req, context) => {
     }
     const built = applyPagePatch(defaultPage({ slug, created: new Date().toISOString() }), { name: body.name || "Untitled page", ...body, status: body.status || "draft" });
     if (built.error) return json(400, { error: built.error });
-    const page = { ...built.page, slug };
+    const page = { ...built.page, slug, siteId: assigned.siteId };
     await pagesStore().setJSON(slug, page);
     return json(201, publicPage(page, { hero: true }));
   }
@@ -140,6 +144,7 @@ export default async (req, context) => {
   const slug = decodeURIComponent(one[1]).toLowerCase();
   const page = await pagesStore().get(slug, { type: "json" });
   if (!page) return json(404, { error: "Not found" });
+  if (!canSeeSite(actor, siteOf(page))) return forbidden();
 
   if (req.method === "GET") {
     const [views, submissions] = await Promise.all([
@@ -150,9 +155,11 @@ export default async (req, context) => {
   }
   if (req.method === "PATCH") {
     const body = await req.json().catch(() => ({}));
+    const assigned = assignSite(actor, page, body);
+    if (assigned.error) return forbidden();
     const patched = applyPagePatch(page, body);
     if (patched.error) return json(400, { error: patched.error });
-    const next = { ...patched.page, slug };
+    const next = { ...patched.page, slug, siteId: assigned.siteId };
     await pagesStore().setJSON(slug, next);
     return json(200, publicPage(next, { hero: true }));
   }

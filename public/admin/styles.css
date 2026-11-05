@@ -194,3 +194,6 @@ tr.clickable:hover{background:#f8fafc}
   .page-head{align-items:flex-start;flex-wrap:wrap}
   .engage-num{font-size:28px}
 }
+.metric-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px}
+#notice-draft{margin-top:12px}
+#notice-draft pre{white-space:pre-wrap;background:#f6f7fb;border-radius:12px;padding:12px}

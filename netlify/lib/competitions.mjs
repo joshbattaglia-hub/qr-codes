@@ -264,6 +264,17 @@ export function applyCompetitionPatch(comp, body) {
     if (!period || period < 1 || period > periodCount(next) + 1) return { error: "Current period is out of range" };
     next.currentPeriod = period;
   }
+  if (body.voucher !== undefined) {
+    const v = body.voucher || {};
+    const expires = typeof v.expires === "string" ? v.expires : "";
+    if (expires && !/^\d{4}-\d{2}-\d{2}$/.test(expires)) return { error: "Voucher expiry must be YYYY-MM-DD" };
+    next.voucher = {
+      enabled: v.enabled === true,
+      label: String(v.label || "").slice(0, 80),
+      terms: String(v.terms || "").slice(0, 500),
+      expires,
+    };
+  }
   next.updated = new Date().toISOString();
   return { competition: next };
 }

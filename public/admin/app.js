@@ -39,6 +39,10 @@ const state = {
   detailTo: "",
   analyticsFrom: "",
   analyticsTo: "",
+  actor: { role: "head", siteIds: null, name: "Head office" },
+  sites: [],
+  staff: [],
+  templates: [],
 };
 
 const $ = (s) => document.querySelector(s);
@@ -460,7 +464,7 @@ function homeHtml() {
   const items = checklist();
   const done = items.filter((i) => i.done).length;
   const pct = Math.round((done / items.length) * 100);
-  return '<div class="mode-toggle" data-testid="mode-toggle"><div class="seg">' +
+  return remindersHtml() + siteOverviewHtml() + '<div class="mode-toggle" data-testid="mode-toggle"><div class="seg">' +
     '<button type="button" data-act="mode" data-mode="link" class="' + (mode === "link" ? "on" : "") + '">Short link</button>' +
     '<button type="button" data-act="mode" data-mode="qr" class="' + (mode === "qr" ? "on" : "") + '">QR Code</button></div></div>' +
     '<div class="home-grid"><div class="card" data-testid="quick-create"><div class="card-head"><h2>Quick create: ' + (mode === "qr" ? "QR Code" : "Short link") + '</h2><p class="muted small">You can create as many as you need.</p></div>' +
@@ -490,6 +494,38 @@ function homeHtml() {
     '<div class="card" style="margin-top:16px"><div class="card-head"><h2>Do more with Liberty</h2><div class="ring-wrap">' + pct + "%" + ring(pct) + "</div></div>" +
     items.map((item) => '<div class="check-item"><div class="dot' + (item.done ? " on" : "") + '">' + (item.done ? "✓" : "") + '</div><div><strong>' + esc(item.title) + '</strong><div class="muted small">' + esc(item.body) + "</div></div></div>").join("") +
     "</div>";
+}
+function siteName(id) {
+  if (!id) return "Unassigned";
+  return (state.sites || []).find((site) => site.id === id)?.name || "Unassigned";
+}
+function siteOptions(selected) {
+  const head = state.actor?.role === "head";
+  const sites = state.sites || [];
+  const blank = head ? '<option value=""' + (!selected ? " selected" : "") + ">Unassigned</option>" : "";
+  return blank + sites.map((site) => '<option value="' + esc(site.id) + '"' + (site.id === selected ? " selected" : "") + ">" + esc(site.name) + "</option>").join("");
+}
+function remindersHtml() {
+  const items = (state.competitions || []).flatMap((comp) => comp.reminders || []);
+  if (!items.length) return "";
+  const label = { "upcoming-draw": "Draw coming up", "overdue-draw": "Draw overdue", closing: "Closing soon", "past-close": "Past closing date" };
+  return '<div class="card" data-testid="reminders"><div class="card-head"><h2>Draw reminders</h2><p class="muted small">Australia/Melbourne. These stay in the admin.</p></div>' +
+    items.map((item) => '<a class="rule" href="' + esc(item.href) + '"><strong>' + esc(label[item.kind] || item.kind) + "</strong> " + esc(item.name) + ' <span class="muted">' + esc(item.date) + "</span></a>").join("") + "</div>";
+}
+function siteOverviewHtml() {
+  const groups = new Map();
+  const add = (siteId, kind) => {
+    const key = siteId || "";
+    if (!groups.has(key)) groups.set(key, { codes: 0, pages: 0, competitions: 0 });
+    groups.get(key)[kind] += 1;
+  };
+  for (const code of state.codes || []) add(code.siteId, "codes");
+  for (const page of state.pages || []) add(page.siteId, "pages");
+  for (const comp of state.competitions || []) add(comp.siteId, "competitions");
+  if (state.actor?.role !== "head") groups.delete("");
+  const cards = [...groups.entries()].map(([id, counts]) => '<button type="button" class="metric-card" data-go="sites" data-testid="site-card"><strong>' + esc(siteName(id)) + '</strong><span class="muted small">' + counts.codes + " codes · " + counts.pages + " pages · " + counts.competitions + " competitions</span></button>").join("");
+  if (!cards && !(state.sites || []).length) return '<div class="card" data-testid="site-overview"><h2>Sites</h2><p class="muted">No sites yet. Head office can add locations without moving existing records.</p></div>';
+  return '<div class="card" data-testid="site-overview"><div class="card-head"><h2>' + (state.actor?.role === "head" ? "All sites" : "Your sites") + '</h2><button class="btn ghost" type="button" data-go="sites">Open</button></div><div class="metrics">' + cards + "</div></div>";
 }
 function ring(pct) {
   return '<svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="#e6e8ee" stroke-width="4"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="#12b76a" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + pct + ' 100" pathLength="100" transform="rotate(-90 18 18)"></circle></svg>';
@@ -540,6 +576,8 @@ function detailsCard(code, qr) {
     : kv("Short link", '<a href="' + esc(shortUrl(code.slug)) + '" target="_blank" rel="noreferrer">' + esc(shortUrl(code.slug)) + "</a>") + kv("Destination", '<a href="' + esc(code.url) + '" target="_blank" rel="noreferrer">' + esc(code.url) + "</a>");
   return '<div class="card" data-testid="' + (qr ? "qr-details" : "link-details") + '"><div class="card-head"><h2>Details</h2><button class="text-btn" type="button" data-act="edit">Edit</button></div><div class="kv">' +
     rows + '<div class="k">Tags</div><div><div class="chips">' + tags + '</div><form data-act="add-tag" class="row" style="margin-top:8px"><input name="tag" type="text" maxlength="40" placeholder="Add a tag" aria-label="Add a tag" style="flex:1;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px"><button class="btn ghost" type="submit">Add</button></form></div>' +
+    kv("Site", esc(siteName(code.siteId))) +
+    kv("Link check", esc(code.health?.status || state.detail?.health?.status || "unchecked") + (code.health?.checkedAt || state.detail?.health?.checkedAt ? " · " + esc(code.health?.checkedAt || state.detail?.health?.checkedAt) : "")) +
     kv("Created on", esc(formatCreated(code.created))) +
     (code.notes ? kv("Notes", esc(code.notes)) : "") +
     "</div></div>";
@@ -550,6 +588,8 @@ function qrSide(code) {
   return '<div class="card" data-testid="qr-preview"><div class="qr-stage">' + qrSvg(code.slug, styleOf(code), logo) + "</div>" +
     '<div class="muted small break" style="margin-top:8px">' + esc(shortUrl(code.slug)) + "</div>" +
     '<button class="text-btn" type="button" data-act="customize">Customize</button>' +
+    '<button class="btn ghost wide" type="button" data-act="code-poster" data-size="a4">A4 poster</button>' +
+    '<button class="btn ghost wide" type="button" data-act="check-link">Check destination</button>' +
     (code.hasLink ? '<a class="btn ghost wide" href="#/links/' + encodeURIComponent(code.slug) + '">View short link</a>' : '<button class="btn ghost wide" type="button" data-act="make-link">+ Create short link</button>') +
     "</div>";
 }
@@ -557,9 +597,10 @@ function linkSide(code) {
   if (code.hasQr) {
     return '<div class="card" data-testid="qr-preview"><div class="qr-stage">' + qrSvg(code.slug, styleOf(code), code.logoData || "") + "</div>" +
       '<button class="text-btn" type="button" data-act="customize">Customize</button>' +
+      '<button class="btn ghost wide" type="button" data-act="check-link">Check destination</button>' +
       '<a class="btn ghost wide" href="#/qrcodes/' + encodeURIComponent(code.slug) + '">View QR code</a></div>';
   }
-  return '<div class="card empty"><div class="empty-mark">L</div><h2>No QR code yet</h2><p class="muted">Create one that points at this same short link.</p><button class="btn" type="button" data-act="make-qr">Create QR code</button></div>';
+  return '<div class="card empty"><div class="empty-mark">L</div><h2>No QR code yet</h2><p class="muted">Create one that points at this same short link.</p><button class="btn" type="button" data-act="make-qr">Create QR code</button><button class="btn ghost wide" type="button" data-act="check-link">Check destination</button></div>';
 }
 function routingCard(code) {
   const rules = code.rules || [];
@@ -699,7 +740,7 @@ function settingsPage() {
     '<label class="field"><span>Default QR background</span><span class="color-row"><input name="defaultBg" type="color" value="' + esc(s.defaultBg) + '"><input name="defaultBgText" type="text" value="' + esc(s.defaultBg) + '"></span></label></div>' +
     '<label class="field"><span>Public URL</span><input type="text" readonly value="' + esc(s.publicUrl) + '"></label>' +
     '<p class="muted small">Short links stay on ' + esc(base()) + "/r/&lt;slug&gt;. The admin password is the ADMIN_PASSWORD environment variable and is not changed here. This session cookie lasts 7 days.</p>" +
-    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>';
+    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + staffSettings();
 }
 const PAGE_COLORS = [
   ["background", "Background"],
@@ -978,6 +1019,14 @@ function captureCompDraft() {
   d.submitLabel = val("submitLabel") || "Enter";
   d.thankYou = val("thankYou");
   d.status = val("status") || d.status;
+  const site = form.querySelector('[name="siteId"]');
+  if (site) d.siteId = site.value;
+  d.voucher = {
+    enabled: !!form.querySelector('[name="voucherEnabled"]')?.checked,
+    label: val("voucherLabel"),
+    terms: val("voucherTerms"),
+    expires: val("voucherExpires"),
+  };
   if (!d.slug) d.slugInput = val("slug");
   d.schedule = { type: val("scheduleType") === "single" ? "single" : "weekly", count: Number(val("scheduleCount")) || 8 };
   d.eligibility = {
@@ -1021,6 +1070,7 @@ function competitionEditor() {
     '<form id="comp-editor" data-act="save-comp" data-testid="comp-editor"><div class="card"><div class="card-head"><h2>Competition</h2></div>' +
     '<label class="field"><span>Name</span><input name="name" required maxlength="140" value="' + esc(d.name) + '"></label>' +
     (d.slug ? '<p data-testid="comp-url"><strong>' + esc(base() + "/c/" + d.slug) + "</strong></p>" : '<label class="field"><span>Slug (optional)</span><input name="slug" maxlength="41" placeholder="lansvale-free-fuel" value="' + esc(d.slugInput || "") + '"></label>') +
+    '<label class="field"><span>Location</span><select name="siteId" data-testid="comp-site">' + siteOptions(d.siteId || "") + "</select></label>" +
     '<label class="field"><span>Sites, comma separated</span><input name="sites" value="' + esc((d.sites || []).join(", ")) + '"></label>' +
     '<label class="field"><span>Prize</span><input name="prize" value="' + esc(d.prize) + '"></label>' +
     '<div class="split"><label class="field"><span>Start</span><input name="start" type="date" value="' + esc(d.start || "") + '"></label><label class="field"><span>End</span><input name="end" type="date" value="' + esc(d.end || "") + '"></label></div>' +
@@ -1033,7 +1083,12 @@ function competitionEditor() {
     '<label class="field"><span>Terms link</span><input name="termsUrl" type="url" value="' + esc(d.termsUrl) + '"></label>' +
     "<h2>One entry per period</h2><div class=\"row\">" +
     check("onePerPerson", "One entry per person") + check("dedupeEmail", "Dedupe email") + check("dedupePhone", "Dedupe phone") + check("dedupeRego", "Dedupe rego") + check("dedupeReceipt", "Dedupe receipt hash") + "</div>" +
-    '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition. An active competition always shows this form, including before the start date and when the link has ?qr=1.</p></div>' +
+    '<p class="muted small">Times and draw windows use Australia/Melbourne. Email, phone, and rego are checked inside the current period. A receipt number or photo hash is checked across the whole competition. An active competition always shows this form, including before the start date and when the link has ?qr=1.</p>' +
+    '<h2>Voucher</h2><p class="muted small">Off until you enable it. No offer is filled in for you.</p>' +
+    '<label class="check"><input type="checkbox" name="voucherEnabled"' + (d.voucher?.enabled ? " checked" : "") + "> Enable a single-use voucher</label>" +
+    '<label class="field"><span>Voucher label</span><input name="voucherLabel" value="' + esc(d.voucher?.label || "") + '"></label>' +
+    '<label class="field"><span>Voucher terms</span><textarea name="voucherTerms">' + esc(d.voucher?.terms || "") + "</textarea></label>" +
+    '<label class="field"><span>Voucher expiry</span><input name="voucherExpires" type="date" value="' + esc(d.voucher?.expires || "") + '"></label></div>' +
     compDesign(d) +
     '<div class="card"><div class="card-head"><h2>Entry form</h2></div>' + (d.fields || []).map(compFieldCard).join("") +
     '<div class="row" style="margin-top:12px"><select id="new-cfield-type">' + ["text", "email", "phone", "dropdown", "checkbox", "textarea", "file"].map((t) => '<option value="' + t + '">' + t + "</option>").join("") + '</select><button class="btn ghost" type="button" data-act="add-cfield">Add field</button></div>' +
@@ -1068,7 +1123,11 @@ function compManage() {
   const series = keys.map((date) => ({ date, value: byDay[date] || 0 }));
   const bySite = {};
   for (const e of entries) if (e.site) bySite[e.site] = (bySite[e.site] || 0) + 1;
-  return '<div class="card"><div class="card-head"><h2>QR code and short link</h2></div>' +
+  return '<div class="card" data-testid="poster-tools"><div class="card-head"><h2>Poster, template, and copy</h2></div>' +
+    '<p class="muted small">Posters print the existing public page address. A copy is a new draft with a new link and no entries.</p>' +
+    '<div class="row"><button class="btn" type="button" data-act="comp-poster" data-size="a4">A4 poster</button><button class="btn ghost" type="button" data-act="comp-poster" data-size="a3">A3 poster</button>' +
+    '<button class="btn ghost" type="button" data-act="save-template">Save as template</button><button class="btn ghost" type="button" data-act="copy-comp">Copy promotion</button></div></div>' +
+    '<div class="card"><div class="card-head"><h2>QR code and short link</h2></div>' +
     (code ? '<p class="break">' + esc(shortUrl(code.slug)) + ' → ' + esc(base() + "/c/" + d.slug) + '</p><div class="row"><a class="btn ghost" href="#/qrcodes/' + encodeURIComponent(code.slug) + '">View QR code</a><a class="btn ghost" href="#/links/' + encodeURIComponent(code.slug) + '">View short link</a></div>' : '<p class="muted">Saving an active competition creates both automatically.</p>') + "</div>" +
     '<div class="card" data-testid="comp-entries"><div class="card-head"><h2>Entries</h2><div class="row"><select id="comp-period">' + periodOptions + '</select><select id="comp-status">' +
     ["all", "valid", "duplicate", "archived"].map((s) => '<option value="' + s + '"' + (view.status === s ? " selected" : "") + ">" + s + "</option>").join("") +
@@ -1076,8 +1135,12 @@ function compManage() {
     '<p class="muted small">The draw uses valid entries in period ' + esc(d.currentPeriod || 1) + " only (" + num((state.compDetail?.stats?.currentValid) || 0) + " ready). After the draw they are archived and the next period starts empty.</p>" +
     (filtered.length ? '<div class="table-wrap"><table><thead><tr><th>Entry</th><th>When (Melbourne)</th><th>Name</th><th>Contact</th><th>Type</th><th>Site</th><th>Status</th><th>Receipt</th></tr></thead><tbody>' + rows + "</tbody></table></div>" : '<p class="muted">No entries in this view.</p>') + "</div>" +
     '<div class="card"><div class="card-head"><h2>Winners</h2></div>' +
-    (winners.length ? winners.map((w) => '<div class="rule"><strong>Draw ' + w.drawNumber + "</strong> " + esc(w.name) + " · " + esc(w.contact) + ' <span class="muted">' + esc(w.melbourne) + " · pool " + w.poolSize + "</span>" +
-      '<button class="btn ghost" type="button" data-act="comp-redraw" data-draw="' + w.drawNumber + '">Redraw</button></div>').join("") : '<p class="muted">No winners drawn yet.</p>') + "</div>" +
+    (winners.length ? winners.map((w) => '<div class="rule" data-testid="winner-' + esc(w.id) + '"><strong>Draw ' + w.drawNumber + "</strong> " + esc(w.name) + " · " + esc(w.contact || "No contact recorded") + ' <span class="muted">' + esc(w.melbourne) + " · pool " + w.poolSize + "</span>" +
+      '<span class="badge">' + esc(w.collection?.status || "pending") + "</span>" +
+      '<button class="btn ghost" type="button" data-act="comp-redraw" data-draw="' + w.drawNumber + '">Redraw</button>' +
+      '<button class="btn ghost" type="button" data-act="winner-notice" data-winner="' + esc(w.id) + '">Review notice</button></div>' +
+      '<form class="row" data-act="save-collection" data-winner="' + esc(w.id) + '"><select name="status"><option value="pending">Pending</option><option value="collected">Collected</option><option value="unclaimed">Unclaimed</option></select><input name="notes" type="text" maxlength="500" placeholder="Collection note" value="' + esc(w.collection?.notes || "") + '"><button class="btn ghost" type="submit">Save collection</button></form>').join("") : '<p class="muted">No winners drawn yet.</p>') +
+    '<div id="notice-draft" data-testid="notice-draft"></div></div>' +
     '<div class="card"><h2>Import</h2><p class="muted">Paste CSV with the sheet columns (Entry ID, Name, Contact, Contact Type, Status, Duplicate Reason, Timestamp) or JSON in an entries array is accepted by the API.</p>' +
     '<textarea id="comp-import" placeholder="Entry ID,Name,Contact,Contact Type,Status"></textarea><button class="btn ghost" type="button" data-act="comp-import">Import CSV</button></div>' +
     '<div class="card"><h2>Analytics</h2><p class="muted">Entries over the last 30 days. QR scans on the linked code: ' + num(scans) + ". Accepted entries: " + num(accepted) + (scans ? " · conversion " + Math.round((accepted / scans) * 100) + "%" : "") + ".</p>" +
@@ -1099,6 +1162,8 @@ function compPayload(d) {
     fields: d.fields, eligibility: d.eligibility, terms: d.terms, termsUrl: d.termsUrl, heading: d.heading, body: d.body,
     submitLabel: d.submitLabel, thankYou: d.thankYou,
     colors: d.colors, heroUrl: d.heroUrl, heroData: d.heroData, logoData: d.logoData,
+    siteId: d.siteId || "",
+    voucher: { enabled: !!d.voucher?.enabled, label: d.voucher?.label || "", terms: d.voucher?.terms || "", expires: d.voucher?.expires || "" },
   };
 }
 function compDesign(d) {
@@ -1165,7 +1230,7 @@ function paintCompPreview() {
 }
 async function ensureCompCode(comp) {
   if (comp.codeSlug || comp.status !== "active") return comp;
-  const code = await api("/api/codes", { method: "POST", body: JSON.stringify({ url: base() + "/c/" + comp.slug, name: comp.name || comp.slug, type: "qr", alsoLink: true }) });
+  const code = await api("/api/codes", { method: "POST", body: JSON.stringify({ url: base() + "/c/" + comp.slug, name: comp.name || comp.slug, type: "qr", alsoLink: true, siteId: comp.siteId || "" }) });
   state.codes = await api("/api/codes");
   return api("/api/competitions/" + encodeURIComponent(comp.slug), { method: "PATCH", body: JSON.stringify({ codeSlug: code.slug }) });
 }
@@ -1225,6 +1290,32 @@ function downloadCompCsv() {
   for (const e of entries) lines.push([e.id, e.campaign, e.at, e.melbourne, e.name, e.contact, e.contactNorm, e.contactType, e.site, e.period, e.status, e.duplicateReason, e.matchedEntryId, e.receiptHash || e.photoHash, e.over18 ? "yes" : "", e.consent ? "yes" : ""].map(csvCell).join(","));
   downloadBlob((state.compDraft?.slug || "competition") + "-entries.csv", new Blob([lines.join("\n")], { type: "text/csv" }));
 }
+function sitesPage() {
+  const head = state.actor?.role === "head";
+  const groups = new Map();
+  const ensure = (id) => { if (!groups.has(id)) groups.set(id, { codes: [], pages: [], competitions: [] }); return groups.get(id); };
+  for (const site of state.sites || []) ensure(site.id);
+  if (head) ensure("");
+  for (const code of state.codes || []) ensure(code.siteId || "").codes.push(code);
+  for (const page of state.pages || []) ensure(page.siteId || "").pages.push(page);
+  for (const comp of state.competitions || []) ensure(comp.siteId || "").competitions.push(comp);
+  if (!head) groups.delete("");
+  const block = (kind, rows) => rows.map((row) => '<form class="row" data-act="assign-site"><input type="hidden" name="kind" value="' + kind + '"><input type="hidden" name="slug" value="' + esc(row.slug) + '"><span class="grow">' + esc(row.name || row.slug) + '</span><select name="siteId">' + siteOptions(row.siteId || "") + '</select><button class="btn ghost" type="submit">Assign</button></form>').join("") || '<p class="muted">None</p>';
+  const cards = [...groups.entries()].map(([id, group]) => '<section class="card" data-testid="site-group"><h2>' + esc(siteName(id)) + "</h2><h3>QR codes and links</h3>" + block("code", group.codes) + "<h3>Pages</h3>" + block("page", group.pages) + "<h3>Competitions</h3>" + block("competition", group.competitions) + "</section>").join("");
+  return '<div class="page-head"><h1>Sites</h1></div>' +
+    (head ? '<form class="card" data-act="create-site" data-testid="create-site"><label class="field"><span>New location</span><input name="name" required maxlength="80" placeholder="Location name"></label><button class="btn" type="submit">Add site</button><p class="muted small">Existing records stay unassigned until someone moves them.</p></form>' : "") +
+    (cards || '<div class="card"><p class="muted">No sites are assigned to this login.</p></div>');
+}
+function staffSettings() {
+  if (state.actor?.role !== "head") return '<div class="card"><h2>Staff</h2><p class="muted">Head office creates manager logins here. None are created automatically. The head office password stays in ADMIN_PASSWORD.</p></div>';
+  const rows = (state.staff || []).map((person) => '<form class="row" data-act="save-staff"><input type="hidden" name="id" value="' + esc(person.id) + '"><strong class="grow">' + esc(person.name) + '</strong><span class="muted">' + esc(person.email) + "</span>" +
+    '<select name="siteId"><option value="">No site</option>' + (state.sites || []).map((site) => '<option value="' + esc(site.id) + '"' + (person.siteIds?.[0] === site.id ? " selected" : "") + ">" + esc(site.name) + "</option>").join("") + "</select>" +
+    '<label class="check"><input name="disabled" type="checkbox"' + (person.disabled ? " checked" : "") + '> Disabled</label><button class="btn ghost" type="submit">Update</button></form>').join("");
+  return '<form class="card" data-act="create-staff" data-testid="create-staff"><h2>Staff</h2><p class="muted small">Managers only see the site you assign. Passwords are stored as a hash and are not shown again.</p>' +
+    '<div class="split"><label class="field"><span>Name</span><input name="name" required></label><label class="field"><span>Email</span><input name="email" type="email" required></label></div>' +
+    '<div class="split"><label class="field"><span>Password</span><input name="password" type="password" minlength="10" required autocomplete="new-password"></label><label class="field"><span>Site</span><select name="siteId"><option value="">No site yet</option>' + (state.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + "</select></label></div>" +
+    '<button class="btn" type="submit">Create manager</button></form>' + (rows ? '<div class="card" data-testid="staff-list">' + rows + "</div>" : "");
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -1235,6 +1326,7 @@ function pageFor(r) {
   if (r.name === "analytics") return analyticsPage();
   if (r.name === "pages") return pagesList();
   if (r.name === "competitions") return competitionsList();
+  if (r.name === "sites") return sitesPage();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -1556,6 +1648,39 @@ async function handleAction(el) {
   if (act !== "toggle-menu" && act !== "toggle-dates" && act !== "toggle-rule") {
     document.querySelectorAll(".menu").forEach((m) => m.classList.add("hidden"));
   }
+  if (act === "comp-poster" || act === "code-poster") return openPoster(act === "comp-poster" ? "/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/poster?size=" + (el.dataset.size || "a4") : "/api/codes/" + encodeURIComponent(state.detail.code.slug) + "/poster?size=" + (el.dataset.size || "a4"));
+  if (act === "check-link") {
+    const result = await api("/api/health", { method: "POST", body: JSON.stringify({ slug: state.detail.code.slug }) });
+    state.detail.health = result.checked?.[0] || null;
+    toast("Checked: " + (state.detail.health?.status || "unknown"));
+    render({ refetch: false, keepScroll: true });
+    return;
+  }
+  if (act === "save-template") {
+    await api("/api/templates", { method: "POST", body: JSON.stringify({ kind: "competition", slug: state.compDraft.slug, name: state.compDraft.name }) });
+    state.templates = await api("/api/templates");
+    toast("Template saved");
+    return;
+  }
+  if (act === "copy-comp") {
+    const copy = await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/copy", { method: "POST", body: JSON.stringify({ name: (state.compDraft.name || "Competition") + " copy", siteId: state.compDraft.siteId || "", prize: state.compDraft.prize || "", start: state.compDraft.start || "", end: state.compDraft.end || "" }) });
+    state.competitions = await api("/api/competitions");
+    toast("Copied as a new draft");
+    go("competitions/" + copy.slug);
+    return;
+  }
+  if (act === "winner-notice") {
+    const draft = await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/winners/" + encodeURIComponent(el.dataset.winner) + "/notice");
+    const box = $("#notice-draft");
+    if (box) box.innerHTML = '<h3>Review only</h3><p class="muted small">' + (draft.recipientKnown ? "To: " + esc(draft.to) : esc(draft.recipientNote)) + "</p><pre data-testid=\"notice-text\">" + esc(draft.text) + '</pre><div class="row"><button class="btn ghost" type="button" data-act="copy-notice">Copy</button><button class="btn ghost" type="button" data-act="download-notice">Download</button></div>';
+    state.notice = draft;
+    return;
+  }
+  if (act === "copy-notice") { await copyText(state.notice?.text || ""); return; }
+  if (act === "download-notice") {
+    downloadBlob("prize-notice.txt", new Blob([state.notice?.text || ""], { type: "text/plain" }));
+    return;
+  }
   if (act === "logout") {
     await api("/api/auth", { method: "DELETE" });
     state.codes = [];
@@ -1783,7 +1908,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -1848,24 +1973,84 @@ $("#login-form").addEventListener("submit", async (e) => {
   const err = $("#login-error");
   err.textContent = "";
   try {
-    await api("/api/auth", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) });
+    const email = $("#staff-email")?.value.trim();
+    await api("/api/auth", { method: "POST", body: JSON.stringify(email ? { email, password: $("#pw").value } : { password: $("#pw").value }) });
     await enter();
   } catch (ex) { err.textContent = ex.message; }
 });
 window.addEventListener("hashchange", () => { if (!$("#shell").classList.contains("hidden")) render(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePops(); document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden")); } });
 
+async function openPoster(path) {
+  const response = await fetch(path, { credentials: "same-origin" });
+  if (!response.ok) throw new Error("Could not build the poster");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const opened = window.open(url, "_blank");
+  if (!opened) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "poster.html";
+    a.click();
+  }
+  toast("Poster ready");
+}
+async function createSite(form) {
+  await api("/api/sites", { method: "POST", body: JSON.stringify({ name: new FormData(form).get("name") }) });
+  state.sites = await api("/api/sites");
+  toast("Site added");
+  render({ refetch: false, keepScroll: true });
+}
+async function assignRecord(form) {
+  const data = new FormData(form);
+  const kind = data.get("kind");
+  const slug = data.get("slug");
+  const siteId = data.get("siteId");
+  const path = kind === "page" ? "/api/pages/" : kind === "competition" ? "/api/competitions/" : "/api/codes/";
+  await api(path + encodeURIComponent(slug), { method: "PATCH", body: JSON.stringify({ siteId }) });
+  state.codes = await api("/api/codes");
+  state.pages = await api("/api/pages");
+  state.competitions = await api("/api/competitions");
+  toast("Assignment saved");
+  render({ refetch: false, keepScroll: true });
+}
+async function createStaff(form) {
+  const data = new FormData(form);
+  await api("/api/staff", { method: "POST", body: JSON.stringify({ name: data.get("name"), email: data.get("email"), password: data.get("password"), siteIds: data.get("siteId") ? [data.get("siteId")] : [] }) });
+  form.reset();
+  state.staff = await api("/api/staff");
+  toast("Manager created");
+  render({ refetch: false, keepScroll: true });
+}
+async function saveStaff(form) {
+  const data = new FormData(form);
+  await api("/api/staff/" + encodeURIComponent(data.get("id")), { method: "PATCH", body: JSON.stringify({ disabled: !!data.get("disabled"), siteIds: data.get("siteId") ? [data.get("siteId")] : [] }) });
+  state.staff = await api("/api/staff");
+  toast("Manager updated");
+  render({ refetch: false, keepScroll: true });
+}
+async function saveCollection(form) {
+  const data = new FormData(form);
+  await api("/api/competitions/" + encodeURIComponent(state.compDraft.slug) + "/winners/" + encodeURIComponent(form.dataset.winner) + "/collection", { method: "POST", body: JSON.stringify({ status: data.get("status"), notes: data.get("notes") }) });
+  toast("Collection saved");
+  render();
+}
 async function enter() {
-  const [settings, codes, pages, competitions] = await Promise.all([api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions")]);
+  const jobs = [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates")];
+  if (state.actor?.role === "head") jobs.push(api("/api/staff"));
+  const [settings, codes, pages, competitions, sites, templates, staff] = await Promise.all(jobs);
   state.settings = settings;
   state.codes = codes;
   state.pages = pages;
   state.competitions = competitions;
+  state.sites = sites;
+  state.templates = templates;
+  state.staff = staff || [];
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
-  $("#account-label").innerHTML = "<strong>" + esc(state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>Admin session</div>";
+  $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + (state.actor?.role === "manager" ? "Site manager" : "Head office") + "</div>";
   ensureRanges();
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
@@ -1874,6 +2059,7 @@ async function boot() {
   try {
     const me = await api("/api/auth");
     if (!me.authenticated) return showLogin();
+    state.actor = me;
     await enter();
   } catch (e) { showLogin(e.message === "Unauthorized" ? "" : e.message); }
 }
