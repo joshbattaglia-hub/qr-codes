@@ -201,5 +201,20 @@ tr.clickable:hover{background:#f8fafc}
   .engage-num{font-size:28px}
 }
 .metric-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px}
+.asset-kicker{margin:0 0 4px;color:var(--blue);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.nav button[data-go="assets"]{color:var(--blue)}
+.nav button[data-go="assets"].active{background:#dbe4ff;color:var(--blue-dark);box-shadow:inset 3px 0 var(--blue)}
+.asset-page .card{border-top:3px solid var(--blue)}
+.asset-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(260px,.85fr);gap:16px;align-items:start}
+.asset-dims{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.asset-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.asset-preview{overflow-x:auto;background:#fff;border:1px dashed #d0d5dd;border-radius:12px;padding:12px}
+.asset-preview svg{display:block;max-width:100%;height:auto;background:#fff}
+.asset-preview figure{margin:0 0 12px}
+.asset-note{background:var(--soft);color:var(--navy);border-radius:12px;padding:10px 12px}
+.asset-page .check{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-weight:600}
+@media(max-width:860px){
+  .asset-layout,.asset-dims{grid-template-columns:1fr}
+}
 #notice-draft{margin-top:12px}
 #notice-draft pre{white-space:pre-wrap;background:#f6f7fb;border-radius:12px;padding:12px}

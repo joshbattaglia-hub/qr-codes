@@ -12,6 +12,12 @@
   [headers.values]
     Cache-Control = "no-cache"
 
+[[headers]]
+  for = "/admin/*.mjs"
+  [headers.values]
+    Content-Type = "text/javascript; charset=utf-8"
+    Cache-Control = "no-cache"
+
 # www → apex primary
 [[redirects]]
   from = "https://www.expresshelp.site/*"
