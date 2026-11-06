@@ -102,6 +102,7 @@ legend{padding:0 6px;font-weight:600}
 .swatch{display:inline-block;width:16px;height:3px;background:#2563eb;border-radius:2px;margin-right:6px;vertical-align:middle}
 .swatch.alt{background:#98a2b3}
 .btn{display:inline-flex;align-items:center;justify-content:center;background:var(--blue);color:#fff;border:0;border-radius:8px;padding:10px 14px;font-weight:600}
+.btn[hidden]{display:none}
 .btn:hover{background:var(--blue-dark)}
 .btn.ghost{background:#fff;color:var(--ink);border:1px solid #d0d5dd}
 .btn.ghost:hover{background:#f8fafc}

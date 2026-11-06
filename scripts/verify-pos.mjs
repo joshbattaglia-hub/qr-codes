@@ -45,6 +45,11 @@ async function shot(name, fullPage = true) {
 try {
   await page.setViewport({ width: 1280, height: 900 });
   await page.goto(base + "/admin", { waitUntil: "networkidle0" });
+  await waitText("Microsoft sign-in is not operational");
+  await shot("entra-disabled-desktop");
+  await page.setViewport({ width: 390, height: 844 });
+  await shot("entra-disabled-mobile", false);
+  await page.setViewport({ width: 1280, height: 900 });
   await page.type("#pw", "liberty-dev");
   await page.click("#login-form button[type=submit]");
   await waitText("Create QR code");

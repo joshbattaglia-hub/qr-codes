@@ -6,11 +6,20 @@ import {
   APPROVER_FACTS, QUICKFUEL_RECIPIENT, REVIEW_TTL_MS, approvalCurrent, publicDraft, pushHistory, tokenHash,
 } from "./pos-approval.mjs";
 
+export function isVerifiedPreparer(actor) {
+  return actor?.kind === "verified-identity" && (actor.role === "preparer" || ["regional-business-manager", "jeremy", "joshua"].includes(actor.preparerClass));
+}
+
+export function isVerifiedApprover(actor) {
+  return actor?.kind === "verified-identity" && (actor.role === "approver" || actor.approverKey === "neil" || actor.approverKey === "joshua");
+}
+
 export function canSeeDraft(actor, draft) {
   if (!actor) return false;
   if (actor.role === "head") return true;
   const ids = draft?.siteIds || [];
   if (!ids.length) return actor.unassigned === true;
+  if (actor.allSites === true) return ids.length > 0;
   return ids.every((id) => Array.isArray(actor.siteIds) && actor.siteIds.includes(id));
 }
 
@@ -129,7 +138,7 @@ async function deliverApproval({ draft, actor, approverKey, hash, token, expires
 }
 
 export async function requestApproval({ actor, draft, etag }) {
-  if (actor?.kind !== "verified-identity" || actor.role !== "preparer") {
+  if (!isVerifiedPreparer(actor)) {
     return { status: 403, error: "A verified preparer identity has to request approval. The shared head-office password cannot." };
   }
   if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
@@ -229,7 +238,7 @@ async function sendConfirmation(draft) {
 }
 
 export async function decide({ actor, draft, etag, decision, tokenRecord }) {
-  if (actor?.kind !== "verified-identity" || actor.role !== "approver") {
+  if (!isVerifiedApprover(actor)) {
     return { status: 403, error: "A verified approver identity is required. Email and the shared password do not approve." };
   }
   if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
@@ -278,7 +287,7 @@ export async function decide({ actor, draft, etag, decision, tokenRecord }) {
 }
 
 export async function sendQuickfuel({ actor, draft, etag, confirm, recipient }) {
-  if (actor?.kind !== "verified-identity" || actor.role !== "preparer" || actor.id !== draft.requestedBy) {
+  if (!isVerifiedPreparer(actor) || actor.id !== draft.requestedBy) {
     return { status: 403, error: "The requester has to send this from the POS setup screen." };
   }
   if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
