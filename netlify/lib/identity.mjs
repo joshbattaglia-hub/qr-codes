@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { clearCookie, env, identities, json, sitesStore } from "./lib.mjs";
 import { actorFrom, clearStaffCookie, hashPassword, jsonCookies, verifyPassword } from "./access.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
+import { actorFromSession, readSession, rotateSession, sessionCookie } from "./entra.mjs";
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
@@ -77,11 +78,21 @@ export async function identityFromCookie(req) {
   return publicIdentity(row);
 }
 
-/** Verified identity wins over the shared head-office cookie. */
+/** A current Entra sign-in wins, then a verified fixture identity, then the shared password. */
 export async function actorFromRequest(req) {
+  const entra = await entraActor(req);
+  if (entra.actor) return entra.actor;
   const ident = await identityFromCookie(req);
   if (ident) return ident;
   return actorFrom(req);
+}
+
+export async function entraActor(req) {
+  const row = await readSession(req);
+  if (!row) return { actor: null, cookie: "" };
+  const rotated = await rotateSession(row);
+  const current = rotated || row;
+  return { actor: actorFromSession(current), cookie: rotated ? sessionCookie(req, rotated.id, rotated.exp) : "" };
 }
 
 async function allIdentities() {

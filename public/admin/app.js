@@ -166,12 +166,30 @@ function togglePop(id) {
   closePops();
   if (willOpen) el.classList.remove("hidden");
 }
+async function entraLoginState() {
+  const box = $("#entra-setup");
+  const link = $("#entra-signin");
+  if (!box || !link) return;
+  try {
+    const status = await fetch("/api/identity/entra/status", { credentials: "same-origin" }).then((res) => res.json());
+    const ret = "/admin" + (location.hash && /^#\/pos\/p[a-f0-9]{8}$/.test(location.hash) ? location.hash : "");
+    link.href = "/api/identity/entra/start?returnTo=" + encodeURIComponent(ret);
+    if (!status.configured) {
+      link.hidden = true;
+      box.textContent = "Microsoft sign-in is not operational. Add the single-tenant Entra tenant id, client id, client secret, session secret, and verified object-id role map. No account is granted from an email address.";
+      return;
+    }
+    link.hidden = false;
+    box.textContent = status.testIssuer ? "Local test issuer only. This is not the workplace tenant." : "Work account sign-in is configured. Access still depends on a verified object id.";
+  } catch { box.textContent = "Microsoft sign-in is not operational."; }
+}
 function showLogin(message) {
   $("#boot").classList.add("hidden");
   $("#shell").classList.add("hidden");
   $("#login").classList.remove("hidden");
   const err = $("#login-error");
   if (err) err.textContent = message || "";
+  entraLoginState();
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); }
