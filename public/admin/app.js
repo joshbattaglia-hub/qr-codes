@@ -43,6 +43,8 @@ const state = {
   sites: [],
   staff: [],
   templates: [],
+  posDrafts: [],
+  posDraft: null,
 };
 
 const $ = (s) => document.querySelector(s);
@@ -1324,6 +1326,58 @@ function staffSettings() {
     '<div class="split"><label class="field"><span>Password</span><input name="password" type="password" minlength="10" required autocomplete="new-password"></label><label class="field"><span>Site</span><select name="siteId"><option value="">No site yet</option>' + (state.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + "</select></label></div>" +
     '<button class="btn" type="submit">Create manager</button></form>' + (rows ? '<div class="card" data-testid="staff-list">' + rows + "</div>" : "");
 }
+function blankPos() {
+  return { offer: "", conditions: "", start: "", end: "", siteIds: [], posRedemption: "single-use", codeValue: "" };
+}
+function posList() {
+  const rows = state.posDrafts || [];
+  const body = rows.map((draft) => '<tr class="clickable" data-go="pos/' + esc(draft.id) + '"><td><strong>' + esc(draft.offer) + '</strong><div class="muted small">' + esc(draft.codeValue) + '</div></td><td>' + esc(draft.posRedemption) + '</td><td>Pending</td><td>' + esc((draft.sites || []).map((site) => site.name).join(", ") || "Unassigned") + "</td></tr>").join("");
+  return '<div class="page-head"><h1>POS setup</h1><button class="btn" type="button" data-go="pos/new">New draft</button></div><div class="warn-banner" data-testid="pos-provisional">Provisional. Quickfuel has not confirmed a barcode or import format. Nothing here activates an offer.</div><div class="card table-wrap" data-testid="pos-list">' +
+    (rows.length ? "<table><thead><tr><th>Offer</th><th>POS request</th><th>Status</th><th>Sites</th></tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><h2>No POS drafts</h2><p class="muted">Create a package for a point-of-sale provider. It stays pending.</p></div>') + "</div>";
+}
+function posEditor() {
+  const draft = state.posDraft || blankPos();
+  const selected = new Set(draft.siteIds || []);
+  const sites = (state.sites || []).map((site) => '<label class="check"><input type="checkbox" name="siteIds" value="' + esc(site.id) + '"' + (selected.has(site.id) ? " checked" : "") + "> " + esc(site.name) + "</label>").join("") || '<p class="muted">No sites yet. Head office can still save an unassigned draft.</p>';
+  const preview = draft.id ? '<img data-testid="pos-barcode" alt="Code 128 barcode" src="/api/pos-drafts/' + encodeURIComponent(draft.id) + "/barcode.svg?v=" + encodeURIComponent(draft.updated || "") + '">' : '<p class="muted">Save the draft to preview the barcode.</p>';
+  return '<div class="page-head"><button class="icon-btn" type="button" data-go="pos" aria-label="Back">←</button><h1>' + esc(draft.offer || "POS draft") + '</h1><span class="badge">Pending</span></div>' +
+    '<div class="warn-banner" data-testid="pos-provisional">Provisional Code 128 artwork. This is not a Quickfuel format, not a GTIN, and not an activated web voucher. A single-use choice is a request to the point-of-sale provider, not enforcement by this barcode.</div>' +
+    '<form class="card" data-act="save-pos" data-testid="pos-editor"><div class="card-head"><h2>Draft</h2></div>' +
+    '<label class="field"><span>Offer</span><input name="offer" required maxlength="140" value="' + esc(draft.offer || "") + '"></label>' +
+    '<label class="field"><span>Conditions</span><textarea name="conditions" required maxlength="2000">' + esc(draft.conditions || "") + "</textarea></label>" +
+    '<div class="split"><label class="field"><span>Valid from</span><input name="start" type="date" required value="' + esc(draft.start || "") + '"></label><label class="field"><span>Valid through</span><input name="end" type="date" required value="' + esc(draft.end || "") + '"></label></div>' +
+    '<p class="muted small">Boundaries use Australia/Melbourne, from 00:00 on the start date through 23:59:59 on the end date.</p>' +
+    '<fieldset><legend>Eligible sites</legend>' + sites + "</fieldset>" +
+    '<label class="field"><span>POS redemption request</span><select name="posRedemption"><option value="single-use"' + (draft.posRedemption !== "reusable" ? " selected" : "") + '>Single-use request</option><option value="reusable"' + (draft.posRedemption === "reusable" ? " selected" : "") + ">Reusable request</option></select></label>" +
+    '<label class="field"><span>Barcode type</span><input value="Code 128" readonly></label>' +
+    '<label class="field"><span>Barcode value</span><input name="codeValue" maxlength="48" value="' + esc(draft.codeValue || "") + '" placeholder="Leave blank to allocate EH-POS-…"></label>' +
+    '<p class="muted small">Other barcode formats are not generated. Confirmation stays pending.</p>' +
+    '<div class="row"><button class="btn" type="submit">Save draft</button>' + (draft.id ? '<button class="btn ghost" type="button" data-act="pos-download">Download package</button>' : "") + "</div>" +
+    '<p class="err" id="pos-error"></p></form>' +
+    '<div class="card" data-testid="pos-preview"><h2>Barcode preview</h2>' + preview + "</div>";
+}
+async function savePos(form) {
+  const data = new FormData(form);
+  const body = {
+    offer: data.get("offer"),
+    conditions: data.get("conditions"),
+    start: data.get("start"),
+    end: data.get("end"),
+    siteIds: data.getAll("siteIds"),
+    posRedemption: data.get("posRedemption"),
+    codeValue: data.get("codeValue") || "",
+  };
+  const err = $("#pos-error");
+  try {
+    const saved = state.posDraft?.id
+      ? await api("/api/pos-drafts/" + encodeURIComponent(state.posDraft.id), { method: "PATCH", body: JSON.stringify(body) })
+      : await api("/api/pos-drafts", { method: "POST", body: JSON.stringify(body) });
+    state.posDrafts = await api("/api/pos-drafts");
+    toast("Draft saved");
+    if (!state.posDraft?.id) go("pos/" + saved.id);
+    else { state.posDraft = saved; render({ refetch: false, keepScroll: true }); }
+  } catch (e) { if (err) err.textContent = e.message; else toast(e.message); }
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -1335,6 +1389,7 @@ function pageFor(r) {
   if (r.name === "pages") return pagesList();
   if (r.name === "competitions") return competitionsList();
   if (r.name === "sites") return sitesPage();
+  if (r.name === "pos") return posList();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -1510,6 +1565,21 @@ async function render(opts = {}) {
       }
     }
     view.innerHTML = competitionEditor();
+  } else if (r.name === "pos" && r.id) {
+    if (r.id === "new") {
+      if (routeChanged) state.posDraft = blankPos();
+    } else if (!(opts.refetch === false && state.posDraft?.id === r.id)) {
+      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      try {
+        state.posDraft = await api("/api/pos-drafts/" + encodeURIComponent(r.id));
+        if (gen !== renderGen) return;
+      } catch (e) {
+        if (gen !== renderGen) return;
+        view.innerHTML = '<div class="card"><h2>Not found</h2><p>' + esc(e.message) + '</p><p><button class="btn ghost" type="button" data-go="pos">POS setup</button></p></div>';
+        return;
+      }
+    }
+    view.innerHTML = posEditor();
   } else {
     if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
@@ -1680,6 +1750,18 @@ async function handleAction(el) {
   if (act === "copy-notice") { await copyText(state.notice?.text || ""); return; }
   if (act === "download-notice") {
     downloadBlob("prize-notice.txt", new Blob([state.notice?.text || ""], { type: "text/plain" }));
+    return;
+  }
+  if (act === "pos-download") {
+    const response = await fetch("/api/pos-drafts/" + encodeURIComponent(state.posDraft.id) + "/package", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Could not download the package");
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "pos-setup-" + state.posDraft.id + ".zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
     return;
   }
   if (act === "logout") {
@@ -1909,7 +1991,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -2050,15 +2132,16 @@ async function saveCollection(form) {
   render();
 }
 async function enter() {
-  const jobs = [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates")];
+  const jobs = [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates"), api("/api/pos-drafts")];
   if (state.actor?.role === "head") jobs.push(api("/api/staff"));
-  const [settings, codes, pages, competitions, sites, templates, staff] = await Promise.all(jobs);
+  const [settings, codes, pages, competitions, sites, templates, posDrafts, staff] = await Promise.all(jobs);
   state.settings = settings;
   state.codes = codes;
   state.pages = pages;
   state.competitions = competitions;
   state.sites = sites;
   state.templates = templates;
+  state.posDrafts = posDrafts;
   state.staff = staff || [];
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
