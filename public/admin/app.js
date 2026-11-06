@@ -192,6 +192,56 @@ function showLogin(message) {
   const err = $("#login-error");
   if (err) err.textContent = message || "";
   entraLoginState();
+  otpLoginState();
+}
+async function otpLoginState() {
+  const box = $("#otp-setup");
+  const form = $("#otp-form");
+  const mock = $("#otp-mock");
+  if (!box || !form) return;
+  try {
+    const status = await fetch("/api/identity/otp/status", { credentials: "same-origin" }).then((res) => res.json());
+    if (!status.operational) {
+      form.hidden = true;
+      box.textContent = status.setup || "Email codes are not operational. No code is sent.";
+      return;
+    }
+    form.hidden = false;
+    if (mock) mock.hidden = !status.mock;
+    box.textContent = "A code works only for an address on the explicit allowlist. The email domain does not grant access.";
+  } catch { box.textContent = "Email codes are not operational."; }
+}
+async function submitOtp(event) {
+  event.preventDefault();
+  const error = $("#otp-error");
+  const status = $("#otp-status");
+  if (error) error.textContent = "";
+  const email = $("#otp-email")?.value || "";
+  const codeWrap = $("#otp-code-wrap");
+  const code = $("#otp-code")?.value || "";
+  const verifying = codeWrap && !codeWrap.hidden && code.trim();
+  const path = verifying ? "/api/identity/otp/verify" : "/api/identity/otp/start";
+  const body = verifying ? { email, code } : { email };
+  const response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const payload = await response.json().catch(() => ({}));
+  if (!verifying) {
+    if (!response.ok) {
+      if (error) error.textContent = payload.error || "Email codes are not operational.";
+      return;
+    }
+    if (status) status.textContent = payload.message || "";
+    if (codeWrap) codeWrap.hidden = false;
+    const verify = $("#otp-verify");
+    if (verify) verify.hidden = false;
+    $("#otp-code")?.focus();
+    return;
+  }
+  if (!response.ok) {
+    if (error) error.textContent = payload.error || "That code was not accepted.";
+    return;
+  }
+  state.actor = { authenticated: true, ...(payload.identity || {}), role: payload.role };
+  await enter();
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); }
@@ -2345,6 +2395,8 @@ $("#login-form").addEventListener("submit", async (e) => {
     await enter();
   } catch (ex) { err.textContent = ex.message; }
 });
+$("#otp-form")?.addEventListener("submit", (event) => { submitOtp(event).catch((err) => { const box = $("#otp-error"); if (box) box.textContent = err.message; }); });
+$("#otp-verify")?.addEventListener("click", () => { submitOtp({ preventDefault() {} }).catch((err) => { const box = $("#otp-error"); if (box) box.textContent = err.message; }); });
 $("#identity-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = $("#ident-error");
@@ -2450,7 +2502,7 @@ async function enter() {
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
-  const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : "Preparer") : state.actor?.role === "manager" ? "Site manager" : "Head office";
+  const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : state.actor.role === "preparer" ? "Preparer" : "No access") + (state.actor.provider === "otp" ? " · email code" : "") : state.actor?.role === "manager" ? "Site manager" : "Head office";
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
   ensureRanges();
   if (!location.hash || location.hash === "#") location.replace("#/home");

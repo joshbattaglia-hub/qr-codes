@@ -4,6 +4,7 @@ import { clearCookie } from "../lib/lib.mjs";
 import { clearStaffCookie } from "../lib/access.mjs";
 import { json } from "../lib/lib.mjs";
 import { clearIdentityCookie } from "../lib/identity.mjs";
+import { clearOtpCookie, deleteOtpSession } from "../lib/otp.mjs";
 import {
   authorizeUrl, clearSessionCookie, clearStateCookie, clientId, createSession, deleteSession,
   entraConfigured, entraStatus, exchangeCode, logoutEndpoint, logoutReturnUri, pkceChallenge, readSession,
@@ -45,15 +46,17 @@ export default async (req) => {
     const verified = await verifyIdToken(exchanged.idToken, { nonce: saved.nonce });
     if (verified.error) return json(400, { error: "Sign-in could not be completed" });
     const session = await createSession(verified.claims);
+    await deleteOtpSession(req);
     const destination = new URL(redirectUri()).origin + saved.returnTo;
-    return redirect(destination, [clearStateCookie(req), sessionCookie(req, session.id, session.exp), clearCookie(req), clearStaffCookie(req), clearIdentityCookie(req)]);
+    return redirect(destination, [clearStateCookie(req), sessionCookie(req, session.id, session.exp), clearCookie(req), clearStaffCookie(req), clearIdentityCookie(req), clearOtpCookie(req)]);
   }
   if (path === "/api/identity/entra/logout" && req.method === "POST") {
     if (originBlocked(req)) return forbidden();
     await deleteSession(req);
+    await deleteOtpSession(req);
     const microsoft = logoutEndpoint();
     const next = microsoft ? `${microsoft}?post_logout_redirect_uri=${encodeURIComponent(logoutReturnUri())}` : logoutReturnUri();
-    return redirect(next, [clearSessionCookie(req), clearStateCookie(req)]);
+    return redirect(next, [clearSessionCookie(req), clearStateCookie(req), clearOtpCookie(req)]);
   }
   return json(404, { error: "Not found" });
 };

@@ -2,6 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { clearCookie } from "../lib/lib.mjs";
 import { actorFrom, clearStaffCookie, forbidden, jsonCookies, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest, bindIdentity, clearIdentityCookie, entraActor, identityStatus, loginIdentity } from "../lib/identity.mjs";
+import { clearOtpCookie, deleteOtpSession, otpSessionView } from "../lib/otp.mjs";
 import { entraStatus } from "../lib/entra.mjs";
 import { mailConfigured, mailMode, mailSetupMessage } from "../lib/mail.mjs";
 
@@ -22,12 +23,20 @@ export default async (req) => {
       if (!entra.cookie) return json(200, body);
       return jsonCookies(200, body, [entra.cookie]);
     }
+    const otp = await otpSessionView(req);
+    if (otp.cookie && !otp.actor) return jsonCookies(200, { authenticated: false }, [otp.cookie]);
+    if (otp.actor) {
+      const body = { authenticated: true, role: otp.actor.role, identity: otp.actor, otp: true };
+      if (!otp.cookie) return json(200, body);
+      return jsonCookies(200, body, [otp.cookie]);
+    }
     const actor = await actorFromRequest(req);
     if (!actor || actor.kind !== "verified-identity") return json(200, { authenticated: false });
     return json(200, { authenticated: true, role: actor.role, identity: actor });
   }
   if (path === "/api/identity/session" && req.method === "DELETE") {
-    return jsonCookies(200, { ok: true }, [clearIdentityCookie(req), clearCookie(req), clearStaffCookie(req)]);
+    await deleteOtpSession(req);
+    return jsonCookies(200, { ok: true }, [clearIdentityCookie(req), clearCookie(req), clearStaffCookie(req), clearOtpCookie(req)]);
   }
   if (path === "/api/identity/session" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));

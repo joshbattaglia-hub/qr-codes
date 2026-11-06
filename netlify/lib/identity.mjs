@@ -3,6 +3,7 @@ import { clearCookie, env, identities, json, sitesStore } from "./lib.mjs";
 import { actorFrom, clearStaffCookie, hashPassword, jsonCookies, verifyPassword } from "./access.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
 import { actorFromSession, readSession, rotateSession, sessionCookie } from "./entra.mjs";
+import { clearOtpCookie, deleteOtpSession, otpFromRequest } from "./otp.mjs";
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
@@ -78,10 +79,12 @@ export async function identityFromCookie(req) {
   return publicIdentity(row);
 }
 
-/** A current Entra sign-in wins, then a verified fixture identity, then the shared password. */
+/** Entra wins, then an email-code session, then a fixture identity, then the shared password. Scopes are not combined. */
 export async function actorFromRequest(req) {
   const entra = await entraActor(req);
   if (entra.actor) return entra.actor;
+  const otp = await otpFromRequest(req);
+  if (otp) return otp;
   const ident = await identityFromCookie(req);
   if (ident) return ident;
   return actorFrom(req);
@@ -200,9 +203,10 @@ export async function loginIdentity(req, body) {
   const row = rows.find((item) => !item.disabled && (item.id === login || (item.kind === "approver" && item.emailFact === login)));
   const match = verifyPassword(password, row?.passwordHash || "scrypt$00$00");
   if (!row || !match) return { status: 401, error: "Invalid identity" };
+  await deleteOtpSession(req);
   return {
     status: 200,
-    response: jsonCookies(200, { ok: true, role: row.kind, identity: publicIdentity(row) }, [makeIdentityCookie(req, row.id), clearCookie(req), clearStaffCookie(req)]),
+    response: jsonCookies(200, { ok: true, role: row.kind, identity: publicIdentity(row) }, [makeIdentityCookie(req, row.id), clearCookie(req), clearStaffCookie(req), clearOtpCookie(req)]),
   };
 }
 

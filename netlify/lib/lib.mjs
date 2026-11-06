@@ -45,6 +45,7 @@ export const posReviews = () => openStore("pos-reviews");
 export const posClaims = () => openStore("pos-claims");
 export const identities = () => openStore("identities");
 export const entraStore = () => openStore("entra-sessions");
+export const otpStore = () => openStore("otp-auth");
 export const siteImports = () => openStore("site-imports");
 export const rateStore = () => openStore("auth-rate");
 
