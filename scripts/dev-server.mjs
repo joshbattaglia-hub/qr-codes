@@ -38,7 +38,7 @@ const GEO = {
   JP: { city: "Tokyo", country: { code: "JP", name: "Japan" } },
   AU: { city: "Sydney", country: { code: "AU", name: "Australia" }, subdivision: { code: "NSW" } },
 };
-const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png" };
 
 function toRequest(req, url, body) {
   const headers = new Headers();

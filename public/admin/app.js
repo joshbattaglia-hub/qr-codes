@@ -1,3 +1,5 @@
+import { CODE39_DEFAULTS, readLayout, validatePayload, parseBatch, code39Svg, safeAssetName, zipStore, printHtml } from "./code39.mjs";
+
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const NAME_TO_CODE = {
   Australia: "AU", "United States": "US", "United States of America": "US", Japan: "JP",
@@ -1420,6 +1422,195 @@ async function savePos(form) {
     else { state.posDraft = saved; render({ refetch: false, keepScroll: true }); }
   } catch (e) { if (err) err.textContent = e.message; else toast(e.message); }
 }
+function assetValues() {
+  const form = document.getElementById("asset-form");
+  const data = new FormData(form);
+  return {
+    heading: String(data.get("heading") ?? ""),
+    payload: String(data.get("payload") ?? ""),
+    batch: String(data.get("batch") ?? ""),
+    uppercase: data.get("uppercase") === "on",
+    moduleMm: data.get("moduleMm"),
+    ratio: data.get("ratio"),
+    barHeightMm: data.get("barHeightMm"),
+    quietModules: data.get("quietModules"),
+    labelWidthMm: data.get("labelWidthMm"),
+    labelHeightMm: data.get("labelHeightMm"),
+  };
+}
+function assetModel() {
+  const values = assetValues();
+  const layout = readLayout(values);
+  const single = layout.errors.length ? { error: layout.errors[0] } : validatePayload(values.payload, { uppercase: values.uppercase });
+  const batch = layout.errors.length ? { items: [], errors: layout.errors.map((error) => ({ line: 0, error })) } : parseBatch(values.batch, { uppercase: values.uppercase });
+  return { values, layout, single, batch };
+}
+function assetLabel(payload, layout, heading) {
+  const drawn = code39Svg(payload, layout, heading);
+  return { payload, heading, ...drawn, name: safeAssetName(payload) + ".svg" };
+}
+function paintAsset() {
+  const preview = document.getElementById("asset-preview");
+  const notes = document.getElementById("asset-notes");
+  if (!preview || !notes) return;
+  const model = assetModel();
+  const blocks = [];
+  if (model.single.error) blocks.push('<p class="err" data-testid="asset-single-error">' + esc(model.single.error) + "</p>");
+  else {
+    const label = assetLabel(model.single.payload, model.layout, model.values.heading);
+    const converted = model.single.converted ? '<p class="small">Entered ' + esc(model.values.payload) + ". Encoded " + esc(label.payload) + " because uppercase conversion is confirmed.</p>" : "";
+    const overflow = label.notes.map((note) => '<p class="err" data-testid="asset-overflow">' + esc(note) + "</p>").join("");
+    blocks.push('<div data-testid="asset-barcode">' + label.svg + "</div>" + converted + overflow + '<p class="small muted">File size ' + label.widthMm.toFixed(1) + " × " + label.heightMm.toFixed(1) + " mm. The on-screen picture may scale to fit. The downloaded file keeps these millimetres.</p>");
+  }
+  if (model.layout.errors.length) blocks.push("");
+  else if (!String(model.values.batch).replace(/\r/g, "").split("\n").some((line) => line !== "")) {
+    blocks.push('<p class="muted small">Batch is empty. Add one ID per line when you want a sheet.</p>');
+  } else if (model.batch.errors.length) {
+    blocks.push('<div data-testid="asset-batch-errors">' + model.batch.errors.slice(0, 8).map((item) => '<p class="err">Line ' + item.line + ": " + esc(item.error) + "</p>").join("") + "</div>");
+  } else {
+    const shown = model.batch.items.slice(0, 3).map((item) => {
+      const label = assetLabel(item.payload, model.layout, model.values.heading);
+      const converted = item.converted ? "<figcaption class=\"small\">Encoded " + esc(item.payload) + " from " + esc(item.entered) + "</figcaption>" : "";
+      return "<figure>" + label.svg + converted + "</figure>";
+    }).join("");
+    const extra = model.batch.items.length > 3 ? '<p class="small muted">' + (model.batch.items.length - 3) + " more IDs are included in the ZIP and the print sheet.</p>" : "";
+    blocks.push('<div data-testid="asset-batch">' + shown + extra + "</div>");
+  }
+  preview.innerHTML = blocks.join("");
+  notes.textContent = "Code 39, no checksum. A scanner may report ]A0 before the ID. That prefix is not in the bars or the text.";
+}
+function saveAssetBlob(name, bytes, mime) {
+  const blob = new Blob([bytes], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+function assetStatus(message) {
+  const status = document.getElementById("asset-copy");
+  if (status) status.textContent = message;
+}
+async function copyAssetSvg(svg) {
+  let copied = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(svg);
+      copied = true;
+    }
+  } catch { copied = false; }
+  if (!copied) {
+    try {
+      const area = document.createElement("textarea");
+      area.value = svg;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      copied = document.execCommand("copy");
+      area.remove();
+    } catch { copied = false; }
+  }
+  assetStatus(copied ? "SVG copied." : "Copy was blocked. The SVG was not copied. Download it instead.");
+}
+function printAssetHtml(html) {
+  let frame = document.getElementById("asset-print-frame");
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.id = "asset-print-frame";
+    frame.title = "Asset label print";
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;width:0;height:0;border:0;visibility:hidden";
+    document.body.appendChild(frame);
+  }
+  const doc = frame.contentDocument;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  try {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+    assetStatus("Print dialog opened. The labels are in a hidden frame, not a new window.");
+  } catch {
+    assetStatus("Print could not be opened in this browser.");
+  }
+}
+function uniqueAssetName(payload, used) {
+  const stem = safeAssetName(payload);
+  let name = stem + ".svg";
+  let n = 2;
+  while (used.has(name)) {
+    name = stem.slice(0, 70) + "-" + n + ".svg";
+    n += 1;
+  }
+  used.add(name);
+  return name;
+}
+function assetAction(act) {
+  const model = assetModel();
+  if (model.layout.errors.length) {
+    assetStatus(model.layout.errors[0]);
+    return;
+  }
+  const heading = model.values.heading;
+  if (act === "asset-download" || act === "asset-copy" || act === "asset-print") {
+    if (model.single.error) {
+      assetStatus(model.single.error);
+      return;
+    }
+    const label = assetLabel(model.single.payload, model.layout, heading);
+    if (act === "asset-download") {
+      saveAssetBlob(label.name, label.svg, "image/svg+xml");
+      assetStatus("Downloaded " + label.name + ".");
+    } else if (act === "asset-copy") return copyAssetSvg(label.svg);
+    else printAssetHtml(printHtml([label]));
+    return;
+  }
+  if (model.batch.errors.length) {
+    assetStatus("Fix the batch before exporting. Nothing was downloaded.");
+    return;
+  }
+  if (!model.batch.items.length) {
+    assetStatus("Add at least one ID to the batch.");
+    return;
+  }
+  const used = new Set();
+  const labels = model.batch.items.map((item) => {
+    const label = assetLabel(item.payload, model.layout, heading);
+    label.name = uniqueAssetName(item.payload, used);
+    return label;
+  });
+  if (act === "asset-zip") {
+    const zip = zipStore(labels.map((label) => ({ name: label.name, data: label.svg })));
+    saveAssetBlob("asset-barcodes.zip", zip, "application/zip");
+    assetStatus("Downloaded asset-barcodes.zip with " + labels.length + " SVG files.");
+  } else if (act === "asset-sheet") printAssetHtml(printHtml(labels));
+}
+function assetPage() {
+  const d = CODE39_DEFAULTS;
+  return '<div class="asset-page" id="asset-page" data-testid="asset-page"><div class="page-head"><div><p class="asset-kicker">Asset labels</p><h1>Asset Barcodes</h1><p class="muted">Equipment stickers use standard Code 39. This tab does not create POS vouchers, offers, or claim links.</p></div></div>'
+    + '<form id="asset-form" class="asset-layout"><div class="card"><h2>Single ID</h2><label class="field"><span>Asset ID</span><input name="payload" data-testid="asset-id" value="' + esc(d.payload) + '" autocomplete="off" spellcheck="false" maxlength="40"></label>'
+    + '<label class="check"><input type="checkbox" name="uppercase" value="on"> Convert lower-case letters to uppercase. I confirm this change.</label>'
+    + '<label class="field"><span>Label heading</span><input name="heading" data-testid="asset-heading" value="' + esc(d.heading) + '" maxlength="80"></label>'
+    + '<h2>Batch</h2><label class="field"><span>One ID per line</span><textarea name="batch" data-testid="asset-batch" maxlength="4000" placeholder="LOC50924&#10;TEST-1"></textarea></label>'
+    + '<p class="small muted">Empty lines are skipped. Up to 40 IDs, 40 characters each. Interior spaces stay in the ID.</p>'
+    + '<h2>Label size</h2><div class="asset-dims">'
+    + '<label class="field"><span>Label width (mm)</span><input name="labelWidthMm" type="number" min="20" max="150" step="1" value="' + d.labelWidthMm + '"></label>'
+    + '<label class="field"><span>Label height (mm)</span><input name="labelHeightMm" type="number" min="15" max="80" step="1" value="' + d.labelHeightMm + '"></label>'
+    + '<label class="field"><span>Narrow module (mm)</span><input name="moduleMm" type="number" min="0.19" max="1" step="0.01" value="' + d.moduleMm + '"></label>'
+    + '<label class="field"><span>Wide to narrow</span><input name="ratio" type="number" min="2" max="3" step="0.1" value="' + d.ratio + '"></label>'
+    + '<label class="field"><span>Bar height (mm)</span><input name="barHeightMm" type="number" min="5" max="40" step="0.5" value="' + d.barHeightMm + '"></label>'
+    + '<label class="field"><span>Quiet zone (modules)</span><input name="quietModules" type="number" min="10" max="30" step="1" value="' + d.quietModules + '"></label>'
+    + '</div><p class="small muted">Quiet zone stays at least 10 narrow modules. If the bars do not fit the label, the message says so. The module width is not reduced to force a fit.</p>'
+    + '<div class="asset-actions"><button class="btn" type="button" data-act="asset-download">Download SVG</button><button class="btn ghost" type="button" data-act="asset-copy">Copy SVG</button><button class="btn ghost" type="button" data-act="asset-print">Print label</button><button class="btn ghost" type="button" data-act="asset-zip">Download batch ZIP</button><button class="btn ghost" type="button" data-act="asset-sheet">Print sheet</button></div>'
+    + '<p id="asset-copy" class="small" role="status" data-testid="asset-status"></p></div>'
+    + '<div class="card"><h2>Preview</h2><div id="asset-preview" class="asset-preview"></div><p id="asset-notes" class="asset-note small"></p></div></form></div>';
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -1432,6 +1623,7 @@ function pageFor(r) {
   if (r.name === "competitions") return competitionsList();
   if (r.name === "sites") return sitesPage();
   if (r.name === "pos") return posList();
+  if (r.name === "assets") return assetPage();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -1627,6 +1819,7 @@ async function render(opts = {}) {
   } else {
     if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
+    if (r.name === "assets") paintAsset();
   }
   if (state.focus) {
     const el = document.querySelector(state.focus);
@@ -2046,6 +2239,10 @@ document.body.addEventListener("click", (e) => {
     go(goEl.dataset.go);
     return;
   }
+  if (actEl && actEl.closest("#asset-page")) {
+    Promise.resolve(assetAction(actEl.dataset.act)).catch((err) => assetStatus(err.message || "Asset label failed"));
+    return;
+  }
   if (actEl) handleAction(actEl).catch((err) => toast(err.message));
 });
 document.body.addEventListener("submit", (e) => {
@@ -2056,7 +2253,11 @@ document.body.addEventListener("submit", (e) => {
   const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
+document.body.addEventListener("input", (e) => {
+  if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
+});
 document.body.addEventListener("change", (e) => {
+  if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
   if (e.target.id === "compare-select") {
     state.compareMode = e.target.value === "prev" ? "prev" : e.target.value === "code" ? "code" : "none";
     if (state.compareMode !== "code") { state.compareSlug = ""; state.compareReady = false; }
