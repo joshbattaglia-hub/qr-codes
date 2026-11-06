@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs test/ops.test.mjs test/pos.test.mjs",
+    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs test/ops.test.mjs test/pos.test.mjs test/approval.test.mjs test/site-import.test.mjs",
     "dev": "node scripts/dev-server.mjs"
   },
   "keywords": [],

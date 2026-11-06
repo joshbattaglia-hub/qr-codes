@@ -1,6 +1,14 @@
 import { code128Svg } from "./code128.mjs";
+import { approvalCurrent } from "./pos-approval.mjs";
 
 export const POS_WARNING = "PROVISIONAL. Quickfuel barcode and import requirements are not confirmed. This is not a Quickfuel-compatible file, not a product barcode, and not an activated offer.";
+
+export function approvalBanner(draft) {
+  if (approvalCurrent(draft)) {
+    return "INTERNALLY APPROVED by Neil or Joshua. Quickfuel POS support is still unconfirmed. The claim link is not published and the offer is not activated.";
+  }
+  return "DRAFT / UNAPPROVED. Neil or Joshua may approve. This is not a Quickfuel confirmation and not an activated offer.";
+}
 
 const MELBOURNE = "Australia/Melbourne";
 
@@ -23,6 +31,7 @@ export function requestEmail(draft) {
   const sites = (draft.sites || []).map((site) => oneLine(site.name) + " (" + oneLine(site.id) + ")").join("; ") || "Unassigned";
   return [
     "REVIEW ONLY. This text has not been sent.",
+    approvalBanner(draft),
     "No recipient or sender address is recorded. Do not treat this as an email draft in a mailbox.",
     "",
     "Subject: POS setup request, confirmation required before use",
@@ -37,6 +46,9 @@ export function requestEmail(draft) {
     "POS redemption requested: " + draft.posRedemption + ". This is a request for the point-of-sale system. A static barcode does not enforce single use.",
     "Barcode type: Code 128, code set B. Provisional internal value, not a GTIN, EAN, or UPC allocation.",
     "Barcode value: " + oneLine(draft.codeValue),
+    "Distribution: shareable claim link. The public claim link is not published.",
+    "Claim cap: " + oneLine(draft.claimCap),
+    "Internal approval: " + (approvalCurrent(draft) ? "approved" : "unapproved"),
     "Confirmation status: pending",
     POS_WARNING,
   ].join("\n");
@@ -46,9 +58,13 @@ export function setupInstructions(draft) {
   const sites = (draft.sites || []).map((site) => oneLine(site.name) + " (" + oneLine(site.id) + ")").join("\n") || "Unassigned (head office)";
   return [
     "POS setup package",
+    approvalBanner(draft),
     POS_WARNING,
     "",
     "Confirmation status: pending",
+    "Distribution: shareable claim link. Publication waits for recorded Quickfuel confirmation and an explicit activation. A saved or approved draft does not publish it.",
+    "Claim cap: " + oneLine(draft.claimCap),
+    "Internal approval: " + (approvalCurrent(draft) ? "approved by Neil or Joshua" : "unapproved"),
     "This package does not activate a web voucher and does not change web single-use redemption.",
     "",
     "Offer",
@@ -80,9 +96,10 @@ export function setupInstructions(draft) {
 }
 
 export function provisionalCsv(draft) {
-  const headers = ["warning", "confirmation_status", "offer", "conditions", "valid_from", "valid_through", "timezone", "site_ids", "site_names", "pos_redemption_request", "code_type", "code_value", "compatibility"];
+  const headers = ["warning", "approval_banner", "confirmation_status", "offer", "conditions", "valid_from", "valid_through", "timezone", "site_ids", "site_names", "pos_redemption_request", "distribution", "claim_cap", "code_type", "code_value", "compatibility", "claim_published"];
   const row = [
     POS_WARNING,
+    approvalBanner(draft),
     "pending",
     draft.offer,
     draft.conditions,
@@ -92,9 +109,12 @@ export function provisionalCsv(draft) {
     (draft.sites || []).map((site) => site.id).join(" "),
     (draft.sites || []).map((site) => site.name).join(" "),
     draft.posRedemption,
+    draft.distribution || "",
+    draft.claimCap,
     "code128",
     draft.codeValue,
     "unconfirmed",
+    "no",
   ];
   return headers.join(",") + "\n" + row.map(csvCell).join(",") + "\n";
 }
@@ -102,7 +122,12 @@ export function provisionalCsv(draft) {
 export function configJson(draft) {
   return JSON.stringify({
     warning: POS_WARNING,
+    approvalBanner: approvalBanner(draft),
+    approvalStatus: approvalCurrent(draft) ? "approved" : (draft.approvalStatus || "draft"),
     confirmationStatus: "pending",
+    distribution: draft.distribution || "",
+    claimCap: draft.claimCap || 0,
+    claimPublished: false,
     offer: draft.offer,
     conditions: draft.conditions,
     start: draft.start,

@@ -69,7 +69,13 @@ try {
   await page.select("[name=posRedemption]", "single-use");
   await page.click("[data-testid=pos-editor] button[type=submit]");
   await page.waitForSelector("[data-testid=pos-barcode]");
-  await waitText("Pending");
+  await waitText("Neil or Joshua may approve");
+  await waitText("Draft / unapproved");
+  await waitText("not published");
+  await waitText("Email is not configured");
+  await waitText("emails both Neil");
+  await waitText("Send to Quickfuel is hidden");
+  assert(await page.$("[data-testid=pos-quickfuel]") === null, "quickfuel box visible before approval");
   await page.waitForFunction(() => (document.querySelector("[name=codeValue]")?.value || "").startsWith("EH-POS-"));
   await page.waitForFunction(() => {
     const img = document.querySelector("[data-testid=pos-barcode]");
@@ -90,6 +96,14 @@ try {
   await page.click("[data-go=pos]");
   await waitText("Fixture Sunday fuel");
   await shot("pos-desktop-list");
+  await page.click("#nav [data-go=sites]");
+  await waitText("Import locations");
+  await page.$eval("#import-rows", (el) => { el.value = JSON.stringify([{ loc: "LOC1", name: "Fixture North", address: "1 Fixture Street", operationalRegion: "North", geographicState: "", sourceRef: "fixture-1", hold: true, holdReason: "Held for review" }]); });
+  await page.click("[data-testid=site-import] button[type=submit]");
+  await waitText("held");
+  await shot("pos-desktop-import");
+  await page.click("#nav [data-go=pos]");
+  await waitText("Fixture Sunday fuel");
 
   await page.setViewport({ width: 390, height: 844 });
   await page.evaluate(() => document.querySelector("[data-testid=pos-list] tr.clickable").click());
