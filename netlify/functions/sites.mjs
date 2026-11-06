@@ -2,13 +2,14 @@ import crypto from "node:crypto";
 import { json, siteImports, sitesStore } from "../lib/lib.mjs";
 import { canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
-import { applyImport, auditView, classifyImport, isSiteRecord, readSites } from "../lib/site-import.mjs";
+import { applyImport, auditView, classifyImport, isSiteRecord, readSites, rowsFromDocument } from "../lib/site-import.mjs";
 
 function publicSite(site) {
   const out = { id: site.id, name: site.name, created: site.created };
   for (const key of ["loc", "address", "operationalRegion", "geographicState", "sourceRef", "sourceName"]) {
     if (site[key]) out[key] = site[key];
   }
+  if (Array.isArray(site.sourceFlags) && site.sourceFlags.length) out.sourceFlags = site.sourceFlags;
   return out;
 }
 
@@ -44,7 +45,9 @@ export default async (req) => {
     }
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun !== false;
-    const report = dryRun ? classifyImport(await readSites(store), body.rows || []) : await applyImport(store, body.rows || []);
+    const input = rowsFromDocument(body.sites ? body : (body.rows || body));
+    if (!input) return json(400, { error: "Import JSON must be a rows array or a sites document" });
+    const report = dryRun ? classifyImport(await readSites(store), input) : await applyImport(store, input);
     if (report.error) return json(400, { error: report.error });
     const saved = { id: "i" + crypto.randomBytes(6).toString("hex"), at: new Date().toISOString(), dryRun, ...auditView(report) };
     if (!dryRun) await siteImports().setJSON(saved.id, saved);

@@ -73,7 +73,9 @@ try {
   await waitText("Draft / unapproved");
   await waitText("not published");
   await waitText("Email is not configured");
-  await waitText("support@quickfuel.com.au");
+  await waitText("emails both Neil");
+  await waitText("Send to Quickfuel is hidden");
+  assert(await page.$("[data-testid=pos-quickfuel]") === null, "quickfuel box visible before approval");
   await page.waitForFunction(() => (document.querySelector("[name=codeValue]")?.value || "").startsWith("EH-POS-"));
   await page.waitForFunction(() => {
     const img = document.querySelector("[data-testid=pos-barcode]");

@@ -1343,9 +1343,11 @@ function posEditor() {
   const preview = draft.id ? '<img data-testid="pos-barcode" alt="Code 128 barcode" src="/api/pos-drafts/' + encodeURIComponent(draft.id) + "/barcode.svg?v=" + encodeURIComponent(draft.updated || "") + '">' : '<p class="muted">Save the draft to preview the barcode.</p>';
   const approved = draft.approvalStatus === "approved" && draft.approvalCurrent;
   const status = draft.identityStatus || state.identityStatus || {};
-  const mailOff = status.mailConfigured === false || !status.mailConfigured;
+  const mailMode = status.mailMode || (status.mailConfigured ? "resend" : "disabled");
+  const mailOff = mailMode === "disabled";
+  const mailCopy = mailMode === "mock" ? "Local test mail only. No message leaves this process and no provider is configured." : mailMode === "resend" ? "The configured email service is available." : (status.mailSetup || "Email is not configured. Set RESEND_API_KEY and RESEND_FROM. Nothing is sent.");
   const preparer = state.actor?.role === "preparer";
-  const approverMatch = state.actor?.role === "approver" && draft.approvalStatus === "pending" && state.actor?.approverKey === draft.selectedApprover;
+  const approverMatch = state.actor?.role === "approver" && draft.approvalStatus === "pending" && (state.actor?.approverKey === "neil" || state.actor?.approverKey === "joshua");
   const history = (draft.history || []).map((item) => "<li>" + esc(item.action) + " · rev " + esc(item.revision) + " · " + esc(item.approverKey || item.role || "") + " · " + esc(item.at) + "</li>").join("");
   return '<div class="page-head"><button class="icon-btn" type="button" data-go="pos" aria-label="Back">←</button><h1>' + esc(draft.offer || "POS draft") + '</h1><span class="badge">' + esc(approved ? "Approved" : "Draft / unapproved") + '</span></div>' +
     '<div class="warn-banner" data-testid="pos-provisional">Provisional Code 128 artwork. This is not a Quickfuel format, not a GTIN, and not an activated web voucher. A single-use choice is a request to the point-of-sale provider, not enforcement by this barcode.</div>' +
@@ -1365,12 +1367,11 @@ function posEditor() {
     '<div class="row"><button class="btn" type="submit">Save draft</button>' + (draft.id ? '<button class="btn ghost" type="button" data-act="pos-download">Download draft package</button>' : "") + "</div>" +
     '<p class="err" id="pos-error"></p></form>' +
     '<div class="card" data-testid="pos-mail">' +
-    '<h2>Email approval request</h2><p class="muted small" data-testid="pos-mail-status">' + esc(mailOff ? (status.mailSetup || "Email is not configured. Set RESEND_API_KEY and RESEND_FROM. Nothing is sent.") : "Mail can be sent through the configured service.") + "</p>" +
-    (preparer && draft.id ? '<label class="field"><span>Approver</span><select id="pos-approver"><option value="neil">Neil (nanderson@libertyretail.com.au)</option><option value="joshua">Joshua (jbattaglia@libertyretail.com.au)</option></select></label><button class="btn" type="button" data-act="pos-approval-request"' + (mailOff ? " disabled" : "") + ">Email approval request</button>" : '<p class="muted">Sign in with a verified preparer identity to request approval. No preparer accounts are created automatically.</p>') +
+    '<h2>Send for approval</h2><p class="muted small" data-testid="pos-mail-status">' + esc(mailCopy) + "</p><p>Send for approval emails both Neil (nanderson@libertyretail.com.au) and Joshua (jbattaglia@libertyretail.com.au). Either verified approver is enough.</p>" +
+    (preparer && draft.id ? '<button class="btn" type="button" data-act="pos-approval-request"' + (mailOff ? " disabled" : "") + ">Send for approval</button>" : '<p class="muted">Sign in with a verified preparer identity to send for approval. No preparer accounts are created automatically.</p>') +
     "</div>" +
-    '<div class="card" data-testid="pos-quickfuel"><h2>Send to Quickfuel</h2><p data-testid="quickfuel-recipient">Recipient: support@quickfuel.com.au</p><p class="muted small">Attachment: the current approved setup package. This does not happen when someone approves. Quickfuel support stays unconfirmed after the send.</p>' +
-    (preparer && approved ? '<label class="check"><input id="pos-confirm-send" type="checkbox"> I am sending this approved revision to support@quickfuel.com.au</label><button class="btn" type="button" data-act="pos-send-quickfuel"' + (mailOff ? " disabled" : "") + ">Send to Quickfuel</button>" : '<p class="muted">Available after Neil or Joshua approves the current revision, and only as a separate action by the requester.</p>') +
-    "</div>" +
+    (approved ? '<div class="card" data-testid="pos-quickfuel"><h2>Send to Quickfuel</h2><p data-testid="quickfuel-recipient">Recipient: support@quickfuel.com.au</p><p class="muted small">This box is only here because the current revision is approved. It does not appear for a pending, rejected, expired, or edited request. Approval does not send this.</p>' +
+      (preparer ? '<label class="check"><input id="pos-confirm-send" type="checkbox"> I am sending this approved revision to support@quickfuel.com.au</label><button class="btn" type="button" data-act="pos-send-quickfuel"' + (mailOff ? " disabled" : "") + ">Send to Quickfuel</button>" : '<p class="muted">The requester confirms this send.</p>') + "</div>" : '<p class="muted" data-testid="pos-quickfuel-hidden">Send to Quickfuel is hidden until Neil or Joshua approves this revision.</p>') +
     (approverMatch ? '<div class="card"><h2>Your decision</h2><div class="row"><button class="btn" type="button" data-act="pos-approve">Approve</button><button class="btn ghost" type="button" data-act="pos-reject">Reject</button></div></div>' : "") +
     '<div class="card"><h2>Approval history</h2>' + (history ? "<ul>" + history + "</ul>" : '<p class="muted">No approval events.</p>') + "</div>" +
     '<div class="card" data-testid="pos-claim-preview"><h2>Claim preview</h2><p>Draft preview. The claim link is not published. Shareable claim distribution stays off until recorded Quickfuel confirmation and an explicit activation.</p><p class="muted small">Cap ' + esc(draft.claimCap || "") + ". " + esc(draft.posRedemption || "") + " is a point-of-sale request, not enforcement by the barcode.</p></div>" +
@@ -1781,7 +1782,7 @@ async function handleAction(el) {
   if (act === "pos-approval-request" || act === "pos-approve" || act === "pos-reject" || act === "pos-send-quickfuel") {
     const path = act === "pos-approval-request" ? "/approval-request" : act === "pos-send-quickfuel" ? "/send-quickfuel" : "/decision";
     const body = { etag: state.posDraft?.etag, revision: state.posDraft?.revision, digest: state.posDraft?.materialDigest };
-    if (act === "pos-approval-request") body.approverKey = $("#pos-approver")?.value || "";
+    if (act === "pos-approval-request") body.approverKey = "";
     if (act === "pos-approve") body.decision = "approve";
     if (act === "pos-reject") body.decision = "reject";
     if (act === "pos-send-quickfuel") {
@@ -1791,7 +1792,7 @@ async function handleAction(el) {
     }
     const result = await api("/api/pos-drafts/" + encodeURIComponent(state.posDraft.id) + path, { method: "POST", body: JSON.stringify(body) });
     if (result.draft) state.posDraft = result.draft;
-    toast(result.sent ? "Email accepted by the provider" : (result.error || result.status || "Not sent"));
+    toast(result.mock ? "Recorded by the local mail mock. No provider was contacted." : result.sent ? "Email accepted by the provider" : (result.error || result.status || "Not sent"));
     render();
     return;
   }
@@ -2200,22 +2201,38 @@ async function saveCollection(form) {
   render();
 }
 async function enter() {
-  const jobs = [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates"), api("/api/pos-drafts")];
+  const identity = state.actor?.kind === "verified-identity";
+  const jobs = identity
+    ? [api("/api/sites"), api("/api/pos-drafts")]
+    : [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates"), api("/api/pos-drafts")];
   if (state.actor?.role === "head") jobs.push(api("/api/staff"));
-  const [settings, codes, pages, competitions, sites, templates, posDrafts, staff] = await Promise.all(jobs);
-  state.settings = settings;
-  state.codes = codes;
-  state.pages = pages;
-  state.competitions = competitions;
-  state.sites = sites;
-  state.templates = templates;
-  state.posDrafts = posDrafts;
-  state.staff = staff || [];
+  const loaded = await Promise.all(jobs);
+  if (identity) {
+    state.settings = { workspaceName: "Liberty" };
+    state.codes = [];
+    state.pages = [];
+    state.competitions = [];
+    state.templates = [];
+    state.sites = loaded[0];
+    state.posDrafts = loaded[1];
+    state.staff = [];
+  } else {
+    const [settings, codes, pages, competitions, sites, templates, posDrafts, staff] = loaded;
+    state.settings = settings;
+    state.codes = codes;
+    state.pages = pages;
+    state.competitions = competitions;
+    state.sites = sites;
+    state.templates = templates;
+    state.posDrafts = posDrafts;
+    state.staff = staff || [];
+  }
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
-  $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + (state.actor?.role === "manager" ? "Site manager" : "Head office") + "</div>";
+  const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : "Preparer") : state.actor?.role === "manager" ? "Site manager" : "Head office";
+  $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
   ensureRanges();
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();

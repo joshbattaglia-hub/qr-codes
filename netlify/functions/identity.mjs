@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { clearCookie } from "../lib/lib.mjs";
 import { clearStaffCookie, forbidden, jsonCookies, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest, bindIdentity, clearIdentityCookie, identityStatus, loginIdentity } from "../lib/identity.mjs";
-import { mailConfigured, mailSetupMessage } from "../lib/mail.mjs";
+import { mailConfigured, mailMode, mailSetupMessage } from "../lib/mail.mjs";
 
 export default async (req) => {
   if (originBlocked(req)) return forbidden();
@@ -12,7 +12,7 @@ export default async (req) => {
     const actor = await actorFromRequest(req);
     if (!actor) return unauthorised();
     const status = await identityStatus();
-    return json(200, { ...status, mailConfigured: mailConfigured(), mailSetup: mailConfigured() ? "" : mailSetupMessage(), actor: { role: actor.role, kind: actor.kind || "", approverKey: actor.approverKey || "", preparerClass: actor.preparerClass || "" } });
+    return json(200, { ...status, mailConfigured: mailConfigured(), mailMode: mailMode(), mailSetup: mailMode() === "disabled" ? mailSetupMessage() : mailMode() === "mock" ? "Local test mail only. No message leaves this process." : "", actor: { role: actor.role, kind: actor.kind || "", approverKey: actor.approverKey || "", preparerClass: actor.preparerClass || "" } });
   }
   if (path === "/api/identity/session" && req.method === "GET") {
     const actor = await actorFromRequest(req);

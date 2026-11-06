@@ -14,6 +14,33 @@ function normLoc(value) {
   return raw(value, 40).toUpperCase();
 }
 
+/** Accepts the internal row list or the supplied `{ sites: [...] }` document without rewriting spellings. */
+export function rowsFromDocument(doc) {
+  const list = Array.isArray(doc) ? doc : Array.isArray(doc?.sites) ? doc.sites : Array.isArray(doc?.rows) ? doc.rows : null;
+  if (!list) return null;
+  return list.map((row) => {
+    if (row && row.loc && row.name && row.loc_id == null && row.import_disposition == null) return row;
+    const stateRaw = raw(row?.geographic_state ?? row?.geographicState, 80);
+    const stateUnknown = !stateRaw || /^unknown$/i.test(stateRaw);
+    const disposition = String(row?.import_disposition || row?.importDisposition || "").toUpperCase();
+    const flags = [...(Array.isArray(row?.sourceFlags) ? row.sourceFlags : []), ...(Array.isArray(row?.flags) ? row.flags : [])];
+    if (stateUnknown) flags.push("geographic_state_unknown");
+    return {
+      loc: raw(row?.loc_id ?? row?.loc, 40),
+      name: raw(row?.name, 120),
+      address: raw(row?.address, 240),
+      operationalRegion: raw(row?.operational_region ?? row?.operationalRegion, 80),
+      geographicState: stateUnknown ? "" : stateRaw,
+      sourceRef: raw(row?.raw_line || row?.sourceRef || "", 500),
+      sourceName: raw(row?.name, 120),
+      hold: disposition === "HOLD" || row?.hold === true,
+      holdReason: disposition === "HOLD" ? raw(row?.holdReason || "Held by source disposition", 160) : raw(row?.holdReason, 160),
+      importDisposition: disposition,
+      sourceFlags: [...new Set(flags)].slice(0, 8),
+    };
+  });
+}
+
 export function isSiteRecord(row) {
   return !!(row && typeof row.id === "string" && SITE_ID.test(row.id) && row.name);
 }
@@ -21,6 +48,9 @@ export function isSiteRecord(row) {
 function additive(existing, incoming) {
   const fields = ["loc", "address", "operationalRegion", "geographicState", "sourceRef", "sourceName"];
   const patch = {};
+  const incomingFlags = incoming.sourceFlags || [];
+  const existingFlags = Array.isArray(existing.sourceFlags) ? existing.sourceFlags : [];
+  if (!existingFlags.length && incomingFlags.length) patch.sourceFlags = incomingFlags;
   for (const field of fields) {
     const next = incoming[field];
     const current = raw(existing[field] || "");
@@ -51,10 +81,12 @@ export function classifyImport(existingSites, inputRows) {
       address: raw(row?.address, 240),
       operationalRegion: raw(row?.operationalRegion, 80),
       geographicState,
-      sourceRef: raw(row?.sourceRef, 120),
+      sourceRef: raw(row?.sourceRef, 500),
       sourceName: raw(row?.sourceName, 120) || raw(row?.name, 120),
       hold: row?.hold === true,
       holdReason: raw(row?.holdReason, 160),
+      importDisposition: String(row?.importDisposition || "").toUpperCase(),
+      sourceFlags: Array.isArray(row?.sourceFlags) ? row.sourceFlags.filter((flag) => typeof flag === "string").slice(0, 8) : [],
     };
   });
   const counts = { rows: prepared.length, create: 0, update: 0, unchanged: 0, held: 0 };
@@ -64,6 +96,9 @@ export function classifyImport(existingSites, inputRows) {
     row.reason = reason || "";
     row.siteId = siteId;
     counts[status] += 1;
+  };
+  const addFlag = (row, flag) => {
+    row.sourceFlags = [...new Set([...(row.sourceFlags || []), flag])];
   };
   const grouped = (keyFn) => {
     const groups = new Map();
@@ -79,14 +114,26 @@ export function classifyImport(existingSites, inputRows) {
     if (row.hold) mark(row, "held", row.holdReason || "Held by input");
     else if (!row.loc || !row.name) mark(row, "held", "LOC and name are required");
   }
-  for (const group of grouped((row) => row.status ? "" : normLoc(row.loc)).values()) {
-    if (group.length > 1) group.forEach((row) => mark(row, "held", "Duplicate LOC in this import"));
+  for (const group of grouped((row) => normLoc(row.loc)).values()) {
+    if (group.length > 1) group.forEach((row) => { if (!row.status) mark(row, "held", "Duplicate LOC in this import"); });
   }
   for (const group of grouped((row) => row.status ? "" : norm(row.name)).values()) {
     if (group.length > 1) group.forEach((row) => mark(row, "held", "Duplicate name in this import"));
   }
+  const heldAddress = new Set(result.filter((row) => row.status === "held" && row.address).map((row) => norm(row.address)));
+  for (const row of result) {
+    if (!row.status && row.address && heldAddress.has(norm(row.address))) addFlag(row, "shared_address");
+  }
   for (const group of grouped((row) => row.status ? "" : norm(row.address)).values()) {
-    if (group.length > 1) group.forEach((row) => mark(row, "held", "Duplicate address in this import"));
+    if (group.length < 2) continue;
+    const clear = group.filter((row) => row.importDisposition === "CLEAR");
+    if (clear.length === group.length) group.forEach((row) => addFlag(row, "shared_address"));
+    else if (clear.length) {
+      for (const row of group) {
+        if (row.importDisposition === "CLEAR") addFlag(row, "shared_address");
+        else mark(row, "held", "Duplicate address in this import");
+      }
+    } else group.forEach((row) => mark(row, "held", "Duplicate address in this import"));
   }
   for (const row of result) {
     if (row.status) continue;
@@ -141,6 +188,7 @@ export function classifyImport(existingSites, inputRows) {
       siteId: row.siteId,
       geographicState: row.geographicState,
       operationalRegion: row.operationalRegion,
+      flags: row.sourceFlags || [],
     })),
     plan: result,
     readback: { sites: sites.length, locsPresent: [...locsPresent].filter((loc) => result.some((row) => normLoc(row.loc) === loc)).length },
@@ -170,6 +218,7 @@ export async function applyImport(store, inputRows) {
         geographicState: row.geographicState,
         sourceRef: row.sourceRef,
         sourceName: row.sourceName,
+        sourceFlags: row.sourceFlags || [],
       };
       const gate = await store.setJSON("loc/" + crypto.createHash("sha256").update(normLoc(row.loc)).digest("hex"), { id }, { onlyIfNew: true });
       if (gate?.modified !== true) {

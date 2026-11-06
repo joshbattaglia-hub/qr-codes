@@ -82,32 +82,14 @@ function outcome(row) {
   };
 }
 
-export async function requestApproval({ actor, draft, etag, approverKey }) {
-  if (actor?.kind !== "verified-identity" || actor.role !== "preparer") {
-    return { status: 403, error: "A verified preparer identity has to request approval. The shared head-office password cannot." };
-  }
-  if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
+async function deliverApproval({ draft, actor, approverKey, hash, token, expiresAt }) {
   const fact = APPROVER_FACTS[approverKey];
-  if (!fact) return { status: 400, error: "Choose Neil or Joshua" };
-  if (approvalCurrent(draft)) return { status: 409, error: "This revision is already approved" };
-  if (!mailConfigured()) return { status: 409, body: { sent: false, status: "not-configured", error: mailSetupMessage() } };
   const idempotencyKey = `approval/${draft.id}/${draft.revision}/${approverKey}`;
   const existing = await posMail().get("idem/" + idempotencyKey, { type: "json" });
   if (existing?.id) {
     const row = await posMail().get(existing.id, { type: "json" });
-    return { status: row?.status === "sent" ? 200 : 409, body: outcome(row) };
+    return { approverKey, to: fact.email, ...outcome(row) };
   }
-  const token = crypto.randomBytes(32).toString("hex");
-  const hash = tokenHash(token);
-  const expiresAt = new Date(Date.now() + REVIEW_TTL_MS).toISOString();
-  const meta = await posDrafts().getWithMetadata(draft.id, { type: "json" });
-  if (!meta?.etag || meta.etag !== etag || meta.data.revision !== draft.revision || meta.data.materialDigest !== draft.materialDigest) {
-    return { status: 409, error: "The draft changed" };
-  }
-  const next = { ...meta.data, approvalStatus: "pending", selectedApprover: approverKey, requestedBy: actor.id, reviewHashes: [hash], approval: null };
-  pushHistory(next, { action: "approval-requested", identityId: actor.id, role: "preparer", approverKey });
-  const write = await posDrafts().setJSON(draft.id, next, { onlyIfMatch: meta.etag });
-  if (write?.modified !== true) return { status: 409, error: "The draft changed" };
   const outbox = {
     id: "m" + crypto.randomBytes(8).toString("hex"),
     kind: "approval-request",
@@ -120,7 +102,7 @@ export async function requestApproval({ actor, draft, etag, approverKey }) {
     to: fact.email,
   };
   const claimed = await putOutbox(outbox);
-  if (claimed.duplicate) return { status: claimed.row?.status === "sent" ? 200 : 409, body: { ...outcome(claimed.row), draft: publicDraft(next, write.etag) } };
+  if (claimed.duplicate) return { approverKey, to: fact.email, ...outcome(claimed.row) };
   await posReviews().setJSON("token/" + hash, { draftId: draft.id, revision: draft.revision, digest: draft.materialDigest, approverKey, expiresAt });
   const link = publicBase() + "/api/pos-review/" + token;
   const result = await deliver({
@@ -128,32 +110,67 @@ export async function requestApproval({ actor, draft, etag, approverKey }) {
     subject: "POS approval request, revision " + draft.revision,
     idempotencyKey,
     text: [
-      "Neil or Joshua may approve. Opening this message does not approve the request.",
+      "This link is only for " + fact.name + ".",
+      "Either Neil or Joshua may approve. Both receive a link. One approval is enough.",
+      "Opening this message does not approve the request.",
       "Review link: " + link,
       "The link is a GET review. It cannot approve or send.",
       "Expires: " + expiresAt,
       "Offer: " + draft.offer,
       "Revision: " + draft.revision,
-      "Sign in as the verified approver and submit the decision. The link is not an identity.",
+      "Sign in as " + fact.name + " and submit the decision. The link is not an identity.",
       "Quickfuel has not confirmed support. The offer is not activated.",
     ].join("\n"),
   });
-  if (result.status !== "sent") {
-    const status = result.status === "unknown" ? "unknown" : "not-sent";
-    if (status !== "unknown") {
-      await posReviews().delete("token/" + hash);
-      const back = await posDrafts().getWithMetadata(draft.id, { type: "json" });
-      if (back?.etag && back.data.approvalStatus === "pending" && !back.data.approval && back.data.revision === draft.revision && back.data.reviewHashes?.[0] === hash) {
-        const restored = { ...back.data, approvalStatus: draft.approvalStatus || "draft", selectedApprover: "", requestedBy: "", reviewHashes: [] };
-        pushHistory(restored, { action: "approval-request-failed", identityId: actor.id, role: "preparer", approverKey });
-        await posDrafts().setJSON(draft.id, restored, { onlyIfMatch: back.etag });
-      }
-    }
-    await finishOutbox(outbox.id, status);
-    return { status: 409, body: outcome({ status }) };
+  const status = result.status === "sent" ? "sent" : result.status === "unknown" ? "unknown" : "not-sent";
+  if (status === "not-sent") await posReviews().delete("token/" + hash);
+  await finishOutbox(outbox.id, status, { providerId: result.id || "" });
+  return { approverKey, to: fact.email, sent: status === "sent", status, mock: !!result.mock, actorId: actor.id };
+}
+
+export async function requestApproval({ actor, draft, etag }) {
+  if (actor?.kind !== "verified-identity" || actor.role !== "preparer") {
+    return { status: 403, error: "A verified preparer identity has to request approval. The shared head-office password cannot." };
   }
-  await finishOutbox(outbox.id, "sent", { providerId: result.id || "" });
-  return { status: 200, body: { sent: true, status: "sent", draft: publicDraft(next, write.etag) } };
+  if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
+  if (approvalCurrent(draft)) return { status: 409, error: "This revision is already approved" };
+  if (!mailConfigured()) return { status: 409, body: { sent: false, status: "not-configured", recipients: [], error: mailSetupMessage() } };
+  const meta = await posDrafts().getWithMetadata(draft.id, { type: "json" });
+  if (!meta?.etag || meta.etag !== etag || meta.data.revision !== draft.revision || meta.data.materialDigest !== draft.materialDigest) {
+    return { status: 409, body: { sent: false, status: "not-sent", error: "The draft changed" } };
+  }
+  const expiresAt = new Date(Date.now() + REVIEW_TTL_MS).toISOString();
+  const prepared = Object.keys(APPROVER_FACTS).map((approverKey) => {
+    const token = crypto.randomBytes(32).toString("hex");
+    return { approverKey, token, hash: tokenHash(token) };
+  });
+  const next = { ...meta.data, approvalStatus: "pending", selectedApprover: "", requestedBy: actor.id, reviewHashes: prepared.map((item) => item.hash), approval: null };
+  pushHistory(next, { action: "approval-requested", identityId: actor.id, role: "preparer", approverKey: "both" });
+  const write = await posDrafts().setJSON(draft.id, next, { onlyIfMatch: meta.etag });
+  if (write?.modified !== true) return { status: 409, error: "The draft changed" };
+  const recipients = [];
+  for (const item of prepared) recipients.push(await deliverApproval({ draft, actor, expiresAt, ...item }));
+  const sentCount = recipients.filter((item) => item.sent).length;
+  if (!sentCount && recipients.every((item) => item.status !== "unknown")) {
+    const back = await posDrafts().getWithMetadata(draft.id, { type: "json" });
+    if (back?.etag && back.data.approvalStatus === "pending" && !back.data.approval && back.data.revision === draft.revision) {
+      const restored = { ...back.data, approvalStatus: draft.approvalStatus || "draft", selectedApprover: "", requestedBy: "", reviewHashes: [] };
+      pushHistory(restored, { action: "approval-request-failed", identityId: actor.id, role: "preparer", approverKey: "both" });
+      await posDrafts().setJSON(draft.id, restored, { onlyIfMatch: back.etag });
+    }
+  }
+  const status = sentCount === recipients.length ? "sent" : recipients.some((item) => item.status === "unknown") ? "unknown" : sentCount ? "partial" : "not-sent";
+  return {
+    status: status === "sent" ? 200 : 409,
+    body: {
+      sent: status === "sent",
+      status,
+      mock: recipients.some((item) => item.mock),
+      recipients: recipients.map((item) => ({ approverKey: item.approverKey, to: item.to, sent: !!item.sent, status: item.status })),
+      draft: status === "sent" || sentCount || recipients.some((item) => item.status === "unknown") ? publicDraft(next, write.etag) : undefined,
+      error: status === "sent" ? undefined : status === "unknown" ? "The email outcome is unknown for at least one approver. It was not marked sent and will not be retried." : "The approval request was not sent to both approvers.",
+    },
+  };
 }
 
 async function sendConfirmation(draft) {
@@ -200,14 +217,15 @@ async function sendConfirmation(draft) {
     idempotencyKey,
     text: [
       who + " approved revision " + draft.revision + " of " + draft.offer + ".",
-      "Return to the POS setup screen and explicitly send the package to Quickfuel.",
+      "Open the same saved request: " + publicBase() + "/admin#/pos/" + draft.id,
+      "The Quickfuel send box is on that screen only because this revision is approved.",
       "Approval does not forward the package and does not activate the offer.",
       "Quickfuel POS support is still unconfirmed. The claim link is not published.",
     ].join("\n"),
   });
   const status = result.status === "sent" ? "sent" : result.status === "unknown" ? "unknown" : "not-sent";
   await finishOutbox(outbox.id, status, { providerId: result.id || "" });
-  return outcome({ status });
+  return { ...outcome({ status }), mock: !!result.mock };
 }
 
 export async function decide({ actor, draft, etag, decision, tokenRecord }) {
@@ -215,7 +233,7 @@ export async function decide({ actor, draft, etag, decision, tokenRecord }) {
     return { status: 403, error: "A verified approver identity is required. Email and the shared password do not approve." };
   }
   if (!canSeeDraft(actor, draft)) return { status: 403, error: "Forbidden" };
-  const approverKey = tokenRecord?.approverKey || draft.selectedApprover;
+  const approverKey = tokenRecord?.approverKey || actor.approverKey;
   if (!APPROVER_FACTS[approverKey] || actor.approverKey !== approverKey) {
     return { status: 403, error: "This request is for a different approver" };
   }
@@ -256,7 +274,7 @@ export async function decide({ actor, draft, etag, decision, tokenRecord }) {
     return { status: 200, body: { draft: publicDraft(next, write.etag), confirmation: { sent: false, status: "not-sent" } } };
   }
   const confirmation = await sendConfirmation(next);
-  return { status: 200, body: { draft: publicDraft(next, write.etag), confirmation } };
+  return { status: 200, body: { draft: publicDraft(next, write.etag), confirmation, mock: !!confirmation.mock } };
 }
 
 export async function sendQuickfuel({ actor, draft, etag, confirm, recipient }) {
@@ -322,6 +340,6 @@ export async function sendQuickfuel({ actor, draft, etag, confirm, recipient }) 
       await posDrafts().setJSON(draft.id, next, { onlyIfMatch: fresh.etag });
     }
   }
-  const body = { ...outcome({ status }), recipient: QUICKFUEL_RECIPIENT, attachment: safeDownloadName(draft.id) };
+  const body = { ...outcome({ status }), recipient: QUICKFUEL_RECIPIENT, attachment: safeDownloadName(draft.id), mock: !!result.mock };
   return { status: status === "sent" ? 200 : 409, body };
 }

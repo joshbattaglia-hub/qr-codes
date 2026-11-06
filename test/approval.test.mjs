@@ -44,10 +44,15 @@ function cookieNamed(res, name) {
   const hit = rows.find((row) => row.startsWith(name + "=") && !row.startsWith(name + "=;"));
   return hit ? hit.split(";")[0] : "";
 }
-function tokenFrom(messagesList) {
-  const last = messagesList[messagesList.length - 1];
-  const match = last?.text?.match(/\/api\/pos-review\/([a-f0-9]{64})/);
-  return match ? match[1] : "";
+function approvalTokens(list = messages) {
+  const found = {};
+  for (const message of list) {
+    const token = message.text?.match(/\/api\/pos-review\/([a-f0-9]{64})/)?.[1];
+    if (!token) continue;
+    if (message.to === "nanderson@libertyretail.com.au") found.neil = token;
+    if (message.to === "jbattaglia@libertyretail.com.au") found.joshua = token;
+  }
+  return found;
 }
 const headLogin = await auth(req("POST", "/api/auth", { body: { password: "test-pass" } }));
 const head = cookieNamed(headLogin, "qr_admin");
@@ -108,10 +113,13 @@ test("one approver is enough, GET is side-effect free, and mail stays honest", a
   const current = await read(await posFn(req("GET", "/api/pos-drafts/" + created.body.id, { cookie: preparerCookie })));
   const requested = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { approverKey: "neil", email: "evil@example.com", etag: current.body.etag } })));
   assert.equal(requested.body.sent, true);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].to, "nanderson@libertyretail.com.au");
-  assert.equal(JSON.stringify(requested.body).includes(tokenFrom(messages)), false);
-  const token = tokenFrom(messages);
+  assert.equal(messages.length, 2);
+  assert.deepEqual(messages.map((message) => message.to).sort(), ["jbattaglia@libertyretail.com.au", "nanderson@libertyretail.com.au"]);
+  const tokens = approvalTokens();
+  assert.notEqual(tokens.neil, tokens.joshua);
+  assert.equal(JSON.stringify(requested.body).includes(tokens.neil), false);
+  assert.equal(JSON.stringify(requested.body).includes(tokens.joshua), false);
+  const token = tokens.neil;
   const before = JSON.stringify(await lib.posDrafts().get(created.body.id, { type: "json" }));
   const review = await read(await reviewFn(req("GET", "/api/pos-review/" + token, { accept: "application/json" })));
   assert.equal(review.status, 200);
@@ -120,7 +128,7 @@ test("one approver is enough, GET is side-effect free, and mail stays honest", a
   assert.equal(JSON.stringify(await lib.posDrafts().get(created.body.id, { type: "json" })), before);
   const anon = await read(await reviewFn(req("POST", "/api/pos-review/" + token + "/decision", { body: { decision: "approve", etag: review.body.etag } })));
   assert.equal(anon.status, 401);
-  const wrong = await read(await reviewFn(req("POST", "/api/pos-review/" + token + "/decision", { cookie: joshuaCookie, body: { decision: "approve", etag: review.body.etag, approverKey: "neil", identityId: neil.id } })));
+  const wrong = await read(await reviewFn(req("POST", "/api/pos-review/" + tokens.joshua + "/decision", { cookie: neilCookie, body: { decision: "approve", etag: review.body.etag, approverKey: "joshua", identityId: joshua.id } })));
   assert.equal(wrong.status, 403);
   const approved = await read(await reviewFn(req("POST", "/api/pos-review/" + token + "/decision", { cookie: neilCookie, body: { decision: "approve", etag: review.body.etag, identityId: joshua.id, email: "jbattaglia@libertyretail.com.au" } })));
   assert.equal(approved.status, 200);
@@ -129,6 +137,8 @@ test("one approver is enough, GET is side-effect free, and mail stays honest", a
   assert.equal(approved.body.draft.approval.identityId, neil.id);
   assert.equal(approved.body.confirmation.sent, true);
   assert.equal(messages.at(-1).to, "requester@fixture.test");
+  assert.match(messages.at(-1).text, new RegExp("/admin#/pos/" + created.body.id));
+  assert.equal((await read(await reviewFn(req("POST", "/api/pos-review/" + tokens.joshua + "/decision", { cookie: joshuaCookie, body: { decision: "approve", etag: review.body.etag } })))).status, 409);
   assert.equal(messages.filter((message) => message.to === "support@quickfuel.com.au").length, 0);
   assert.equal((await read(await claimFn(req("GET", "/api/claim/" + (await lib.posDrafts().get(created.body.id, { type: "json" })).claimToken + "?activate=1")))).status, 404);
   const finalPackage = await read(await posFn(req("GET", "/api/pos-drafts/" + created.body.id + "/final-package", { cookie: preparerCookie })));
@@ -163,15 +173,15 @@ test("reject, resubmit, expiry, and material edits invalidate the old approval",
   messages.length = 0;
   setMailTransport(async (message) => { messages.push(message); return { status: "sent", id: "mock" }; });
   const created = await read(await posFn(req("POST", "/api/pos-drafts", { cookie: preparerCookie, body: draftBody({ offer: "Reject fuel" }) })));
-  const requested = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { approverKey: "joshua", etag: created.body.etag } })));
-  const token = tokenFrom(messages);
+  const requested = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { etag: created.body.etag } })));
+  const token = approvalTokens().joshua;
   const review = await read(await reviewFn(req("GET", "/api/pos-review/" + token, { accept: "application/json" })));
   const rejected = await read(await reviewFn(req("POST", "/api/pos-review/" + token + "/decision", { cookie: joshuaCookie, body: { decision: "reject", etag: review.body.etag } })));
   assert.equal(rejected.body.draft.approvalStatus, "rejected");
   assert.equal((await read(await reviewFn(req("GET", "/api/pos-review/" + token, { accept: "application/json" })))).status, 404);
-  const resubmit = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { approverKey: "joshua", etag: rejected.body.draft.etag } })));
+  const resubmit = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { etag: rejected.body.draft.etag } })));
   assert.equal(resubmit.body.sent, true);
-  const nextToken = tokenFrom(messages);
+  const nextToken = approvalTokens().joshua;
   const record = await lib.posReviews().get("token/" + crypto.createHash("sha256").update(nextToken).digest("hex"), { type: "json" });
   record.expiresAt = "2000-01-01T00:00:00.000Z";
   await lib.posReviews().setJSON("token/" + crypto.createHash("sha256").update(nextToken).digest("hex"), record);
@@ -199,12 +209,13 @@ test("concurrent approval and edit cannot approve a superseded revision, and unk
   assert.equal(unknown.body.status, "unknown");
   const retry = await read(await posFn(req("POST", "/api/pos-drafts/" + created.body.id + "/approval-request", { cookie: preparerCookie, body: { approverKey: "neil", etag: created.body.etag } })));
   assert.equal(retry.body.sent, false);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.notEqual((await lib.posDrafts().get(created.body.id, { type: "json" })).approvalStatus, "approved");
+  messages.length = 0;
   setMailTransport(async (message) => { messages.push(message); return { status: "sent", id: "ok" }; });
   const other = await read(await posFn(req("POST", "/api/pos-drafts", { cookie: preparerCookie, body: draftBody({ offer: "Second race" }) })));
   const requested = await read(await posFn(req("POST", "/api/pos-drafts/" + other.body.id + "/approval-request", { cookie: preparerCookie, body: { approverKey: "neil", etag: other.body.etag } })));
-  const token = tokenFrom(messages);
+  const token = approvalTokens().neil;
   const review = await read(await reviewFn(req("GET", "/api/pos-review/" + token, { accept: "application/json" })));
   const [decision, edit] = await Promise.all([
     reviewFn(req("POST", "/api/pos-review/" + token + "/decision", { cookie: neilCookie, body: { decision: "approve", etag: review.body.etag } })).then(read),

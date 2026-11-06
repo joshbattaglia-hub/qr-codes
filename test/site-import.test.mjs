@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { classifyImport, rowsFromDocument } from "../netlify/lib/site-import.mjs";
 
 process.env.ADMIN_PASSWORD = "test-pass";
 delete process.env.NETLIFY_AUTH_TOKEN;
@@ -91,6 +92,43 @@ test("duplicates, ambiguous matches, and reruns do not overwrite ids or links", 
   const audit = await read(await sitesFn(req("GET", "/api/sites/import", { cookie })));
   assert.equal(JSON.stringify(audit.body).includes("825 Mickleham"), false);
   assert.equal(JSON.stringify(audit.body).includes("NETLIFY"), false);
+});
+
+test("a sites document keeps spellings, holds, and unknown state without inferring a region", () => {
+  const doc = { sites: [
+    { loc_id: "100", name: "Alpha (NSW)", address: "1 Shared Street", operational_region: "NORTH GROUP", geographic_state: "unknown", import_disposition: "CLEAR" },
+    { loc_id: "200", name: "Beta", address: "1 Shared Street", operational_region: "NORTH GROUP", geographic_state: "VIC", import_disposition: "HOLD" },
+    { loc_id: "300", name: "Gamma", address: "9 Other Road", operational_region: "SOUTH GROUP", geographic_state: "QLD", import_disposition: "CLEAR" },
+    { loc_id: "300", name: "Delta", address: "8 Delta Road", operational_region: "SOUTH GROUP", geographic_state: "QLD", import_disposition: "HOLD" },
+  ] };
+  const report = classifyImport([], rowsFromDocument(doc));
+  assert.equal(report.counts.create, 1);
+  assert.equal(report.counts.held, 3);
+  const alpha = report.plan.find((row) => row.loc === "100");
+  assert.equal(alpha.name, "Alpha (NSW)");
+  assert.equal(alpha.geographicState, "");
+  assert.equal(alpha.operationalRegion, "NORTH GROUP");
+  assert.equal(alpha.sourceFlags.includes("geographic_state_unknown"), true);
+  assert.equal(alpha.sourceFlags.includes("shared_address"), true);
+  assert.equal(report.plan.find((row) => row.name === "Beta").status, "held");
+  assert.equal(report.plan.find((row) => row.name === "Gamma").status, "held");
+  const file = "/home/ubuntu/.cursor/projects/workspace/uploads/parsed-sites_bab9.json";
+  if (!fs.existsSync(file)) return;
+  const supplied = classifyImport([], rowsFromDocument(JSON.parse(fs.readFileSync(file, "utf8"))));
+  assert.equal(supplied.counts.rows, 93);
+  assert.equal(supplied.counts.held, 3);
+  assert.equal(supplied.counts.create, 90);
+  assert.equal(new Set(supplied.plan.map((row) => row.loc)).size, 92);
+  const held = supplied.plan.filter((row) => row.status === "held").map((row) => row.loc + " " + row.name).sort();
+  assert.deepEqual(held, ["18300 Morwell", "18421 Boggabilla", "18421 Margate"]);
+  for (const loc of ["18328", "18416"]) {
+    const row = supplied.plan.find((item) => item.loc === loc);
+    assert.equal(row.status, "create");
+    assert.equal(row.sourceFlags.includes("shared_address"), true);
+  }
+  const unknown = supplied.plan.filter((row) => row.sourceFlags.includes("geographic_state_unknown"));
+  assert.equal(unknown.length, 17);
+  assert.equal(unknown.every((row) => row.geographicState === "" && row.geographicState !== row.operationalRegion), true);
 });
 
 test("managers cannot import and the runner refuses a write without env credentials", async () => {

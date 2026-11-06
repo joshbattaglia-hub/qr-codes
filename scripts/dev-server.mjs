@@ -23,6 +23,13 @@ const posFn = (await import("../netlify/functions/pos-drafts.mjs")).default;
 const identityFn = (await import("../netlify/functions/identity.mjs")).default;
 const reviewFn = (await import("../netlify/functions/pos-review.mjs")).default;
 const claimFn = (await import("../netlify/functions/claim-public.mjs")).default;
+if (process.env.POS_MAIL_MOCK === "1" && !(process.env.RESEND_API_KEY && process.env.RESEND_FROM)) {
+  const { setMailTransport } = await import("../netlify/lib/mail.mjs");
+  setMailTransport(async (message) => {
+    fs.appendFileSync("/tmp/pos-mail-mock.jsonl", JSON.stringify({ to: message.to, subject: message.subject }) + "\n");
+    return { status: "sent", id: "local-mock", mock: true };
+  });
+}
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
 const GEO = {

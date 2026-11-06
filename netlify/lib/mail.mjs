@@ -7,8 +7,14 @@ export function setMailTransport(fn) {
   transport = fn || null;
 }
 
+export function mailMode() {
+  if (env("RESEND_API_KEY") && env("RESEND_FROM")) return "resend";
+  if (env("POS_MAIL_MOCK") === "1") return "mock";
+  return "disabled";
+}
+
 export function mailConfigured() {
-  return !!(env("RESEND_API_KEY") && env("RESEND_FROM"));
+  return mailMode() !== "disabled";
 }
 
 export function mailSetupMessage() {
@@ -22,7 +28,7 @@ export function mailSetupMessage() {
  */
 export async function deliver(message) {
   if (transport) return transport(message);
-  if (!mailConfigured()) return { status: "not-configured" };
+  if (mailMode() !== "resend") return { status: "not-configured" };
   const key = env("RESEND_API_KEY");
   const from = env("RESEND_FROM");
   try {

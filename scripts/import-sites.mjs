@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { getStore } from "@netlify/blobs";
-import { applyImport, auditView, classifyImport, readSites } from "../netlify/lib/site-import.mjs";
+import { applyImport, auditView, classifyImport, readSites, rowsFromDocument } from "../netlify/lib/site-import.mjs";
 
 const args = process.argv.slice(2);
 const fileFlag = args.indexOf("--file");
@@ -11,8 +11,12 @@ if (!file) {
   console.error("Dry-run is the default. --apply writes only when NETLIFY_SITE_ID and NETLIFY_AUTH_TOKEN are already in the environment.");
   process.exit(1);
 }
-const rows = JSON.parse(fs.readFileSync(file, "utf8"));
-const input = Array.isArray(rows) ? rows : rows.rows;
+const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+const input = rowsFromDocument(doc);
+if (!input) {
+  console.error("Import JSON must be a rows array or a sites document. Fields are read as supplied.");
+  process.exit(1);
+}
 const siteID = process.env.NETLIFY_SITE_ID || "";
 const token = process.env.NETLIFY_AUTH_TOKEN || "";
 if (!siteID || !token) {
