@@ -9,6 +9,8 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ROTATE_AFTER_MS = 15 * 60 * 1000;
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
+/** Explicit site ids only. 200 covers the current 90 imported sites with room for a few additions. It is not all-sites access. */
+export const OTP_EXPLICIT_SITE_CAP = 200;
 const START_PER_EMAIL = 3;
 const START_PER_IP = 8;
 const START_UNTRUSTED = 8;
@@ -80,8 +82,9 @@ export function parseAllowlist(raw = env("OTP_ALLOWLIST")) {
       if (typeof id !== "string" || !/^s[a-f0-9]{8}$/.test(id)) { sitesOk = false; break; }
       siteIds.push(id);
     }
-    if (!sitesOk || siteIds.length > 50) continue;
-    entries.set(email, { email, approverKey, preparerClass, siteIds: [...new Set(siteIds)], allSites: false, disabled: false });
+    const unique = [...new Set(siteIds)];
+    if (!sitesOk || unique.length > OTP_EXPLICIT_SITE_CAP) continue;
+    entries.set(email, { email, approverKey, preparerClass, siteIds: unique, allSites: false, disabled: false });
   }
   return { entries, error: "" };
 }
