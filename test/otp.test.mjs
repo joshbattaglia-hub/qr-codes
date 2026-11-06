@@ -199,6 +199,65 @@ test("a lost or failed delivery does not leave a usable code and is not retried"
   useClock();
 });
 
+function siteIds(count) {
+  return Array.from({ length: count }, (_, index) => "s" + index.toString(16).padStart(8, "0"));
+}
+
+test("ninety explicit sites stay granted for the two authorised role shapes", async () => {
+  const ids = siteIds(90);
+  assert.equal(new Set(ids).size, 90);
+  const saved = process.env.OTP_ALLOWLIST;
+  const document = JSON.stringify({
+    [NEIL]: { approverKey: "neil", siteIds: ids },
+    [JOSHUA]: { approverKey: "joshua", preparerClass: "joshua", siteIds: [...ids, ids[0]] },
+  });
+  assert.ok(document.length < 20000, document.length);
+  process.env.OTP_ALLOWLIST = document;
+  try {
+    const map = otpLib.parseAllowlist();
+    assert.equal(map.error, "");
+    assert.equal(map.entries.size, 2);
+    const neil = map.entries.get(NEIL);
+    const joshua = map.entries.get(JOSHUA);
+    assert.equal(neil.approverKey, "neil");
+    assert.equal(neil.preparerClass, "");
+    assert.deepEqual(neil.siteIds, ids);
+    assert.equal(neil.allSites, false);
+    assert.equal(joshua.approverKey, "joshua");
+    assert.equal(joshua.preparerClass, "joshua");
+    assert.deepEqual(joshua.siteIds, ids);
+    assert.equal(joshua.allSites, false);
+    assert.equal(otpLib.otpStatus().allowlistConfigured, true);
+    const actor = otpLib.actorFromOtp(JOSHUA);
+    assert.equal(isVerifiedApprover(actor), true);
+    assert.equal(isVerifiedPreparer(actor), true);
+    assert.equal(canSeeDraft(actor, { siteIds: ids }), true);
+    assert.equal(canSeeDraft(actor, { siteIds: ["sffffffff"] }), false);
+    assert.equal(isVerifiedPreparer(otpLib.actorFromOtp(NEIL)), false);
+  } finally {
+    process.env.OTP_ALLOWLIST = saved;
+  }
+});
+
+test("an invalid id or a list past the explicit cap drops that entry and does not trim it", () => {
+  const ids = siteIds(90);
+  const invalid = otpLib.parseAllowlist(JSON.stringify({
+    [NEIL]: { approverKey: "neil", siteIds: [...ids, "s123"] },
+    [JOSHUA]: { approverKey: "joshua", preparerClass: "joshua", siteIds: ids },
+  }));
+  assert.equal(invalid.entries.has(NEIL), false);
+  assert.equal(invalid.entries.get(JOSHUA).siteIds.length, 90);
+  const oversized = siteIds(otpLib.OTP_EXPLICIT_SITE_CAP + 1);
+  const dropped = otpLib.parseAllowlist(JSON.stringify({
+    [NEIL]: { approverKey: "neil", siteIds: oversized },
+  }));
+  assert.equal(dropped.entries.size, 0);
+  assert.equal(otpLib.parseAllowlist(JSON.stringify({
+    [NEIL]: { approverKey: "neil", allSites: true, siteIds: ids },
+  })).entries.size, 0);
+  assert.equal(otpLib.parseAllowlist("x".repeat(20001)).error.includes("too large"), true);
+});
+
 test("scope is explicit, revocation is immediate, and domains or allSites do not grant access", async () => {
   advance();
   assert.equal(otpLib.parseAllowlist(JSON.stringify({ "*@libertyretail.com.au": { approverKey: "neil", siteIds: [SITE] } })).entries.size, 0);

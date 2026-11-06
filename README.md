@@ -107,4 +107,4 @@ Env (Netlify site `liberty-qr-353`):
 }
 ```
 
-  `approverKey` is only `neil` or `joshua`, and only on those two addresses. `preparerClass` is `regional-business-manager`, `jeremy`, or `joshua`. `joshua` is allowed only on Joshua's address. A preparer mailbox has to be written by someone who already knows that person and their site ids. `siteIds` are internal `s` plus 8 hex characters. `allSites` and `unassigned` are ignored by rejecting the entry. `disabled: true` removes that mailbox. No entry is seeded.
+  `approverKey` is only `neil` or `joshua`, and only on those two addresses. `preparerClass` is `regional-business-manager`, `jeremy`, or `joshua`. `joshua` is allowed only on Joshua's address. A preparer mailbox has to be written by someone who already knows that person and their site ids. `siteIds` are internal `s` plus 8 hex characters. Each entry may list up to 200 explicit ids, which covers the current 90 imported sites. A longer list is rejected whole and is not trimmed. `allSites` and `unassigned` are rejected with the entry. `disabled: true` removes that mailbox. No entry is seeded.
