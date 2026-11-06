@@ -1,20 +1,26 @@
 import crypto from "node:crypto";
-import { json, sitesStore } from "../lib/lib.mjs";
-import { actorFrom, canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
+import { json, siteImports, sitesStore } from "../lib/lib.mjs";
+import { canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
+import { actorFromRequest } from "../lib/identity.mjs";
+import { applyImport, auditView, classifyImport, isSiteRecord, readSites } from "../lib/site-import.mjs";
 
 function publicSite(site) {
-  return { id: site.id, name: site.name, created: site.created };
+  const out = { id: site.id, name: site.name, created: site.created };
+  for (const key of ["loc", "address", "operationalRegion", "geographicState", "sourceRef", "sourceName"]) {
+    if (site[key]) out[key] = site[key];
+  }
+  return out;
 }
 
 export default async (req) => {
   if (originBlocked(req)) return forbidden();
-  const actor = await actorFrom(req);
+  const actor = await actorFromRequest(req);
   if (!actor) return unauthorised();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const store = sitesStore();
   if (path === "/api/sites" && req.method === "GET") {
     const { blobs } = await store.list();
-    const sites = (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" })))).filter(Boolean);
+    const sites = (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" })))).filter(isSiteRecord);
     return json(200, sites.filter((site) => canSeeSite(actor, site.id)).map(publicSite).sort((a, b) => a.name.localeCompare(b.name)));
   }
   if (path === "/api/sites" && req.method === "POST") {
@@ -23,11 +29,27 @@ export default async (req) => {
     const name = String(body.name || "").trim().slice(0, 80);
     if (!name) return json(400, { error: "Name is required" });
     const { blobs } = await store.list();
-    const existing = (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" })))).filter(Boolean);
+    const existing = (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" })))).filter(isSiteRecord);
     if (existing.some((site) => site.name.toLowerCase() === name.toLowerCase())) return json(409, { error: "A site with that name already exists" });
     const site = { id: "s" + crypto.randomBytes(4).toString("hex"), name, created: new Date().toISOString() };
     await store.setJSON(site.id, site);
     return json(201, publicSite(site));
+  }
+  if (path === "/api/sites/import" && (req.method === "POST" || req.method === "GET")) {
+    if (actor.role !== "head") return forbidden();
+    if (req.method === "GET") {
+      const { blobs } = await siteImports().list();
+      const rows = (await Promise.all(blobs.map((blob) => siteImports().get(blob.key, { type: "json" })))).filter(Boolean);
+      return json(200, rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 20));
+    }
+    const body = await req.json().catch(() => ({}));
+    const dryRun = body.dryRun !== false;
+    const report = dryRun ? classifyImport(await readSites(store), body.rows || []) : await applyImport(store, body.rows || []);
+    if (report.error) return json(400, { error: report.error });
+    const saved = { id: "i" + crypto.randomBytes(6).toString("hex"), at: new Date().toISOString(), dryRun, ...auditView(report) };
+    if (!dryRun) await siteImports().setJSON(saved.id, saved);
+    const { plan, ...rest } = report;
+    return json(200, { dryRun, ...rest, audit: auditView(report) });
   }
   const one = path.match(/^\/api\/sites\/([^/]+)$/);
   if (!one) return json(404, { error: "Not found" });
@@ -52,4 +74,4 @@ export default async (req) => {
   return json(405, { error: "Method not allowed" });
 };
 
-export const config = { path: ["/api/sites", "/api/sites/:id"] };
+export const config = { path: ["/api/sites", "/api/sites/import", "/api/sites/:id"] };

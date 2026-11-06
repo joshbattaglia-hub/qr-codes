@@ -20,6 +20,9 @@ const vouchersFn = (await import("../netlify/functions/vouchers.mjs")).default;
 const healthFn = (await import("../netlify/functions/health.mjs")).default;
 const templatesFn = (await import("../netlify/functions/templates.mjs")).default;
 const posFn = (await import("../netlify/functions/pos-drafts.mjs")).default;
+const identityFn = (await import("../netlify/functions/identity.mjs")).default;
+const reviewFn = (await import("../netlify/functions/pos-review.mjs")).default;
+const claimFn = (await import("../netlify/functions/claim-public.mjs")).default;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
 const GEO = {
@@ -69,6 +72,9 @@ export function start(port = 8888) {
       if (url.pathname === "/api/health" || url.pathname.startsWith("/api/health/")) return send(res, await healthFn(request));
       if (url.pathname === "/api/templates" || url.pathname.startsWith("/api/templates/")) return send(res, await templatesFn(request));
       if (url.pathname === "/api/pos-drafts" || url.pathname.startsWith("/api/pos-drafts/")) return send(res, await posFn(request));
+      if (url.pathname.startsWith("/api/identity/")) return send(res, await identityFn(request));
+      if (url.pathname.startsWith("/api/pos-review/")) return send(res, await reviewFn(request));
+      if (url.pathname.startsWith("/api/claim/")) return send(res, await claimFn(request));
       if (url.pathname === "/api/codes" || url.pathname.startsWith("/api/codes/")) {
         const slug = url.pathname === "/api/codes" ? undefined : decodeURIComponent(url.pathname.slice("/api/codes/".length));
         return send(res, await codesFn(request, { params: { slug } }));

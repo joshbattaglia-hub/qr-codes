@@ -1313,7 +1313,8 @@ function sitesPage() {
   const block = (kind, rows) => rows.map((row) => '<form class="row" data-act="assign-site"><input type="hidden" name="kind" value="' + kind + '"><input type="hidden" name="slug" value="' + esc(row.slug) + '"><span class="grow">' + esc(row.name || row.slug) + '</span><select name="siteId">' + siteOptions(row.siteId || "") + '</select><button class="btn ghost" type="submit">Assign</button></form>').join("") || '<p class="muted">None</p>';
   const cards = [...groups.entries()].map(([id, group]) => '<section class="card" data-testid="site-group"><h2>' + esc(siteName(id)) + "</h2><h3>QR codes and links</h3>" + block("code", group.codes) + "<h3>Pages</h3>" + block("page", group.pages) + "<h3>Competitions</h3>" + block("competition", group.competitions) + "</section>").join("");
   return '<div class="page-head"><h1>Sites</h1></div>' +
-    (head ? '<form class="card" data-act="create-site" data-testid="create-site"><label class="field"><span>New location</span><input name="name" required maxlength="80" placeholder="Location name"></label><button class="btn" type="submit">Add site</button><p class="muted small">Existing records stay unassigned until someone moves them.</p></form>' : "") +
+    (head ? '<form class="card" data-act="create-site" data-testid="create-site"><label class="field"><span>New location</span><input name="name" required maxlength="80" placeholder="Location name"></label><button class="btn" type="submit">Add site</button><p class="muted small">Existing records stay unassigned until someone moves them.</p></form>' +
+      '<form class="card" data-act="preview-import" data-testid="site-import"><h2>Import locations</h2><p class="muted small">Head office only. Preview is the default. Held rows are not written. LOC, address, operational region, and geographic state stay separate. Nothing here grants staff access.</p><label class="field"><span>JSON rows</span><textarea name="rows" id="import-rows" placeholder=\'[{"loc":"LOC1","name":"North","address":"1 Main Street","operationalRegion":"North","geographicState":"","sourceRef":"row-1"}]\'></textarea></label><button class="btn" type="submit">Preview import</button><div id="import-report"></div></form>' : "") +
     (cards || '<div class="card"><p class="muted">No sites are assigned to this login.</p></div>');
 }
 function staffSettings() {
@@ -1327,33 +1328,52 @@ function staffSettings() {
     '<button class="btn" type="submit">Create manager</button></form>' + (rows ? '<div class="card" data-testid="staff-list">' + rows + "</div>" : "");
 }
 function blankPos() {
-  return { offer: "", conditions: "", start: "", end: "", siteIds: [], posRedemption: "single-use", codeValue: "" };
+  return { offer: "", conditions: "", start: "", end: "", siteIds: [], posRedemption: "single-use", codeValue: "", distribution: "shareable-claim-link", claimCap: 100, approvalStatus: "draft" };
 }
 function posList() {
   const rows = state.posDrafts || [];
-  const body = rows.map((draft) => '<tr class="clickable" data-go="pos/' + esc(draft.id) + '"><td><strong>' + esc(draft.offer) + '</strong><div class="muted small">' + esc(draft.codeValue) + '</div></td><td>' + esc(draft.posRedemption) + '</td><td>Pending</td><td>' + esc((draft.sites || []).map((site) => site.name).join(", ") || "Unassigned") + "</td></tr>").join("");
+  const body = rows.map((draft) => '<tr class="clickable" data-go="pos/' + esc(draft.id) + '"><td><strong>' + esc(draft.offer) + '</strong><div class="muted small">' + esc(draft.codeValue) + '</div></td><td>' + esc(draft.posRedemption) + '</td><td>' + esc(draft.approvalStatus || "draft") + '</td><td>Pending POS confirmation</td><td>' + esc((draft.sites || []).map((site) => site.name).join(", ") || "Unassigned") + "</td></tr>").join("");
   return '<div class="page-head"><h1>POS setup</h1><button class="btn" type="button" data-go="pos/new">New draft</button></div><div class="warn-banner" data-testid="pos-provisional">Provisional. Quickfuel has not confirmed a barcode or import format. Nothing here activates an offer.</div><div class="card table-wrap" data-testid="pos-list">' +
-    (rows.length ? "<table><thead><tr><th>Offer</th><th>POS request</th><th>Status</th><th>Sites</th></tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><h2>No POS drafts</h2><p class="muted">Create a package for a point-of-sale provider. It stays pending.</p></div>') + "</div>";
+    (rows.length ? "<table><thead><tr><th>Offer</th><th>POS request</th><th>Approval</th><th>Quickfuel</th><th>Sites</th></tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><h2>No POS drafts</h2><p class="muted">Create a package for a point-of-sale provider. It stays pending.</p></div>') + "</div>";
 }
 function posEditor() {
   const draft = state.posDraft || blankPos();
   const selected = new Set(draft.siteIds || []);
   const sites = (state.sites || []).map((site) => '<label class="check"><input type="checkbox" name="siteIds" value="' + esc(site.id) + '"' + (selected.has(site.id) ? " checked" : "") + "> " + esc(site.name) + "</label>").join("") || '<p class="muted">No sites yet. Head office can still save an unassigned draft.</p>';
   const preview = draft.id ? '<img data-testid="pos-barcode" alt="Code 128 barcode" src="/api/pos-drafts/' + encodeURIComponent(draft.id) + "/barcode.svg?v=" + encodeURIComponent(draft.updated || "") + '">' : '<p class="muted">Save the draft to preview the barcode.</p>';
-  return '<div class="page-head"><button class="icon-btn" type="button" data-go="pos" aria-label="Back">←</button><h1>' + esc(draft.offer || "POS draft") + '</h1><span class="badge">Pending</span></div>' +
+  const approved = draft.approvalStatus === "approved" && draft.approvalCurrent;
+  const status = draft.identityStatus || state.identityStatus || {};
+  const mailOff = status.mailConfigured === false || !status.mailConfigured;
+  const preparer = state.actor?.role === "preparer";
+  const approverMatch = state.actor?.role === "approver" && draft.approvalStatus === "pending" && state.actor?.approverKey === draft.selectedApprover;
+  const history = (draft.history || []).map((item) => "<li>" + esc(item.action) + " · rev " + esc(item.revision) + " · " + esc(item.approverKey || item.role || "") + " · " + esc(item.at) + "</li>").join("");
+  return '<div class="page-head"><button class="icon-btn" type="button" data-go="pos" aria-label="Back">←</button><h1>' + esc(draft.offer || "POS draft") + '</h1><span class="badge">' + esc(approved ? "Approved" : "Draft / unapproved") + '</span></div>' +
     '<div class="warn-banner" data-testid="pos-provisional">Provisional Code 128 artwork. This is not a Quickfuel format, not a GTIN, and not an activated web voucher. A single-use choice is a request to the point-of-sale provider, not enforcement by this barcode.</div>' +
-    '<form class="card" data-act="save-pos" data-testid="pos-editor"><div class="card-head"><h2>Draft</h2></div>' +
+    '<div class="warn-banner" data-testid="pos-approval-note">Neil or Joshua may approve. One verified approver is enough. The shared head-office password cannot approve, and an email address alone is not an identity.</div>' +
+    '<form class="card" data-act="save-pos" data-testid="pos-editor"><div class="card-head"><h2>' + (approved ? "Approved revision" : "Draft") + "</h2></div>" +
     '<label class="field"><span>Offer</span><input name="offer" required maxlength="140" value="' + esc(draft.offer || "") + '"></label>' +
     '<label class="field"><span>Conditions</span><textarea name="conditions" required maxlength="2000">' + esc(draft.conditions || "") + "</textarea></label>" +
     '<div class="split"><label class="field"><span>Valid from</span><input name="start" type="date" required value="' + esc(draft.start || "") + '"></label><label class="field"><span>Valid through</span><input name="end" type="date" required value="' + esc(draft.end || "") + '"></label></div>' +
     '<p class="muted small">Boundaries use Australia/Melbourne, from 00:00 on the start date through 23:59:59 on the end date.</p>' +
     '<fieldset><legend>Eligible sites</legend>' + sites + "</fieldset>" +
     '<label class="field"><span>POS redemption request</span><select name="posRedemption"><option value="single-use"' + (draft.posRedemption !== "reusable" ? " selected" : "") + '>Single-use request</option><option value="reusable"' + (draft.posRedemption === "reusable" ? " selected" : "") + ">Reusable request</option></select></label>" +
+    '<label class="field"><span>Distribution</span><select name="distribution"><option value="shareable-claim-link" selected>Shareable claim link (unpublished)</option></select></label>' +
+    '<label class="field"><span>Claim cap</span><input name="claimCap" type="number" min="1" max="5000" required value="' + esc(draft.claimCap || 100) + '"></label>' +
     '<label class="field"><span>Barcode type</span><input value="Code 128" readonly></label>' +
     '<label class="field"><span>Barcode value</span><input name="codeValue" maxlength="48" value="' + esc(draft.codeValue || "") + '" placeholder="Leave blank to allocate EH-POS-…"></label>' +
-    '<p class="muted small">Other barcode formats are not generated. Confirmation stays pending.</p>' +
-    '<div class="row"><button class="btn" type="submit">Save draft</button>' + (draft.id ? '<button class="btn ghost" type="button" data-act="pos-download">Download package</button>' : "") + "</div>" +
+    '<p class="muted small">Other barcode formats are not generated. Quickfuel confirmation stays pending. Saving a material change clears approval.</p>' +
+    '<div class="row"><button class="btn" type="submit">Save draft</button>' + (draft.id ? '<button class="btn ghost" type="button" data-act="pos-download">Download draft package</button>' : "") + "</div>" +
     '<p class="err" id="pos-error"></p></form>' +
+    '<div class="card" data-testid="pos-mail">' +
+    '<h2>Email approval request</h2><p class="muted small" data-testid="pos-mail-status">' + esc(mailOff ? (status.mailSetup || "Email is not configured. Set RESEND_API_KEY and RESEND_FROM. Nothing is sent.") : "Mail can be sent through the configured service.") + "</p>" +
+    (preparer && draft.id ? '<label class="field"><span>Approver</span><select id="pos-approver"><option value="neil">Neil (nanderson@libertyretail.com.au)</option><option value="joshua">Joshua (jbattaglia@libertyretail.com.au)</option></select></label><button class="btn" type="button" data-act="pos-approval-request"' + (mailOff ? " disabled" : "") + ">Email approval request</button>" : '<p class="muted">Sign in with a verified preparer identity to request approval. No preparer accounts are created automatically.</p>') +
+    "</div>" +
+    '<div class="card" data-testid="pos-quickfuel"><h2>Send to Quickfuel</h2><p data-testid="quickfuel-recipient">Recipient: support@quickfuel.com.au</p><p class="muted small">Attachment: the current approved setup package. This does not happen when someone approves. Quickfuel support stays unconfirmed after the send.</p>' +
+    (preparer && approved ? '<label class="check"><input id="pos-confirm-send" type="checkbox"> I am sending this approved revision to support@quickfuel.com.au</label><button class="btn" type="button" data-act="pos-send-quickfuel"' + (mailOff ? " disabled" : "") + ">Send to Quickfuel</button>" : '<p class="muted">Available after Neil or Joshua approves the current revision, and only as a separate action by the requester.</p>') +
+    "</div>" +
+    (approverMatch ? '<div class="card"><h2>Your decision</h2><div class="row"><button class="btn" type="button" data-act="pos-approve">Approve</button><button class="btn ghost" type="button" data-act="pos-reject">Reject</button></div></div>' : "") +
+    '<div class="card"><h2>Approval history</h2>' + (history ? "<ul>" + history + "</ul>" : '<p class="muted">No approval events.</p>') + "</div>" +
+    '<div class="card" data-testid="pos-claim-preview"><h2>Claim preview</h2><p>Draft preview. The claim link is not published. Shareable claim distribution stays off until recorded Quickfuel confirmation and an explicit activation.</p><p class="muted small">Cap ' + esc(draft.claimCap || "") + ". " + esc(draft.posRedemption || "") + " is a point-of-sale request, not enforcement by the barcode.</p></div>" +
     '<div class="card" data-testid="pos-preview"><h2>Barcode preview</h2>' + preview + "</div>";
 }
 async function savePos(form) {
@@ -1365,7 +1385,10 @@ async function savePos(form) {
     end: data.get("end"),
     siteIds: data.getAll("siteIds"),
     posRedemption: data.get("posRedemption"),
+    distribution: data.get("distribution") || "shareable-claim-link",
+    claimCap: Number(data.get("claimCap") || 100),
     codeValue: data.get("codeValue") || "",
+    etag: state.posDraft?.etag || "",
   };
   const err = $("#pos-error");
   try {
@@ -1566,12 +1589,14 @@ async function render(opts = {}) {
     }
     view.innerHTML = competitionEditor();
   } else if (r.name === "pos" && r.id) {
+    try { state.identityStatus = await api("/api/identity/status"); } catch { state.identityStatus = null; }
     if (r.id === "new") {
       if (routeChanged) state.posDraft = blankPos();
     } else if (!(opts.refetch === false && state.posDraft?.id === r.id)) {
       if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
       try {
         state.posDraft = await api("/api/pos-drafts/" + encodeURIComponent(r.id));
+        state.identityStatus = await api("/api/identity/status").catch(() => null);
         if (gen !== renderGen) return;
       } catch (e) {
         if (gen !== renderGen) return;
@@ -1750,6 +1775,24 @@ async function handleAction(el) {
   if (act === "copy-notice") { await copyText(state.notice?.text || ""); return; }
   if (act === "download-notice") {
     downloadBlob("prize-notice.txt", new Blob([state.notice?.text || ""], { type: "text/plain" }));
+    return;
+  }
+  if (act === "apply-import") { await applyImport(); return; }
+  if (act === "pos-approval-request" || act === "pos-approve" || act === "pos-reject" || act === "pos-send-quickfuel") {
+    const path = act === "pos-approval-request" ? "/approval-request" : act === "pos-send-quickfuel" ? "/send-quickfuel" : "/decision";
+    const body = { etag: state.posDraft?.etag, revision: state.posDraft?.revision, digest: state.posDraft?.materialDigest };
+    if (act === "pos-approval-request") body.approverKey = $("#pos-approver")?.value || "";
+    if (act === "pos-approve") body.decision = "approve";
+    if (act === "pos-reject") body.decision = "reject";
+    if (act === "pos-send-quickfuel") {
+      if (!$("#pos-confirm-send")?.checked) throw new Error("Confirm the Quickfuel recipient first");
+      body.confirm = true;
+      body.recipient = "support@quickfuel.com.au";
+    }
+    const result = await api("/api/pos-drafts/" + encodeURIComponent(state.posDraft.id) + path, { method: "POST", body: JSON.stringify(body) });
+    if (result.draft) state.posDraft = result.draft;
+    toast(result.sent ? "Email accepted by the provider" : (result.error || result.status || "Not sent"));
+    render();
     return;
   }
   if (act === "pos-download") {
@@ -1991,7 +2034,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("change", (e) => {
@@ -2051,6 +2094,21 @@ $("#search").addEventListener("input", () => {
   const name = route().name;
   if (name === "links" || name === "qrcodes" || ((name === "pages" || name === "competitions") && !route().id)) render({ refetch: false, keepScroll: true });
 });
+async function previewImport(form) {
+  const rows = JSON.parse(new FormData(form).get("rows") || "[]");
+  const report = await api("/api/sites/import", { method: "POST", body: JSON.stringify({ dryRun: true, rows }) });
+  const box = $("#import-report");
+  if (box) box.innerHTML = '<p data-testid="import-counts">Create ' + esc(report.counts.create) + ", update " + esc(report.counts.update) + ", unchanged " + esc(report.counts.unchanged) + ", held " + esc(report.counts.held) + ". Sites " + esc(report.readback.sites) + ".</p>" +
+    (report.rows || []).map((row) => "<p>" + esc(row.loc) + " " + esc(row.name) + " · " + esc(row.status) + " " + esc(row.reason || "") + "</p>").join("") +
+    '<button class="btn" type="button" data-act="apply-import">Apply import</button>';
+  state.importRows = rows;
+}
+async function applyImport() {
+  const report = await api("/api/sites/import", { method: "POST", body: JSON.stringify({ dryRun: false, rows: state.importRows || [] }) });
+  state.sites = await api("/api/sites");
+  toast("Import applied. Create " + report.counts.create + ", held " + report.counts.held);
+  render({ refetch: false, keepScroll: true });
+}
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = $("#login-error");
@@ -2064,6 +2122,16 @@ $("#login-form").addEventListener("submit", async (e) => {
       name: session.staff?.name || "Head office",
       siteIds: session.role === "manager" ? (session.staff?.siteIds || []) : null,
     };
+    await enter();
+  } catch (ex) { err.textContent = ex.message; }
+});
+$("#identity-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = $("#ident-error");
+  err.textContent = "";
+  try {
+    const session = await api("/api/identity/session", { method: "POST", body: JSON.stringify({ login: $("#ident-login").value.trim(), password: $("#ident-pw").value }) });
+    state.actor = { authenticated: true, ...(session.identity || {}), role: session.role };
     await enter();
   } catch (ex) { err.textContent = ex.message; }
 });
@@ -2155,8 +2223,14 @@ async function enter() {
 async function boot() {
   try {
     const me = await api("/api/auth");
-    if (!me.authenticated) return showLogin();
-    state.actor = me;
+    if (me.authenticated) {
+      state.actor = me;
+      await enter();
+      return;
+    }
+    const ident = await api("/api/identity/session");
+    if (!ident.authenticated) return showLogin();
+    state.actor = { authenticated: true, ...(ident.identity || {}), role: ident.role };
     await enter();
   } catch (e) { showLogin(e.message === "Unauthorized" ? "" : e.message); }
 }

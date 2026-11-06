@@ -20,6 +20,14 @@
     <button class="btn" type="submit">Log in</button>
     <p class="err" id="login-error"></p>
   </form>
+  <form id="identity-form" class="login-card" style="margin-top:16px">
+    <h2>Verified identity</h2>
+    <p class="muted small">Preparers and Neil or Joshua. The shared head-office password is not an identity, and an email address alone is not a login.</p>
+    <label class="field"><span>Identity id or approver email</span><input id="ident-login" autocomplete="username"></label>
+    <label class="field"><span>Password</span><input id="ident-pw" type="password" autocomplete="current-password"></label>
+    <button class="btn" type="submit">Sign in as identity</button>
+    <p class="err" id="ident-error"></p>
+  </form>
 </div>
 <div id="shell" class="shell hidden">
   <aside id="sidebar" class="sidebar">

@@ -40,6 +40,11 @@ export const templatesStore = () => openStore("templates");
 export const vouchersStore = () => openStore("vouchers");
 export const healthStore = () => openStore("health");
 export const posDrafts = () => openStore("pos-drafts");
+export const posMail = () => openStore("pos-mail");
+export const posReviews = () => openStore("pos-reviews");
+export const posClaims = () => openStore("pos-claims");
+export const identities = () => openStore("identities");
+export const siteImports = () => openStore("site-imports");
 export const rateStore = () => openStore("auth-rate");
 
 /**
