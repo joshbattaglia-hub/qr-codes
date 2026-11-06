@@ -153,7 +153,7 @@ export async function requestApproval({ actor, draft, etag }) {
     const token = crypto.randomBytes(32).toString("hex");
     return { approverKey, token, hash: tokenHash(token) };
   });
-  const next = { ...meta.data, approvalStatus: "pending", selectedApprover: "", requestedBy: actor.id, reviewHashes: prepared.map((item) => item.hash), approval: null };
+  const next = { ...meta.data, approvalStatus: "pending", selectedApprover: "", requestedBy: actor.id, requestedContact: actor.provider === "otp" && typeof actor.email === "string" ? actor.email : "", reviewHashes: prepared.map((item) => item.hash), approval: null };
   pushHistory(next, { action: "approval-requested", identityId: actor.id, role: "preparer", approverKey: "both" });
   const write = await posDrafts().setJSON(draft.id, next, { onlyIfMatch: meta.etag });
   if (write?.modified !== true) return { status: 409, error: "The draft changed" };
@@ -184,7 +184,8 @@ export async function requestApproval({ actor, draft, etag }) {
 
 async function sendConfirmation(draft) {
   const person = draft.requestedBy ? await identities().get(draft.requestedBy, { type: "json" }) : null;
-  const to = person?.contactEmail || "";
+  const requestedContact = typeof draft.requestedContact === "string" ? draft.requestedContact : "";
+  const to = person?.contactEmail || requestedContact;
   const idempotencyKey = `confirm/${draft.id}/${draft.revision}/${draft.approval.identityId}`;
   if (!to || !mailConfigured()) {
     const status = !to ? "not-sent" : "not-configured";

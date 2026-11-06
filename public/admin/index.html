@@ -25,6 +25,19 @@
     <p class="muted small" id="entra-setup" data-testid="entra-setup">Checking Microsoft sign-in…</p>
     <a class="btn" id="entra-signin" data-testid="entra-signin" hidden href="/api/identity/entra/start?returnTo=%2Fadmin">Sign in with Microsoft</a>
   </div>
+  <div id="otp-card" class="login-card" style="margin-top:16px">
+    <h2>Email code</h2>
+    <p class="muted small" id="otp-setup" data-testid="otp-setup">Checking email codes…</p>
+    <form id="otp-form" hidden>
+      <p class="muted small" id="otp-mock" data-testid="otp-mock" hidden>Local mock mail. No message leaves this process.</p>
+      <label class="field"><span>Approved email</span><input id="otp-email" type="email" autocomplete="username" maxlength="254" data-testid="otp-email"></label>
+      <button class="btn" type="submit" id="otp-send">Email me a code</button>
+      <label class="field" id="otp-code-wrap" hidden><span>8-digit code</span><input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" data-testid="otp-code"></label>
+      <button class="btn" type="button" id="otp-verify" hidden>Verify code</button>
+      <p class="small" id="otp-status" data-testid="otp-status"></p>
+      <p class="err" id="otp-error" data-testid="otp-error"></p>
+    </form>
+  </div>
   <form id="identity-form" class="login-card" style="margin-top:16px">
     <h2>Verified identity</h2>
     <p class="muted small">Local fixture identities only. An email address does not grant access, and this form cannot appoint Neil or Joshua.</p>
