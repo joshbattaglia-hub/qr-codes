@@ -6,6 +6,7 @@ process.env.ADMIN_PASSWORD = "test-pass";
 process.env.PUBLIC_URL = "https://expresshelp.site";
 process.env.IDENTITY_BIND_TOKEN = "fixture-bind-token-value";
 process.env.IDENTITY_SESSION_SECRET = "fixture-session-secret-value";
+process.env.ALLOW_FIXTURE_IDENTITY_BIND = "1";
 delete process.env.RESEND_API_KEY;
 delete process.env.RESEND_FROM;
 
@@ -77,6 +78,21 @@ const joshuaCookie = await identLogin(joshua.id, "joshua-pass-123");
 function draftBody(extra = {}) {
   return { offer: "Saturday fuel", conditions: "One fill", start: "2026-11-01", end: "2026-11-30", siteIds: [site.id], posRedemption: "single-use", distribution: "shareable-claim-link", claimCap: 20, ...extra };
 }
+
+test("a bind token or the shared password cannot appoint Neil or Joshua", async () => {
+  delete process.env.ALLOW_FIXTURE_IDENTITY_BIND;
+  const closed = await read(await identityFn(req("POST", "/api/identity/bind", { token: process.env.IDENTITY_BIND_TOKEN, body: { kind: "approver", approverKey: "neil", email: "anyone@example.com", password: "someone-pass-1", siteIds: [site.id] } })));
+  assert.equal(closed.status, 403);
+  assert.match(closed.body.error, /identity provider/);
+  process.env.ALLOW_FIXTURE_IDENTITY_BIND = "1";
+  const asHead = await read(await identityFn(req("POST", "/api/identity/bind", { cookie: head, token: process.env.IDENTITY_BIND_TOKEN, body: { kind: "approver", approverKey: "joshua", email: "jbattaglia@libertyretail.com.au", password: "someone-pass-1", siteIds: [site.id] } })));
+  assert.equal(asHead.status, 403);
+  assert.match(asHead.body.error, /shared head-office/);
+  const people = await lib.identities().list();
+  assert.equal(people.blobs.some((blob) => blob.key.startsWith("i")) , true);
+  const rows = await Promise.all(people.blobs.map((blob) => lib.identities().get(blob.key, { type: "json" })));
+  assert.equal(rows.filter((row) => row?.approverKey === "joshua").length, 1);
+});
 
 test("binding fails closed and shared or spoofed identities cannot approve", async () => {
   const blocked = await read(await identityFn(req("POST", "/api/identity/bind", { body: { kind: "approver", approverKey: "neil", password: "another-password" } })));

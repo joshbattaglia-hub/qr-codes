@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { classifyImport, rowsFromDocument } from "../netlify/lib/site-import.mjs";
+import { classifyImport, planImport, rowsFromDocument } from "../netlify/lib/site-import.mjs";
 
 process.env.ADMIN_PASSWORD = "test-pass";
 delete process.env.NETLIFY_AUTH_TOKEN;
@@ -129,6 +129,44 @@ test("a sites document keeps spellings, holds, and unknown state without inferri
   const unknown = supplied.plan.filter((row) => row.sourceFlags.includes("geographic_state_unknown"));
   assert.equal(unknown.length, 17);
   assert.equal(unknown.every((row) => row.geographicState === "" && row.geographicState !== row.operationalRegion), true);
+});
+
+test("a live dry-run reads existing sites and a second apply keeps ids and links", async () => {
+  const existing = await read(await sitesFn(req("POST", "/api/sites", { cookie, body: { name: "Keep Link" } })));
+  const code = await read(await codesFn(req("POST", "/api/codes", { cookie, body: { url: "https://example.com/keep", name: "Keep code", siteId: existing.body.id } })));
+  await staffFn(req("POST", "/api/staff", { cookie, body: { name: "Una", email: "una-import@example.com", password: "manager-pass-1", siteIds: [existing.body.id] } }));
+  const staffBefore = JSON.stringify(await read(await staffFn(req("GET", "/api/staff", { cookie }))));
+  const inner = lib.sitesStore();
+  let writes = 0;
+  const watching = {
+    get: (...args) => inner.get(...args),
+    getWithMetadata: (...args) => inner.getWithMetadata(...args),
+    list: (...args) => inner.list(...args),
+    delete: (...args) => inner.delete(...args),
+    setJSON: async (...args) => { writes += 1; return inner.setJSON(...args); },
+  };
+  const conflict = rowsFromDocument({ sites: [{ loc_id: "777", name: "Not Keep", address: "1 Keep Street", operational_region: "NORTH", operational_region_parent: "NORTH", operational_region_sub: "A", geographic_state: "VIC", import_disposition: "CLEAR", source_section_fidelity: "exact" }] });
+  const preview = await planImport(watching, conflict, { apply: false });
+  assert.equal(preview.storeRead, true);
+  assert.equal(preview.wrote, false);
+  assert.equal(writes, 0);
+  assert.equal(preview.report.counts.create, 1);
+  const first = await planImport(inner, conflict, { apply: true });
+  const createdId = first.report.rows[0].siteId;
+  const stored = await inner.get(createdId, { type: "json" });
+  assert.equal(stored.operationalRegionParent, "NORTH");
+  assert.equal(stored.sourceSectionFidelity, "exact");
+  assert.equal(stored.name, "Not Keep");
+  const second = await planImport(inner, conflict, { apply: true });
+  assert.equal(second.report.counts.unchanged, 1);
+  assert.equal(second.report.counts.create, 0);
+  assert.equal((await inner.get(createdId, { type: "json" })).id, createdId);
+  assert.equal((await read(await codesFn(req("GET", "/api/codes/" + code.body.slug, { cookie })))).body.code.siteId, existing.body.id);
+  assert.equal(JSON.stringify(await read(await staffFn(req("GET", "/api/staff", { cookie })))), staffBefore);
+  const clash = rowsFromDocument({ sites: [{ loc_id: "777", name: "Different", address: "9 Other", operational_region: "SOUTH", geographic_state: "QLD", import_disposition: "CLEAR" }] });
+  const held = await planImport(inner, clash, { apply: true });
+  assert.equal(held.report.rows[0].status, "held");
+  assert.equal((await inner.get(createdId, { type: "json" })).name, "Not Keep");
 });
 
 test("managers cannot import and the runner refuses a write without env credentials", async () => {

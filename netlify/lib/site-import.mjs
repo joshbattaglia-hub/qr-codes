@@ -30,6 +30,9 @@ export function rowsFromDocument(doc) {
       name: raw(row?.name, 120),
       address: raw(row?.address, 240),
       operationalRegion: raw(row?.operational_region ?? row?.operationalRegion, 80),
+      operationalRegionParent: raw(row?.operational_region_parent ?? row?.operationalRegionParent, 80),
+      operationalRegionSub: raw(row?.operational_region_sub ?? row?.operationalRegionSub, 80),
+      sourceSectionFidelity: raw(row?.source_section_fidelity ?? row?.sourceSectionFidelity, 80),
       geographicState: stateUnknown ? "" : stateRaw,
       sourceRef: raw(row?.raw_line || row?.sourceRef || "", 500),
       sourceName: raw(row?.name, 120),
@@ -46,7 +49,7 @@ export function isSiteRecord(row) {
 }
 
 function additive(existing, incoming) {
-  const fields = ["loc", "address", "operationalRegion", "geographicState", "sourceRef", "sourceName"];
+  const fields = ["loc", "address", "operationalRegion", "operationalRegionParent", "operationalRegionSub", "geographicState", "sourceRef", "sourceName", "sourceSectionFidelity"];
   const patch = {};
   const incomingFlags = incoming.sourceFlags || [];
   const existingFlags = Array.isArray(existing.sourceFlags) ? existing.sourceFlags : [];
@@ -80,6 +83,9 @@ export function classifyImport(existingSites, inputRows) {
       name: raw(row?.name, 120),
       address: raw(row?.address, 240),
       operationalRegion: raw(row?.operationalRegion, 80),
+      operationalRegionParent: raw(row?.operationalRegionParent, 80),
+      operationalRegionSub: raw(row?.operationalRegionSub, 80),
+      sourceSectionFidelity: raw(row?.sourceSectionFidelity, 80),
       geographicState,
       sourceRef: raw(row?.sourceRef, 500),
       sourceName: raw(row?.sourceName, 120) || raw(row?.name, 120),
@@ -201,6 +207,17 @@ export async function readSites(store) {
   return rows.filter(isSiteRecord);
 }
 
+export async function planImport(store, inputRows, { apply = false } = {}) {
+  const before = await readSites(store);
+  if (!apply) {
+    const report = classifyImport(before, inputRows);
+    return { dryRun: true, storeRead: true, wrote: false, sitesBefore: before.length, report };
+  }
+  const report = await applyImport(store, inputRows);
+  const after = await readSites(store);
+  return { dryRun: false, storeRead: true, wrote: true, sitesBefore: before.length, sitesAfter: after.length, report };
+}
+
 export async function applyImport(store, inputRows) {
   const before = await readSites(store);
   const classified = classifyImport(before, inputRows);
@@ -215,9 +232,12 @@ export async function applyImport(store, inputRows) {
         loc: row.loc,
         address: row.address,
         operationalRegion: row.operationalRegion,
+        operationalRegionParent: row.operationalRegionParent || "",
+        operationalRegionSub: row.operationalRegionSub || "",
         geographicState: row.geographicState,
         sourceRef: row.sourceRef,
         sourceName: row.sourceName,
+        sourceSectionFidelity: row.sourceSectionFidelity || "",
         sourceFlags: row.sourceFlags || [],
       };
       const gate = await store.setJSON("loc/" + crypto.createHash("sha256").update(normLoc(row.loc)).digest("hex"), { id }, { onlyIfNew: true });

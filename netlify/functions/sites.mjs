@@ -6,7 +6,7 @@ import { applyImport, auditView, classifyImport, isSiteRecord, readSites, rowsFr
 
 function publicSite(site) {
   const out = { id: site.id, name: site.name, created: site.created };
-  for (const key of ["loc", "address", "operationalRegion", "geographicState", "sourceRef", "sourceName"]) {
+  for (const key of ["loc", "address", "operationalRegion", "operationalRegionParent", "operationalRegionSub", "geographicState", "sourceRef", "sourceName", "sourceSectionFidelity"]) {
     if (site[key]) out[key] = site[key];
   }
   if (Array.isArray(site.sourceFlags) && site.sourceFlags.length) out.sourceFlags = site.sourceFlags;

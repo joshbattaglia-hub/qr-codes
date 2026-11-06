@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { getStore } from "@netlify/blobs";
-import { applyImport, auditView, classifyImport, readSites, rowsFromDocument } from "../netlify/lib/site-import.mjs";
+import { auditView, classifyImport, planImport, readSites, rowsFromDocument } from "../netlify/lib/site-import.mjs";
 
 const args = process.argv.slice(2);
 const fileFlag = args.indexOf("--file");
@@ -29,16 +29,23 @@ if (!siteID || !token) {
   process.exit(0);
 }
 const store = getStore({ name: "sites", siteID, token, consistency: "strong" });
-const report = apply ? await applyImport(store, input || []) : classifyImport(await readSites(store), input || []);
+if (args.includes("--readback")) {
+  const sites = await readSites(store);
+  console.log(JSON.stringify({ readback: true, wrote: false, sites: sites.length, locs: sites.filter((site) => site.loc).length }, null, 2));
+  process.exit(0);
+}
+const planned = await planImport(store, input || [], { apply });
+const report = planned.report;
 if (report.error) {
   console.error(report.error);
   process.exit(1);
 }
-const after = await readSites(store);
 console.log(JSON.stringify({
-  dryRun: !apply,
+  dryRun: planned.dryRun,
   storeRead: true,
+  wrote: planned.wrote,
+  sitesBefore: planned.sitesBefore,
   ...auditView(report),
   rows: report.rows,
-  readback: { sites: after.length, locsPresent: report.readback.locsPresent },
+  readback: planned.dryRun ? report.readback : { sites: planned.sitesAfter, locsPresent: report.readback.locsPresent },
 }, null, 2));

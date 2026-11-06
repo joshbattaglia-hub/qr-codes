@@ -116,9 +116,16 @@ export async function identityStatus() {
   };
 }
 
-export async function bindIdentity(body, suppliedToken) {
+export function approverBindAllowed() {
+  return env("ALLOW_FIXTURE_IDENTITY_BIND") === "1";
+}
+
+export async function bindIdentity(body, suppliedToken, { privilegedSession = false } = {}) {
   if (!tokenMatches(suppliedToken)) {
     return { status: 403, error: "Verified identity binding is not configured. Set IDENTITY_BIND_TOKEN. No account was created." };
+  }
+  if (privilegedSession) {
+    return { status: 403, error: "The shared head-office password or a staff session cannot bind an identity. No account was created." };
   }
   const password = String(body?.password || "");
   if (password.length < 10) return { status: 400, error: "Password must be at least 10 characters" };
@@ -142,6 +149,9 @@ export async function bindIdentity(body, suppliedToken) {
     created: new Date().toISOString(),
   };
   if (kind === "approver") {
+    if (!approverBindAllowed()) {
+      return { status: 403, error: "No identity provider is configured. IDENTITY_BIND_TOKEN cannot assign Neil or Joshua. Approver binding stays closed until an external provider asserts the fixed email." };
+    }
     const key = String(body?.approverKey || "");
     const fact = APPROVER_FACTS[key];
     if (!fact) return { status: 400, error: "Approver must be neil or joshua" };

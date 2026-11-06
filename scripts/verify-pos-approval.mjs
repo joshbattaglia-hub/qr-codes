@@ -6,6 +6,7 @@ process.env.ADMIN_PASSWORD = "liberty-dev";
 process.env.PUBLIC_URL = "https://expresshelp.site";
 process.env.IDENTITY_BIND_TOKEN = "fixture-bind-token-value";
 process.env.IDENTITY_SESSION_SECRET = "fixture-session-secret-value";
+process.env.ALLOW_FIXTURE_IDENTITY_BIND = "1";
 process.env.POS_MAIL_MOCK = "1";
 delete process.env.RESEND_API_KEY;
 delete process.env.RESEND_FROM;
@@ -45,7 +46,7 @@ try {
   const ids = await page.evaluate(async () => {
     const site = await (await fetch("/api/sites", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Mail Fixture" }) })).json();
     const headers = { "content-type": "application/json", "x-identity-bind-token": "fixture-bind-token-value" };
-    const bind = (body) => fetch("/api/identity/bind", { method: "POST", headers, body: JSON.stringify(body) }).then((res) => res.json());
+    const bind = (body) => fetch("/api/identity/bind", { method: "POST", credentials: "omit", headers, body: JSON.stringify(body) }).then((res) => res.json());
     const preparer = await bind({ kind: "preparer", preparerClass: "regional-business-manager", displayName: "Fixture RBM", contactEmail: "requester@fixture.test", password: "preparer-pass-1", siteIds: [site.id] });
     await bind({ kind: "approver", approverKey: "neil", password: "neil-pass-123", siteIds: [site.id] });
     await bind({ kind: "approver", approverKey: "joshua", password: "joshua-pass-123", siteIds: [site.id] });

@@ -1,6 +1,6 @@
 import { json } from "../lib/lib.mjs";
 import { clearCookie } from "../lib/lib.mjs";
-import { clearStaffCookie, forbidden, jsonCookies, originBlocked, unauthorised } from "../lib/access.mjs";
+import { actorFrom, clearStaffCookie, forbidden, jsonCookies, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest, bindIdentity, clearIdentityCookie, identityStatus, loginIdentity } from "../lib/identity.mjs";
 import { mailConfigured, mailMode, mailSetupMessage } from "../lib/mail.mjs";
 
@@ -30,7 +30,8 @@ export default async (req) => {
   }
   if (path === "/api/identity/bind" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
-    const result = await bindIdentity(body, req.headers.get("x-identity-bind-token") || "");
+    const caller = await actorFrom(req);
+    const result = await bindIdentity(body, req.headers.get("x-identity-bind-token") || "", { privilegedSession: caller?.role === "head" || caller?.role === "manager" });
     if (result.status !== 201) return json(result.status, { error: result.error });
     return json(201, { identity: result.identity });
   }
