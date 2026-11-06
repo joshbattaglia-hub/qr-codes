@@ -9,7 +9,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
-html{scroll-padding-top:80px}
+html{scroll-padding-top:80px;overflow-x:clip}
 body{font-family:Inter,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14.5px;line-height:1.45;color-scheme:light;overflow-x:clip}
 button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -82,6 +82,11 @@ input[type="color"]{width:44px;height:40px;padding:4px;flex:none}
 .check{display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:500}
 .check input{width:16px;height:16px}
 .info-banner{margin-top:14px;background:#e7f6fb;border-radius:10px;padding:10px 12px;color:#3d4c5f}
+.warn-banner{margin:0 0 14px;background:#fff6e8;border:1px solid #f5d7a8;border-radius:10px;padding:10px 12px}
+fieldset{border:1px solid var(--line);border-radius:12px;margin:12px 0;padding:8px 12px 12px}
+[data-testid="pos-preview"]{min-width:0}
+[data-testid="pos-preview"] img{display:block;width:100%;max-width:100%;height:auto}
+legend{padding:0 6px;font-weight:600}
 .workflow{background:linear-gradient(180deg,#fff 0%,#f6f1fb 100%)}
 .spark{display:flex;align-items:center;gap:8px;font-weight:700;color:#3b2f88}
 .pill{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:#fff;border:1px solid #e4e7ec;border-radius:999px;padding:10px 14px;margin-top:10px}

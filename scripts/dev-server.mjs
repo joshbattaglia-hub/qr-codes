@@ -19,6 +19,7 @@ const staffFn = (await import("../netlify/functions/staff.mjs")).default;
 const vouchersFn = (await import("../netlify/functions/vouchers.mjs")).default;
 const healthFn = (await import("../netlify/functions/health.mjs")).default;
 const templatesFn = (await import("../netlify/functions/templates.mjs")).default;
+const posFn = (await import("../netlify/functions/pos-drafts.mjs")).default;
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
 const GEO = {
@@ -67,6 +68,7 @@ export function start(port = 8888) {
       }
       if (url.pathname === "/api/health" || url.pathname.startsWith("/api/health/")) return send(res, await healthFn(request));
       if (url.pathname === "/api/templates" || url.pathname.startsWith("/api/templates/")) return send(res, await templatesFn(request));
+      if (url.pathname === "/api/pos-drafts" || url.pathname.startsWith("/api/pos-drafts/")) return send(res, await posFn(request));
       if (url.pathname === "/api/codes" || url.pathname.startsWith("/api/codes/")) {
         const slug = url.pathname === "/api/codes" ? undefined : decodeURIComponent(url.pathname.slice("/api/codes/".length));
         return send(res, await codesFn(request, { params: { slug } }));

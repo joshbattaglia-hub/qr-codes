@@ -39,6 +39,7 @@ export const staffStore = () => openStore("staff");
 export const templatesStore = () => openStore("templates");
 export const vouchersStore = () => openStore("vouchers");
 export const healthStore = () => openStore("health");
+export const posDrafts = () => openStore("pos-drafts");
 export const rateStore = () => openStore("auth-rate");
 
 /**
