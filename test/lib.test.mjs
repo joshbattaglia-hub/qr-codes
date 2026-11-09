@@ -143,6 +143,29 @@ test("country codes and names group into one row without rewriting stored keys",
   assert.equal(lib.groupedCountryStats(next).days[day].scan.country.AU, 9);
   assert.equal(lib.statsForList(next).days[day].scan.country.AU, 9);
   assert.equal(next.days[day].scan.country.Australia, 6);
+  const live = {
+    v: 2,
+    days: {
+      [day]: {
+        scan: { n: 12, u: [], browser: {}, os: {}, device: {}, country: { AU: 10, Australia: 1, IT: 1 }, city: {}, referrer: {} },
+        click: { n: 0, u: [], browser: {}, os: {}, device: {}, country: {}, city: {}, referrer: {} },
+      },
+    },
+  };
+  const liveBefore = JSON.stringify(live);
+  const liveView = collect(live, [day], "scan");
+  assert.equal(liveView.country.AU, 11);
+  assert.equal(liveView.country.IT, 1);
+  assert.equal(liveView.country.Australia, undefined);
+  assert.equal(JSON.stringify(live), liveBefore);
+  const namedOnly = recordHit(null, { day, at: "2026-11-05T04:00:00.000Z", channel: "scan", country: "Australia" });
+  assert.deepEqual(namedOnly.days[day].scan.country, { AU: 1 });
+  const unmapped = recordHit(null, { day, at: "2026-11-05T05:00:00.000Z", channel: "scan", country: "Not A Country" });
+  assert.deepEqual(unmapped.days[day].scan.country, { Unknown: 1 });
+  const nameOnly = lib.readGeo({ country: { name: "Australia" } });
+  assert.equal(nameOnly.countryCode, "");
+  const fromName = recordHit(null, { day, at: "2026-11-05T06:00:00.000Z", channel: "scan", country: nameOnly.countryCode || nameOnly.countryName || "Unknown" });
+  assert.deepEqual(fromName.days[day].scan.country, { AU: 1 });
 });
 
 test("sydney calendar buckets late UTC evenings onto the next local day", () => {

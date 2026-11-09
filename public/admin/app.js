@@ -177,14 +177,24 @@ async function entraLoginState() {
     box.textContent = status.testIssuer ? "Local test issuer only. This is not the workplace tenant." : "Work account sign-in is configured. Access still depends on a verified object id.";
   } catch { box.textContent = "Microsoft sign-in is not operational."; }
 }
-function showLogin(message) {
+function showLogin(message, focusEmail) {
   $("#boot").classList.add("hidden");
   $("#shell").classList.add("hidden");
   $("#login").classList.remove("hidden");
   const err = $("#login-error");
   if (err) err.textContent = message || "";
   entraLoginState();
-  otpLoginState();
+  Promise.resolve(otpLoginState()).then(() => {
+    if (!focusEmail) return;
+    document.getElementById("otp-card")?.scrollIntoView({ block: "center" });
+    document.getElementById("otp-email")?.focus();
+  });
+}
+function paintAvatar() {
+  const name = String(state.actor?.name || state.settings?.workspaceName || "Liberty").trim();
+  const letter = (name.match(/[A-Za-z0-9]/) || ["L"])[0].toUpperCase();
+  const avatar = document.querySelector(".avatar");
+  if (avatar) avatar.textContent = letter;
 }
 async function otpLoginState() {
   const box = $("#otp-setup");
@@ -2112,6 +2122,7 @@ async function onSettings(form) {
     state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ workspaceName: data.workspaceName, defaultFg: fg, defaultBg: bg }) });
     $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
     $("#account-label").innerHTML = "<strong>" + esc(state.settings.workspaceName) + "</strong><div class='muted small'>Admin session</div>";
+    paintAvatar();
     toast("Saved");
     render({ refetch: false, keepScroll: true });
   } catch (e) { toast(e.message); }
@@ -2218,14 +2229,11 @@ async function handleAction(el) {
     return;
   }
   if (act === "visitor-email-signin") {
-    if (state.actor?.kind !== "verified-identity") {
-      await api("/api/auth", { method: "DELETE" });
-      state.actor = { authenticated: false };
-      state.codes = [];
-      state.detail = null;
-    }
-    showLogin();
-    document.getElementById("otp-email")?.focus();
+    await api("/api/auth", { method: "DELETE" });
+    state.actor = { authenticated: false };
+    state.codes = [];
+    state.detail = null;
+    showLogin("", true);
     return;
   }
   if (act === "logout") {
@@ -2667,6 +2675,7 @@ async function enter() {
   $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
   const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : state.actor.role === "preparer" ? "Preparer" : "No access") + (state.actor.provider === "otp" ? " · email code" : "") : state.actor?.role === "manager" ? "Site manager" : "Head office";
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
+  paintAvatar();
   ensureRanges();
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();

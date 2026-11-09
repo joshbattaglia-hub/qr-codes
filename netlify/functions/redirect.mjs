@@ -35,7 +35,7 @@ export default async (req, context) => {
       day: dayKey(),
       channel: channelFor(normalized, qrFlag),
       os, device, browser,
-      country: geo.countryCode || "Unknown",
+      country: geo.countryCode || geo.countryName || "Unknown",
       city: geo.city || "Unknown",
       referrer: ref,
       visitor,

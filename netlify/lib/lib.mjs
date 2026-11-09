@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
-import { countryGroupKey, groupCountryMap } from "../../public/admin/country.mjs";
+import { countryGroupKey, countryWriteKey, groupCountryMap } from "../../public/admin/country.mjs";
 
 /** Product calendar for scan buckets. Matches the Liberty / expresshelp.site audience. */
 export const METRICS_TZ = "Australia/Sydney";
@@ -305,7 +305,7 @@ export function recordHit(raw, hit) {
   addDim(b.browser, hit.browser);
   addDim(b.os, hit.os);
   addDim(b.device, hit.device);
-  addDim(b.country, countryGroupKey(hit.country || "Unknown"));
+  addDim(b.country, countryWriteKey(hit.country || "Unknown"));
   addDim(b.city, hit.city || "Unknown");
   addDim(b.referrer, hit.referrer || "Direct / QR scan");
   if (hit.visitor) {

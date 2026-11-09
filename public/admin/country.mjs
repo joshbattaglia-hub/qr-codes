@@ -78,6 +78,12 @@ export function countryGroupKey(value) {
   return NAMES[text.toLowerCase()] || text;
 }
 
+/** New scans store an ISO-2 code. A name that does not map is not written as a new label. */
+export function countryWriteKey(value) {
+  const key = countryGroupKey(value);
+  return /^[A-Z]{2}$/.test(key) ? key : "Unknown";
+}
+
 export function groupCountryMap(map) {
   const out = {};
   for (const [name, count] of Object.entries(map || {})) {

@@ -56,7 +56,7 @@ export function parseVisitorAccess(raw = env("VISITOR_ACCESS_MAP")) {
 export function visitorCapability(actor) {
   const access = parseVisitorAccess();
   if (!actor || actor.kind !== "verified-identity" || access.error === "site-scope-not-used") return false;
-  if (actor.provider === "otp" && access.joshuaOtp && String(actor.email || "").trim().toLowerCase() === JOSHUA_EMAIL) return true;
+  if (actor.provider === "otp" && access.joshuaOtp && String(actor.email || "").toLowerCase() === JOSHUA_EMAIL) return true;
   if (actor.provider === "entra" && access.joshuaEntraOid && String(actor.oid || "").toLowerCase() === access.joshuaEntraOid) return true;
   return false;
 }
