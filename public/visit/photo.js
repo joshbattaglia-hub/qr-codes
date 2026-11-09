@@ -1,4 +1,10 @@
-(function () {
+import { jpegOrientation, jpegPixelSize } from "./orientation.mjs";
+
+const MAX_EDGE = 1600;
+const MAX_BYTES = 1_000_000;
+const STILL_TOO_LARGE = "That photo is still too large after it was reduced. Take it again from a little farther away, or choose a smaller photo.";
+
+function bind() {
   const camera = document.getElementById("photo-camera");
   const library = document.getElementById("photo-library");
   const preview = document.getElementById("photo-preview");
@@ -34,28 +40,76 @@
     return "";
   }
 
-  async function toJpeg(file) {
-    const bitmap = await createImageBitmap(file);
-    const edge = Math.max(bitmap.width, bitmap.height);
-    const scale = edge > 1600 ? 1600 / edge : 1;
+  function drawOriented(bitmap, orientation, edge) {
+    const swapped = orientation >= 5;
+    const srcW = bitmap.width;
+    const srcH = bitmap.height;
+    const orientedW = swapped ? srcH : srcW;
+    const orientedH = swapped ? srcW : srcH;
+    const scale = Math.min(1, edge / Math.max(orientedW, orientedH));
+    const dw = Math.max(1, Math.round(orientedW * scale));
+    const dh = Math.max(1, Math.round(orientedH * scale));
+    const tw = Math.max(1, Math.round(srcW * scale));
+    const th = Math.max(1, Math.round(srcH * scale));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, dw, dh);
+    switch (orientation) {
+      case 2: ctx.transform(-1, 0, 0, 1, tw, 0); break;
+      case 3: ctx.transform(-1, 0, 0, -1, tw, th); break;
+      case 4: ctx.transform(1, 0, 0, -1, 0, th); break;
+      case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+      case 6: ctx.transform(0, 1, -1, 0, th, 0); break;
+      case 7: ctx.transform(0, -1, -1, 0, th, tw); break;
+      case 8: ctx.transform(0, -1, 1, 0, 0, tw); break;
+      default: break;
+    }
+    ctx.drawImage(bitmap, 0, 0, tw, th);
+    return canvas;
+  }
+
+  async function blobFrom(bitmap, orientation, edge, quality) {
+    const canvas = drawOriented(bitmap, orientation, edge);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
     if (!blob) throw new Error("unread");
-    return new File([blob], "id-photo.jpg", { type: "image/jpeg" });
+    return blob;
+  }
+
+  async function compress(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const raw = jpegPixelSize(bytes);
+    let orientation = jpegOrientation(bytes);
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: "none" });
+    } catch {
+      bitmap = await createImageBitmap(file);
+    }
+    if (raw && orientation >= 5 && bitmap.width === raw.height && bitmap.height === raw.width) orientation = 1;
+    try {
+      for (const edge of [MAX_EDGE, 1280, 1024]) {
+        for (const quality of [0.8, 0.6, 0.5]) {
+          const blob = await blobFrom(bitmap, orientation, edge, quality);
+          if (blob.size <= MAX_BYTES) return new File([blob], "id-photo.jpg", { type: "image/jpeg" });
+        }
+      }
+    } finally {
+      bitmap.close?.();
+    }
+    throw new Error(STILL_TOO_LARGE);
   }
 
   async function prepare(file) {
     if (!file || !file.size) throw new Error("A photo of the ID is required. Use Take photo or Choose photo.");
     const kind = await sniff(file);
-    if (kind === "jpeg" || kind === "png") return file;
     const heic = kind === "heic" || looksHeic(file);
     try {
-      return await toJpeg(file);
-    } catch {
+      return await compress(file);
+    } catch (err) {
+      if (err && err.message === STILL_TOO_LARGE) throw err;
       if (heic) throw new Error("This photo is HEIC and this browser could not convert it. Take a new photo, or set the phone camera to Most Compatible and choose a JPEG.");
       throw new Error("That photo could not be read. Use Take photo or Choose photo again.");
     }
@@ -65,13 +119,14 @@
     if (error) error.textContent = "";
     try {
       const ready = await prepare(file);
+      if (!ready || ready.size > MAX_BYTES) throw new Error(STILL_TOO_LARGE);
       clearPreview();
       selected = ready;
       previewUrl = URL.createObjectURL(ready);
       preview.src = previewUrl;
       preview.alt = "Preview of the selected ID photo";
       preview.hidden = false;
-      note.textContent = ready === file ? "Photo ready." : "Converted to JPEG for upload.";
+      note.textContent = "Photo ready.";
     } catch (err) {
       clearPreview();
       camera.value = "";
@@ -83,4 +138,6 @@
   camera.addEventListener("change", () => { if (camera.files && camera.files[0]) useFile(camera.files[0]); });
   library.addEventListener("change", () => { if (library.files && library.files[0]) useFile(library.files[0]); });
   window.visitorIdPhoto = () => selected;
-})();
+}
+
+bind();

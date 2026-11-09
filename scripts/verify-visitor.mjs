@@ -75,13 +75,43 @@ try {
   await page.type("[name=name]", "Synthetic Visitor");
   await page.type("[name=phone]", "0400000000");
   await page.type("[name=company]", "Synthetic Co");
+  const wide = Buffer.alloc(64 * 16 * 4);
+  for (let y = 0; y < 16; y += 1) {
+    for (let x = 0; x < 64; x += 1) {
+      const i = (y * 64 + x) * 4;
+      const left = x < 32;
+      wide[i] = left ? 255 : 0;
+      wide[i + 2] = left ? 0 : 255;
+      wide[i + 3] = 255;
+    }
+  }
+  const oriented = jpeg.encode({ data: wide, width: 64, height: 16 }, 90).data;
+  const entry = Buffer.alloc(12);
+  entry.writeUInt16LE(0x0112, 0);
+  entry.writeUInt16LE(3, 2);
+  entry.writeUInt32LE(1, 4);
+  entry.writeUInt16LE(6, 8);
+  const tiff = Buffer.concat([Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00]), entry, Buffer.from([0, 0, 0, 0])]);
+  const payload = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+  const app1 = Buffer.alloc(4 + payload.length);
+  app1[0] = 0xff;
+  app1[1] = 0xe1;
+  app1.writeUInt16BE(payload.length + 2, 2);
+  payload.copy(app1, 4);
+  const turned = Buffer.concat([oriented.subarray(0, 2), app1, oriented.subarray(2)]);
+  const big = jpeg.encode({ data: Buffer.alloc(2400 * 1800 * 4, 180), width: 2400, height: 1800 }, 90).data;
   const photo = jpeg.encode({ data: Buffer.alloc(4 * 4 * 4, 200), width: 4, height: 4 }, 80).data;
   const file = path.join("/tmp", "synthetic-id.jpg");
   fs.writeFileSync(file, photo);
+  const bigFile = path.join("/tmp", "synthetic-large.jpg");
+  const turnedFile = path.join("/tmp", "synthetic-turned.jpg");
+  fs.writeFileSync(bigFile, big);
+  fs.writeFileSync(turnedFile, turned);
   const boxes = await page.$$eval(".photo-action", (els) => els.map((el) => el.getBoundingClientRect().height));
   assert(boxes.length === 2 && boxes.every((height) => height >= 44), "chromium photo controls are smaller than 44px: " + boxes.join(","));
   const heic = path.join("/tmp", "synthetic-id.heic");
   fs.writeFileSync(heic, Buffer.concat([Buffer.from("....ftypheic"), Buffer.alloc(24)]));
+  await page.waitForFunction(() => typeof window.visitorIdPhoto === "function");
   await (await page.$("[data-testid=visit-photo]")).uploadFile(heic);
   await page.waitForFunction(() => document.body.innerText.includes("This photo is HEIC"));
   assert((await page.$eval("#photo-preview", (el) => el.hidden)) === true, "HEIC preview was shown");
@@ -109,6 +139,28 @@ try {
   const libraryCapture = await page.$eval("#photo-library", (el) => el.hasAttribute("capture"));
   assert(cameraCapture === "environment" && libraryCapture === false, "camera and library inputs are not separate");
   await shot(page, "visit-sign-in-mobile");
+  await page.waitForFunction(() => typeof window.visitorIdPhoto === "function");
+  await (await page.$("[data-testid=visit-photo]")).uploadFile(bigFile);
+  await page.waitForFunction(() => document.body.innerText.includes("Photo ready."));
+  const reduced = await page.evaluate(() => {
+    const img = document.querySelector("#photo-preview");
+    return { w: img.naturalWidth, h: img.naturalHeight, size: window.visitorIdPhoto().size, hidden: img.hidden };
+  });
+  assert(reduced.hidden === false && Math.max(reduced.w, reduced.h) <= 1600 && reduced.size > 0 && reduced.size <= 1_000_000, JSON.stringify(reduced));
+  await page.evaluate(() => { document.getElementById("photo-note").textContent = ""; });
+  await (await page.$("[data-testid=visit-photo]")).uploadFile(turnedFile);
+  await page.waitForFunction(() => document.getElementById("photo-note").textContent.includes("Photo ready."));
+  const turnedPixels = await page.evaluate(() => {
+    const img = document.querySelector("#photo-preview");
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const top = ctx.getImageData(Math.floor(canvas.width / 2), 1, 1, 1).data;
+    return { w: canvas.width, h: canvas.height, r: top[0], b: top[2] };
+  });
+  assert(turnedPixels.h > turnedPixels.w && turnedPixels.r > turnedPixels.b, JSON.stringify(turnedPixels));
   await page.type("[data-testid=visit-location]", "Synthetic route");
   await page.type("[name=name]", "Synthetic Route");
   await page.type("[name=phone]", "0400000001");

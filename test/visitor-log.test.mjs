@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import jpeg from "jpeg-js";
 import { PNG } from "pngjs";
+import { jpegOrientation } from "../public/visit/orientation.mjs";
 
 process.env.ADMIN_PASSWORD = "test-pass";
 process.env.PUBLIC_URL = "https://expresshelp.site";
@@ -862,4 +863,56 @@ test("name and company sign out one active visit and refuse a missing or duplica
   const audits = JSON.stringify(await Promise.all((await lib.visitorStore().list({ prefix: "audit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" }))));
   assert.equal(audits.includes("0411222003"), false);
   assert.equal(audits.includes("Twin Co"), false);
+});
+
+test("a 12MP camera frame is too large until the phone reduces it under the upload limits", () => {
+  const sof = Buffer.alloc(19);
+  sof[0] = 0xff;
+  sof[1] = 0xc0;
+  sof.writeUInt16BE(17, 2);
+  sof[4] = 8;
+  sof.writeUInt16BE(3024, 5);
+  sof.writeUInt16BE(4032, 7);
+  sof[9] = 3;
+  const twelve = Buffer.concat([Buffer.from([0xff, 0xd8]), sof, Buffer.from([0xff, 0xd9])]);
+  assert.equal(4032 * 3024 > 12_000_000, true);
+  assert.equal(imageLib.reencodeVisitorPhoto(twelve).error, "The photo is too large.");
+  const width = 1600;
+  const height = 1200;
+  const data = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      data[i] = x & 255;
+      data[i + 1] = y & 255;
+      data[i + 2] = (x + y) & 255;
+      data[i + 3] = 255;
+    }
+  }
+  const encoded = jpeg.encode({ data, width, height }, 80);
+  assert.ok(encoded.data.length < 1_000_000);
+  const saved = imageLib.reencodeVisitorPhoto(Buffer.from(encoded.data));
+  assert.equal(saved.error, undefined);
+  assert.ok(saved.bytes.length <= 1_500_000);
+  const base64Length = Math.ceil(encoded.data.length / 3) * 4;
+  assert.ok(base64Length < 12_000_000);
+  const entry = Buffer.alloc(12);
+  entry.writeUInt16LE(0x0112, 0);
+  entry.writeUInt16LE(3, 2);
+  entry.writeUInt32LE(1, 4);
+  entry.writeUInt16LE(6, 8);
+  const tiff = Buffer.concat([
+    Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00]),
+    entry,
+    Buffer.from([0, 0, 0, 0]),
+  ]);
+  const payload = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+  const app1 = Buffer.alloc(4 + payload.length);
+  app1[0] = 0xff;
+  app1[1] = 0xe1;
+  app1.writeUInt16BE(payload.length + 2, 2);
+  payload.copy(app1, 4);
+  const marked = Buffer.concat([encoded.data.subarray(0, 2), app1, encoded.data.subarray(2)]);
+  assert.equal(jpegOrientation(marked), 6);
+  assert.equal(jpegOrientation(encoded.data), 1);
 });
