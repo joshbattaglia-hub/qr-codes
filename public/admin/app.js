@@ -1667,6 +1667,7 @@ function visitorPage() {
 async function paintVisitor() {
   const box = document.getElementById("visitor-body");
   if (!box) return;
+  if (route().id) return paintVisitorRecord(route().id);
   const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
   if (!readiness?.granted) {
     box.innerHTML = '<h2>Not available</h2><p data-testid="visitor-denied">Visitor records, ID photos, settings, history, and export are limited to Joshua\'s explicit visitor-log access. The shared password and POS roles do not open them.</p>';
@@ -1683,7 +1684,7 @@ async function paintVisitor() {
   if (location) params.set("location", location);
   const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
   const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
-  const rows = (listed.visits || []).map((visit) => '<tr><td>' + esc(visit.location) + '</td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>').join("");
+  const rows = (listed.visits || []).map((visit) => '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>').join("");
   box.innerHTML = '<p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open for this test configuration.") + '</p>'
     + '<p class="muted">General form: <a href="/visit">/visit</a></p>'
     + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
@@ -1700,6 +1701,35 @@ async function paintVisitor() {
   if (events && settings.events) events.value = settings.events;
   const statusSelect = document.getElementById("visitor-status");
   if (statusSelect) statusSelect.value = status || "all";
+}
+async function paintVisitorRecord(id) {
+  const box = document.getElementById("visitor-body");
+  const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
+  if (!readiness?.granted) {
+    box.innerHTML = '<h2>Not available</h2><p data-testid="visitor-denied">Visitor records, ID photos, settings, history, and export are limited to Joshua\'s explicit visitor-log access. The shared password and POS roles do not open them.</p>';
+    return;
+  }
+  const response = await fetch("/api/visitor-log/visits/" + encodeURIComponent(id), { credentials: "same-origin" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    box.innerHTML = '<p data-testid="visitor-missing">' + esc(body.error || "That record is not available.") + '</p><p><button class="btn ghost" type="button" data-go="visitors">Back</button></p>';
+    return;
+  }
+  const visit = body.visit;
+  box.innerHTML = '<p><button class="btn ghost" type="button" data-go="visitors">Back</button></p>'
+    + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + '</h2>'
+    + '<p>' + esc(visit.name) + ' · ' + esc(visit.phone) + ' · ' + esc(visit.company) + '</p>'
+    + '<p>Signed in ' + esc(visit.signedInMelbourne) + '</p>'
+    + '<p>Signed out ' + esc(visit.signedOutMelbourne || "Still on site") + '</p>'
+    + '<p>Shell card ' + (visit.cardReturned ? "returned" : "not recorded") + '</p>'
+    + '<p>Photo ' + esc(visit.photoStatus) + '</p>'
+    + (visit.issues ? '<p>' + esc(visit.issues) + '</p>' : '')
+    + (visit.review ? '<p data-testid="visitor-review">Flagged for review: ' + esc(visit.review) + '</p>' : '')
+    + (visit.photoStatus === "stored" ? '<button class="btn" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID photo</button>' : '')
+    + '<p class="err">Deleting removes the written record and the ID photo. This cannot be undone in Express Help.</p>'
+    + '<label class="check"><input id="visitor-delete-confirm" type="checkbox"> I understand this permanently deletes the record.</label>'
+    + '<button class="btn danger" type="button" data-act="visitor-delete" data-id="' + esc(visit.id) + '">Delete record</button>'
+    + '</div><p id="visitor-note" class="small"></p>';
 }
 async function visitorAction(button) {
   const act = button.dataset.act;
@@ -1732,6 +1762,17 @@ async function visitorAction(button) {
     const body = await response.json().catch(() => ({}));
     const note = document.getElementById("visitor-note");
     if (note) note.textContent = response.ok ? "Replacement receipt, shown once: " + body.receipt : (body.error || "Recovery failed");
+    return;
+  }
+  if (act === "visitor-delete") {
+    if (!document.getElementById("visitor-delete-confirm")?.checked) throw new Error("Confirm the permanent deletion first.");
+    const response = await fetch("/api/visitor-log/visits/" + encodeURIComponent(button.dataset.id) + "/delete", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirm: "DELETE" }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "The record was not deleted");
+    location.hash = "#/visitors";
     return;
   }
   if (act === "visitor-save") {

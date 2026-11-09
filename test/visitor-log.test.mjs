@@ -58,11 +58,12 @@ sheetLib.setVisitorSheetFetch(async (url, init) => {
   return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
 });
 
-function req(method, url, { cookie = "", body, origin, ip, raw } = {}) {
+function req(method, url, { cookie = "", body, origin, ip, raw, forwarded } = {}) {
   const headers = new Headers();
   if (cookie) headers.set("cookie", cookie);
   if (origin) headers.set("origin", origin);
   if (ip) headers.set("x-nf-client-connection-ip", ip);
+  if (forwarded) headers.set("x-forwarded-for", forwarded);
   if (body !== undefined || raw !== undefined) headers.set("content-type", "application/json");
   return new Request("https://expresshelp.site" + url, { method, headers, body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined });
 }
@@ -110,29 +111,51 @@ test("visitor access is Joshua-only and ignores site directory grants", () => {
   process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
 });
 
-test("the public form stays closed while never-signed-out photo retention is undecided", async () => {
+test("new records stay closed until the access map and sheet exist, and retention is not an env switch", async () => {
+  delete process.env.VISITOR_ACCESS_MAP;
+  delete process.env.VISITOR_SHEETS_SPREADSHEET_ID;
+  process.env.VISITOR_COLLECT = "1";
+  process.env.VISITOR_OPEN_VISIT_PHOTO_DAYS = "1";
+  const closed = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(closed.body.open, false);
+  assert.ok(closed.body.blockers.includes("access-map-missing"));
+  assert.ok(closed.body.blockers.includes("sheet-not-configured"));
+  assert.equal(closed.body.blockers.includes("open-visit-photo-retention-unresolved"), false);
+  assert.match(closed.body.notice, /90 days after sign-out/);
+  assert.match(closed.body.notice, /90 days after sign-in/);
+  assert.match(closed.body.notice, /until Joshua deletes/);
+  assert.equal(closed.body.textRetention, "until Joshua deletes the record");
+  assert.equal(closed.headers.get("cache-control"), "private, no-store");
+  const refused = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { location: "Shell Suburb", name: "Pat", phone: "0412345678", company: "ACME", photo: photoBytes().toString("base64") }, ip: "203.0.113.10" })));
+  assert.equal(refused.status, 403);
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
   process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
   process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
   process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
-  visitLib.setVisitorTestHooks({ collect: false });
-  const status = await read(await publicFn(req("GET", "/api/visit/status")));
-  assert.equal(status.body.open, false);
-  assert.ok(status.body.blockers.includes("open-visit-photo-retention-unresolved"));
-  assert.match(status.body.notice, /90 days/);
-  assert.match(status.body.notice, /after you sign out/i);
-  assert.match(status.body.notice, /has not been decided/);
-  assert.equal(status.body.textRetention, "not-authorised");
-  assert.equal(status.body.sheetSharing, "none");
-  assert.equal(status.headers.get("cache-control"), "private, no-store");
-  const closed = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { location: "Shell Suburb", name: "Pat", phone: "0412345678", company: "ACME", photo: photoBytes().toString("base64") }, ip: "203.0.113.10" })));
-  assert.equal(closed.status, 403);
+  const ready = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(ready.body.open, true, JSON.stringify(ready.body.blockers));
+  assert.equal(visitLib.PHOTO_RETENTION_MS, 90 * 24 * 60 * 60 * 1000);
 });
 
 test("photos are re-encoded and unsafe files are rejected", () => {
   const jpegPhoto = imageLib.reencodeVisitorPhoto(photoBytes());
   assert.equal(jpegPhoto.contentType, "image/jpeg");
   assert.equal(jpegPhoto.bytes.includes(Buffer.from("GPSLatitude")), false);
+  assert.equal(jpegPhoto.bytes.includes(Buffer.from([0xff, 0xe1])), false);
   assert.equal(jpegPhoto.bytes[0], 0xff);
+  const bomb = Buffer.alloc(32, 0);
+  bomb[0] = 0xff; bomb[1] = 0xd8; bomb[2] = 0xff; bomb[3] = 0xc0;
+  bomb.writeUInt16BE(17, 4);
+  bomb[6] = 8;
+  bomb.writeUInt16BE(20000, 7);
+  bomb.writeUInt16BE(20000, 9);
+  assert.match(imageLib.reencodeVisitorPhoto(bomb).error, /too large/);
+  const pngBomb = Buffer.alloc(32, 0);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(pngBomb);
+  pngBomb.write("IHDR", 12, "ascii");
+  pngBomb.writeUInt32BE(100000, 16);
+  pngBomb.writeUInt32BE(100000, 20);
+  assert.match(imageLib.reencodeVisitorPhoto(pngBomb).error, /too large/);
   const png = new PNG({ width: 2, height: 2 });
   png.data.fill(255);
   const raw = PNG.sync.write(png);
@@ -171,8 +194,10 @@ test("sign-in, sign-out, sheet row, and Joshua-only access", async () => {
   const sheetValues = sheetLib.sheetRowValues(visit, () => "time");
   assert.equal(sheetValues[1].startsWith("'="), true);
   assert.equal(sheetValues[10], "");
-  assert.equal(sheetValues[11], "app-record:" + visit.id);
-  assert.equal(String(sheetValues[11]).includes("http"), false);
+  assert.equal(sheetValues[11], "https://expresshelp.site/admin#/visitors/" + visit.id);
+  assert.equal(sheetValues[11].includes("?"), false);
+  assert.equal(sheetValues[11].includes("photo/"), false);
+  assert.equal(sheetValues[11].includes(created.body.receipt), false);
   const headLogin = await authFn(req("POST", "/api/auth", { body: { password: "test-pass" } }));
   const head = cookieNamed(headLogin, "qr_admin");
   const headList = await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: head })));
@@ -232,13 +257,19 @@ test("cleanup deletes a signed-out photo after 90 days and leaves text and open 
   const openId = (await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => blob.key).find(async () => true);
   const all = await lib.visitorStore().list({ prefix: "visit/" });
   const openVisit = (await Promise.all(all.blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row.name === "Still Here");
-  clock += 200 * 24 * 60 * 60 * 1000;
+  const beforeDeadline = clock + visitLib.PHOTO_RETENTION_MS - 1;
+  await visitLib.runVisitorCleanup(beforeDeadline);
+  const stillOpen = await lib.visitorStore().get("visit/" + openVisit.id, { type: "json" });
+  assert.equal(stillOpen.photoStatus, "stored");
+  clock += visitLib.PHOTO_RETENTION_MS;
   await visitLib.runVisitorCleanup(clock);
   const still = await lib.visitorStore().get("visit/" + openVisit.id, { type: "json" });
   assert.equal(still.signedOutAt, "");
   assert.equal(still.cardReturned, false);
-  assert.equal(still.photoStatus, "stored");
+  assert.equal(still.photoStatus, "purged");
+  assert.equal(still.review, "open-photo-expired");
   assert.equal(still.name, "Still Here");
+  assert.equal(await lib.visitorStore().get("photo/" + openVisit.id, { type: "json" }), null);
   const signed = await read(await publicFn(req("POST", "/api/visit/sign-in", {
     body: { location: "Closed site", name: "Done", phone: "0411000000", company: "ACME", photo: photoBytes().toString("base64") },
     ip: "203.0.113.41",
@@ -310,4 +341,223 @@ test("concurrent sign-out keeps one timestamp and an unknown mail result is not 
   await visitLib.runVisitorCleanup();
   assert.equal(calls.filter((message) => message.text.includes(visit.id) && message.subject.includes("sign-out")).length, 1);
   setMailTransport(async (message) => { sentMail.push(message); return { status: "sent", id: "local-mock" }; });
+});
+
+test("open photos expire 90 days after sign-in, a late sign-out cannot restore them, and Joshua can delete the text", async () => {
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  let clock = Date.parse("2026-06-01T00:00:00.000Z");
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  otpLib.setOtpTestHooks({ now: () => clock, deliver: async (message) => { otpMail.push(message); return { status: "sent", id: "local-mock" }; } });
+  const grid = [];
+  const seen = [];
+  let appends = 0;
+  let throwAfterAppend = true;
+  sheetLib.setVisitorSheetAfterAppend(async () => { if (throwAfterAppend) { throwAfterAppend = false; throw new Error("timeout"); } });
+  sheetLib.setVisitorSheetFetch(async (url, init) => {
+    seen.push(init.method + " " + url);
+    const decoded = decodeURIComponent(String(url));
+    if (decoded.includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    const body = init.body ? JSON.parse(init.body) : null;
+    if (decoded.includes("Visits!A1") && init.method === "GET") return new Response(JSON.stringify({ values: [["visit_id"]] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (decoded.includes(":append")) {
+      assert.match(decoded, /valueInputOption=RAW/);
+      appends += 1;
+      grid.push(body.values[0]);
+      return new Response(JSON.stringify({ updates: { updatedRange: "Visits!A" + (grid.length + 1) + ":O" + (grid.length + 1) } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (decoded.includes("Visits!A:A") && init.method === "GET") {
+      return new Response(JSON.stringify({ values: [["visit_id"], ...grid.map((row) => [row[0]])] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (init.method === "PUT") {
+      assert.match(decoded, /valueInputOption=RAW/);
+      const row = Number(decoded.match(/A(\d+)/)[1]) - 2;
+      if (row >= 0) grid[row] = body.values[0];
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
+  });
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "=cmd", name: "Expiry", phone: "0411888000", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.70",
+  })));
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(appends, 1, seen.join("\n"));
+  const visit = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.name === "Expiry");
+  assert.equal(visit.sheetSync, "unknown");
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal(appends, 1);
+  assert.equal(grid.length, 1);
+  assert.equal(grid[0][1].startsWith("'="), true);
+  assert.equal(grid[0][11], "https://expresshelp.site/admin#/visitors/" + visit.id);
+  clock += visitLib.PHOTO_RETENTION_MS - 1;
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal((await lib.visitorStore().get("visit/" + visit.id, { type: "json" })).photoStatus, "stored");
+  clock += 1;
+  const lateAndCleanup = await Promise.all([
+    publicFn(req("POST", "/api/visit/sign-out", { body: { receipt: created.body.receipt, cardReturned: true }, ip: "203.0.113.71" })),
+    visitLib.runVisitorCleanup(clock),
+  ]);
+  const late = await read(lateAndCleanup[0]);
+  assert.equal(late.status, 200);
+  const after = await lib.visitorStore().get("visit/" + visit.id, { type: "json" });
+  assert.equal(after.photoStatus, "purged");
+  assert.equal(after.cardReturned, true);
+  assert.equal(await lib.visitorStore().get("photo/" + visit.id, { type: "json" }), null);
+  const joshua = await otpCookie(JOSHUA, "203.0.113.72");
+  const hidden = await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visit.id + "/photo", { cookie: joshua })));
+  assert.equal(hidden.status, 404);
+  const record = await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visit.id, { cookie: joshua })));
+  assert.equal(record.status, 200);
+  assert.equal(record.body.visit.name, "Expiry");
+  assert.equal(record.body.recordUrl, grid[0][11]);
+  const headLogin = await authFn(req("POST", "/api/auth", { body: { password: "test-pass" } }));
+  const denied = await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visit.id, { cookie: cookieNamed(headLogin, "qr_admin") })));
+  assert.equal(denied.status, 403);
+  const removed = await read(await adminFn(req("POST", "/api/visitor-log/visits/" + visit.id + "/delete", { cookie: joshua, body: { confirm: "DELETE" } })));
+  assert.equal(removed.status, 200);
+  const gone = await lib.visitorStore().get("visit/" + visit.id, { type: "json" });
+  assert.equal(gone.deleted, true);
+  assert.equal(gone.name, undefined);
+  assert.equal(gone.phone, undefined);
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal(appends, 1);
+  assert.equal(grid[0][2], "");
+  assert.equal(grid[0][12], "deleted");
+  const audits = JSON.stringify(await Promise.all((await lib.visitorStore().list({ prefix: "audit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" }))));
+  assert.equal(audits.includes("0411888000"), false);
+  assert.equal(audits.includes(created.body.receipt), false);
+  sheetLib.setVisitorSheetAfterAppend(null);
+});
+
+test("a failed photo delete is retried, a failed visit write rolls back, and fresh uploads are not treated as orphans", async () => {
+  let clock = Date.parse("2026-08-01T00:00:00.000Z");
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  visitLib.setVisitorFaults({ failVisitWrite: 1 });
+  const failed = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Rollback", name: "No Record", phone: "0411333444", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.80",
+  })));
+  assert.equal(failed.status, 503);
+  const names = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).map((row) => row && row.name);
+  assert.equal(names.includes("No Record"), false);
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Keep", name: "Keep Photo", phone: "0411333555", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.81",
+  })));
+  assert.equal(created.status, 200);
+  await publicFn(req("POST", "/api/visit/sign-out", { body: { receipt: created.body.receipt, cardReturned: true }, ip: "203.0.113.82" }));
+  const visit = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.name === "Keep Photo");
+  clock = Date.parse(visit.signedOutAt) + visitLib.PHOTO_RETENTION_MS;
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  visitLib.setVisitorFaults({ failPhotoDelete: 20 });
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal((await lib.visitorStore().get("visit/" + visit.id, { type: "json" })).photoStatus, "stored");
+  assert.ok(await lib.visitorStore().get("photo/" + visit.id, { type: "json" }));
+  visitLib.setVisitorFaults({ failPhotoDelete: 0 });
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal((await lib.visitorStore().get("visit/" + visit.id, { type: "json" })).photoStatus, "purged");
+  await lib.visitorStore().setJSON("photo/orphan-old", { storedAt: new Date(clock - 60 * 60 * 1000).toISOString(), bytes: "eA==" });
+  await lib.visitorStore().setJSON("photo/orphan-new", { storedAt: new Date(clock).toISOString(), bytes: "eA==" });
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal(await lib.visitorStore().get("photo/orphan-old", { type: "json" }), null);
+  assert.ok(await lib.visitorStore().get("photo/orphan-new", { type: "json" }));
+  const cleanup = await import("../netlify/functions/visitor-cleanup.mjs");
+  assert.equal(cleanup.config.schedule, "0 16 * * *");
+  let blocked = 0;
+  const sample = { location: "Rate", name: "Rate", phone: "0411000111", company: "ACME", photo: photoBytes().toString("base64") };
+  for (let i = 0; i < 9; i++) {
+    const res = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample, forwarded: "198.51.100." + i })));
+    if (res.status === 429) blocked += 1;
+  }
+  assert.equal(blocked, 1);
+  otpLib.setOtpTestHooks({ now: () => Date.parse("2026-04-01T00:00:00.000Z"), deliver: async (message) => { otpMail.push(message); return { status: "sent", id: "local-mock" }; } });
+  const joshua = await otpCookie(JOSHUA, "203.0.113.90");
+  const before = await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: joshua })));
+  assert.equal(before.status, 200);
+  await authFn(req("DELETE", "/api/auth", { cookie: joshua }));
+  const after = await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: joshua })));
+  assert.equal(after.status, 401);
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: false });
+  const restored = await otpCookie(JOSHUA, "203.0.113.91");
+  const denied = await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: restored })));
+  assert.equal(denied.status, 403);
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+});
+
+test("an in-flight sheet append and a pending notification cannot restore a deleted record", async () => {
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  const clock = Date.parse("2026-10-01T00:00:00.000Z");
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  const grid = [];
+  let appends = 0;
+  sheetLib.setVisitorSheetAfterAppend(async () => {
+    const id = grid.at(-1)[0];
+    await lib.visitorStore().setJSON("visit/" + id, { id, deleted: true, deletedAt: new Date(clock).toISOString(), photoStatus: "purged", sheetSync: "pending", generation: 2 });
+  });
+  sheetLib.setVisitorSheetFetch(async (url, init) => {
+    const decoded = decodeURIComponent(String(url));
+    if (decoded.includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    const body = init.body ? JSON.parse(init.body) : null;
+    if (decoded.includes("Visits!A1") && init.method === "GET") return new Response(JSON.stringify({ values: [["visit_id"]] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (decoded.includes(":append")) {
+      appends += 1;
+      grid.push(body.values[0]);
+      return new Response(JSON.stringify({ updates: { updatedRange: "Visits!A" + (grid.length + 1) + ":O" + (grid.length + 1) } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (decoded.includes("Visits!A:A") && init.method === "GET") return new Response(JSON.stringify({ values: [["visit_id"], ...grid.map((row) => [row[0]])] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (init.method === "PUT") {
+      const row = Number(decoded.match(/A(\d+)/)[1]) - 2;
+      if (row >= 0) grid[row] = body.values[0];
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
+  });
+  const overlapped = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Fence", name: "Must Not Remain", phone: "0411777000", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.100",
+  })));
+  assert.equal(overlapped.status, 200, JSON.stringify(overlapped.body));
+  assert.equal(appends, 1);
+  assert.equal(grid[0][2], "");
+  assert.equal(grid[0][3], "");
+  assert.equal(grid[0][12], "deleted");
+  assert.equal(grid[0].join("").includes("0411777000"), false);
+  sheetLib.setVisitorSheetAfterAppend(null);
+  const joshua = await otpCookie(JOSHUA, "203.0.113.101");
+  const saved = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "in" } })));
+  assert.equal(saved.status, 200);
+  const mail = [];
+  setMailTransport(async (message) => { mail.push(message); return { status: "sent", id: "local-mock" }; });
+  visitLib.setVisitorTestHooks({
+    collect: true,
+    now: () => clock,
+    beforeNotifySend: async (visit) => {
+      await visitLib.deleteVisit({ kind: "verified-identity", provider: "otp", email: JOSHUA, id: "otp:test" }, visit.id);
+    },
+  });
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Quiet", name: "Do Not Mail", phone: "0411666000", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.102",
+  })));
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(mail.length, 0);
+  const visit = await lib.visitorStore().get("visit/" + grid.at(-1)[0], { type: "json" });
+  assert.equal(visit.deleted, true);
+  assert.equal(visit.name, undefined);
+  assert.equal(await lib.visitorStore().get("photo/" + visit.id, { type: "json" }), null);
+  assert.equal((await lib.visitorStore().get("notify/" + visit.id + "/in", { type: "json" })).status, "suppressed");
+  assert.equal(grid.at(-1)[2], "");
+  assert.equal(grid.at(-1)[12], "deleted");
+  assert.equal(appends, 2);
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal(appends, 2);
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  setMailTransport(async (message) => { sentMail.push(message); return { status: "sent", id: "local-mock" }; });
+  await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, events: "both" } }));
 });

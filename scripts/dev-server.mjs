@@ -84,8 +84,8 @@ export function start(port = 8888) {
       if (url.pathname === "/api/health" || url.pathname.startsWith("/api/health/")) return send(res, await healthFn(request));
       if (url.pathname === "/api/templates" || url.pathname.startsWith("/api/templates/")) return send(res, await templatesFn(request));
       if (url.pathname === "/api/pos-drafts" || url.pathname.startsWith("/api/pos-drafts/")) return send(res, await posFn(request));
-      if (url.pathname.startsWith("/api/visit")) return send(res, await visitPublicFn(request));
-      if (url.pathname.startsWith("/api/visitor-log")) return send(res, await visitAdminFn(request));
+      if (url.pathname === "/api/visitor-log" || url.pathname.startsWith("/api/visitor-log/")) return send(res, await visitAdminFn(request));
+      if (url.pathname === "/api/visit" || url.pathname.startsWith("/api/visit/")) return send(res, await visitPublicFn(request));
       if (url.pathname === "/api/visitor-cleanup") return send(res, await visitCleanupFn(request));
       if (url.pathname.startsWith("/api/identity/otp")) return send(res, await otpFn(request));
       if (url.pathname.startsWith("/api/identity/entra")) return send(res, await entraFn(request));

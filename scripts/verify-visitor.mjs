@@ -82,6 +82,40 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes("Shell card return was recorded"));
   await shot(page, "visit-synthetic-signed-out-mobile");
   assert(receipt && !receipt.includes("http"), receipt);
+  process.env.OTP_SESSION_SECRET = "local-otp-session-secret-32-characters";
+  process.env.OTP_ALLOWLIST = JSON.stringify({ "jbattaglia@libertyretail.com.au": { approverKey: "joshua", preparerClass: "joshua", siteIds: ["s00000001"] } });
+  const otp = await import("../netlify/lib/otp.mjs");
+  const inbox = [];
+  otp.setOtpTestHooks({ deliver: async (message) => { inbox.push(message); return { status: "sent", id: "local-mock" }; } });
+  const { visitorStore } = await import("../netlify/lib/lib.mjs");
+  const stored = await visitorStore().list({ prefix: "visit/" });
+  let record = null;
+  for (const blob of stored.blobs) {
+    const row = await visitorStore().get(blob.key, { type: "json" });
+    if (row && row.location === "Synthetic suburb") record = row;
+  }
+  assert(record && record.id && record.receiptHash !== receipt, "synthetic visit missing");
+  await page.setViewport({ width: 1280, height: 900 });
+  await page.goto("http://127.0.0.1:8920/admin#/visitors/" + record.id, { waitUntil: "networkidle0" });
+  await page.waitForFunction(() => document.body.innerText.includes("shared password"));
+  await page.evaluate(() => fetch("/api/auth", { method: "DELETE", credentials: "same-origin" }));
+  await page.goto("http://127.0.0.1:8920/admin", { waitUntil: "networkidle0" });
+  await page.waitForSelector("#otp-email");
+  await page.type("#otp-email", "jbattaglia@libertyretail.com.au");
+  await page.click("#otp-send");
+  await page.waitForSelector("#otp-code", { visible: true });
+  const code = inbox.at(-1).text.match(/code is (\d{8})/)[1];
+  await page.type("#otp-code", code);
+  await page.click("#otp-verify");
+  await page.waitForFunction(() => (document.querySelector("#account-label")?.textContent || "").includes("email code"));
+  await page.goto("http://127.0.0.1:8920/admin#/visitors/" + record.id, { waitUntil: "networkidle0" });
+  await page.waitForFunction(() => document.body.innerText.includes("Synthetic suburb"));
+  await page.waitForSelector("[data-testid=visitor-record]");
+  await shot(page, "visitor-joshua-record-desktop");
+  await page.click("#visitor-delete-confirm");
+  await page.click("[data-act=visitor-delete]");
+  await page.waitForFunction(() => document.body.innerText.includes("No visits."));
+  await shot(page, "visitor-joshua-deleted-desktop");
   console.log("visitor ui ok");
 } finally {
   await browser.close();

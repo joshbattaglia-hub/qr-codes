@@ -73,7 +73,8 @@ export function reencodeVisitorPhoto(input) {
   }
   if (kind === "png") {
     const size = pngSize(buf);
-    if (!size || !withinBounds(size.width, size.height)) return { error: "The photo is too large." };
+    if (!size) return { error: "The photo could not be read." };
+    if (!withinBounds(size.width, size.height)) return { error: "The photo is too large." };
     let decoded;
     try { decoded = PNG.sync.read(buf); }
     catch { return { error: "The photo could not be read." }; }
