@@ -114,12 +114,14 @@ test("visitor access is Joshua-only and ignores site directory grants", () => {
 test("new records stay closed until the access map and sheet exist, and retention is not an env switch", async () => {
   delete process.env.VISITOR_ACCESS_MAP;
   delete process.env.VISITOR_SHEETS_SPREADSHEET_ID;
+  delete process.env.VISITOR_COLLECTION;
   process.env.VISITOR_COLLECT = "1";
   process.env.VISITOR_OPEN_VISIT_PHOTO_DAYS = "1";
   const closed = await read(await publicFn(req("GET", "/api/visit/status")));
   assert.equal(closed.body.open, false);
   assert.ok(closed.body.blockers.includes("access-map-missing"));
   assert.ok(closed.body.blockers.includes("sheet-not-configured"));
+  assert.ok(closed.body.blockers.includes("collection-closed"));
   assert.equal(closed.body.blockers.includes("open-visit-photo-retention-unresolved"), false);
   assert.match(closed.body.notice, /90 days after sign-out/);
   assert.match(closed.body.notice, /90 days after sign-in/);
@@ -132,6 +134,14 @@ test("new records stay closed until the access map and sheet exist, and retentio
   process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
   process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
   process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  const held = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(held.body.open, false, JSON.stringify(held.body.blockers));
+  assert.ok(held.body.blockers.includes("collection-closed"));
+  assert.equal(held.body.collection, "closed");
+  process.env.VISITOR_COLLECTION = "yes";
+  const wrong = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(wrong.body.open, false);
+  process.env.VISITOR_COLLECTION = "open";
   const ready = await read(await publicFn(req("GET", "/api/visit/status")));
   assert.equal(ready.body.open, true, JSON.stringify(ready.body.blockers));
   assert.equal(visitLib.PHOTO_RETENTION_MS, 90 * 24 * 60 * 60 * 1000);
@@ -170,6 +180,7 @@ test("photos are re-encoded and unsafe files are rejected", () => {
 });
 
 test("sign-in, sign-out, sheet row, and Joshua-only access", async () => {
+  process.env.VISITOR_COLLECTION = "open";
   visitLib.setVisitorTestHooks({ collect: true });
   const bytes = photoBytes();
   const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
@@ -604,4 +615,144 @@ test("the sheet private key accepts a multiline PEM and the JSON escaped form", 
   assert.equal(crypto.verify("RSA-SHA256", Buffer.from(header + "." + payload), pub, Buffer.from(signature, "base64url")), true);
   assert.equal(assertion.includes(pem), false);
   assert.equal(assertion.includes("\\n"), false);
+});
+
+test("the sheet connection check stays closed, writes one synthetic row, and does not reveal the key", async () => {
+  otpLib.setOtpTestHooks({ now: () => Date.parse("2027-01-01T00:00:00.000Z"), deliver: async (message) => { otpMail.push(message); return { status: "sent", id: "local-mock" }; } });
+  delete process.env.VISITOR_COLLECTION;
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = "********";
+  let calls = 0;
+  sheetLib.setVisitorSheetFetch(async () => { calls += 1; return new Response("{}", { status: 500 }); });
+  const joshua = await otpCookie(JOSHUA, "203.0.113.110");
+  const masked = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(masked.body.stage, "key-invalid");
+  assert.equal(calls, 0);
+  assert.equal(JSON.stringify(masked.body).includes("*"), false);
+  assert.deepEqual(Object.keys(masked.body).sort(), ["ok", "stage"]);
+  const spoof = new Request("https://expresshelp.site/api/visitor-log/sheet-check", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-nf-event": "schedule" },
+    body: JSON.stringify({ confirm: "CHECK" }),
+  });
+  assert.equal((await read(await adminFn(spoof))).status, 401);
+  const headLogin = await authFn(req("POST", "/api/auth", { body: { password: "test-pass" } }));
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: cookieNamed(headLogin, "qr_admin"), body: { confirm: "CHECK" } })))).status, 403);
+  const neil = await otpCookie(NEIL, "203.0.113.111");
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: neil, body: { confirm: "CHECK" } })))).status, 403);
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" }, origin: "https://evil.example" })))).status, 403);
+  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/sheet-check", { cookie: joshua })))).status, 405);
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: {} })))).status, 400);
+
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = pem.replaceAll("\n", "\\n");
+  const grid = [["visit_id"]];
+  let appends = 0;
+  let throwAppend = false;
+  let hold = null;
+  let releaseHold = () => {};
+  let waiting = false;
+  sheetLib.setVisitorSheetFetch(async (url, init) => {
+    calls += 1;
+    if (String(url).includes("oauth2.googleapis.com")) {
+      const payload = JSON.parse(Buffer.from(new URLSearchParams(String(init.body)).get("assertion").split(".")[1], "base64url").toString());
+      assert.equal(payload.scope, "https://www.googleapis.com/auth/spreadsheets");
+      assert.equal(String(init.body).includes("PRIVATE KEY"), false);
+      return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const decoded = decodeURIComponent(String(url));
+    assert.equal(decoded.includes("/drive"), false);
+    if (decoded.includes("Visits!A:A") && init.method === "GET") return new Response(JSON.stringify({ values: grid.map((row) => [row[0]]) }), { status: 200, headers: { "content-type": "application/json" } });
+    if (decoded.includes(":append")) {
+      appends += 1;
+      grid.push(JSON.parse(init.body).values[0]);
+      waiting = true;
+      if (throwAppend) throw new Error("lost response");
+      if (hold) await hold;
+      return new Response(JSON.stringify({ updates: { updatedRange: "Visits!A" + grid.length + ":O" + grid.length } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const range = decoded.match(/Visits!A(\d+):O\1/);
+    if (range && init.method === "GET") return new Response(JSON.stringify({ values: [grid[Number(range[1]) - 1] || []] }), { status: 200, headers: { "content-type": "application/json" } });
+    if (range && init.method === "PUT") {
+      grid[Number(range[1]) - 1] = JSON.parse(init.body).values[0];
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (decoded.includes("Visits!A1") && init.method === "GET") return new Response(JSON.stringify({ values: [grid[0]] }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response("{}", { status: 400, headers: { "content-type": "application/json" } });
+  });
+  const mailBefore = sentMail.length;
+  const checked = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(checked.body.ok, true, JSON.stringify(checked.body));
+  assert.equal(checked.body.stage, "verified");
+  assert.equal(appends, 1);
+  assert.equal(JSON.stringify(checked.body).includes("0400000000"), false);
+  assert.equal(JSON.stringify(checked.body).includes("PROBE"), false);
+  assert.equal(sentMail.length, mailBefore);
+  const again = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(again.body.stage, "verified");
+  assert.equal(appends, 1);
+  const names = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).map((row) => row && row.name);
+  assert.equal(names.includes("PROBE"), false);
+  const evidence = await lib.visitorStore().get("sheet-probe/last", { type: "json" });
+  assert.equal(evidence.stage, "verified");
+  assert.equal(JSON.stringify(evidence).includes("0400000000"), false);
+  const closed = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(closed.body.open, false);
+  assert.ok(closed.body.blockers.includes("collection-closed"));
+  const refused = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { location: "Closed", name: "No", phone: "0411000002", company: "ACME", photo: photoBytes().toString("base64") }, ip: "203.0.113.112" })));
+  assert.equal(refused.status, 403);
+
+  grid.length = 1;
+  throwAppend = true;
+  const unknown = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(unknown.body.stage, "append-unknown");
+  assert.equal(appends, 2);
+  throwAppend = false;
+  const recovered = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(recovered.body.stage, "verified");
+  assert.equal(appends, 2);
+
+  grid.length = 1;
+  waiting = false;
+  hold = new Promise((resolve) => { releaseHold = resolve; });
+  const pending = adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } }));
+  await new Promise((resolve) => {
+    const timer = setInterval(() => { if (waiting) { clearInterval(timer); resolve(); } }, 5);
+  });
+  const busy = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(busy.body.stage, "busy");
+  releaseHold();
+  hold = null;
+  const finished = await read(await pending);
+  assert.equal(finished.body.stage, "verified");
+  assert.equal(appends, 3);
+
+  sheetLib.setVisitorSheetFetch(async (url) => {
+    if (String(url).includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response("{}", { status: 403, headers: { "content-type": "application/json" } });
+  });
+  const denied = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(denied.body.stage, "sheet-denied");
+  assert.equal(JSON.stringify(denied.body).includes("sheet-id"), false);
+  sheetLib.setVisitorSheetFetch(async (url) => {
+    if (String(url).includes("oauth2.googleapis.com")) return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response("{}", { status: 400, headers: { "content-type": "application/json" } });
+  });
+  const missingTab = await read(await adminFn(req("POST", "/api/visitor-log/sheet-check", { cookie: joshua, body: { confirm: "CHECK" } })));
+  assert.equal(missingTab.body.stage, "tab-missing");
+
+  process.env.VISITOR_COLLECTION = "open";
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Still open", name: "Existing", phone: "0411000003", company: "ACME", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.113",
+  })));
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  delete process.env.VISITOR_COLLECTION;
+  const signed = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { receipt: created.body.receipt, cardReturned: true }, ip: "203.0.113.114" })));
+  assert.equal(signed.status, 200);
+  const stillClosed = await read(await publicFn(req("GET", "/api/visit/status")));
+  assert.equal(stillClosed.body.open, false);
+  process.env.VISITOR_COLLECTION = "open";
 });

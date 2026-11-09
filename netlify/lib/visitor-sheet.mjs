@@ -148,6 +148,90 @@ async function writeRow(row, values) {
   return sheets("PUT", "Visits!A" + row + ":O" + row, "valueInputOption=RAW", { values: [values] });
 }
 
+export const SHEET_PROBE_ID = "v00000000000000000000000000000001";
+const SHEET_PROBE_STAGES = new Set([
+  "verified", "key-invalid", "oauth-failed", "sheet-denied", "sheet-missing", "tab-missing",
+  "append-failed", "append-unknown", "read-failed", "readback-mismatch", "clear-failed", "clear-unverified", "busy",
+]);
+const PROBE_ROW = [SHEET_PROBE_ID, "SYNTHETIC", "PROBE", "0400000000", "PROBE", "", "", "", "", "", "", "", "probe", "", ""];
+
+function probeStage(status, fallback) {
+  if (status === 401) return "oauth-failed";
+  if (status === 403) return "sheet-denied";
+  if (status === 404) return "sheet-missing";
+  if (status === 400) return "tab-missing";
+  return fallback;
+}
+
+function probeResult(ok, stage) {
+  return { ok: ok === true, stage: SHEET_PROBE_STAGES.has(stage) ? stage : "read-failed" };
+}
+
+function rowIsProbe(cells) {
+  return cells[0] === SHEET_PROBE_ID && cells[1] === "SYNTHETIC" && cells[2] === "PROBE" && cells[3] === "0400000000" && cells[4] === "PROBE" && cells[12] === "probe";
+}
+
+function rowIsClear(cells) {
+  return cells[0] === SHEET_PROBE_ID && !cells[1] && !cells[2] && !cells[3] && !cells[4] && cells[12] === "deleted";
+}
+
+export async function runSheetConnectionProbe() {
+  if (!sheetConfigured()) return probeResult(false, "key-invalid");
+  try { crypto.sign("RSA-SHA256", Buffer.from("sheet-probe"), sheetPrivateKey()); }
+  catch { return probeResult(false, "key-invalid"); }
+  const store = visitorStore();
+  const lockKey = "sheet-probe/lock";
+  let held = false;
+  const acquired = await store.setJSON(lockKey, { at: Date.now() }, { onlyIfNew: true });
+  if (acquired?.modified === true) held = true;
+  else {
+    const meta = await store.getWithMetadata(lockKey, { type: "json", consistency: "strong" });
+    const age = Number(meta?.data?.at) ? Date.now() - Number(meta.data.at) : 0;
+    if (!meta?.etag || age < 120000) return probeResult(false, "busy");
+    await store.delete(lockKey);
+    const again = await store.setJSON(lockKey, { at: Date.now() }, { onlyIfNew: true });
+    if (again?.modified !== true) return probeResult(false, "busy");
+    held = true;
+  }
+  let sentAppend = false;
+  try {
+    const header = await sheets("GET", "Visits!A1");
+    if (!header.ok) return probeResult(false, probeStage(header.status, "read-failed"));
+    if (header.body.values?.[0]?.[0] !== "visit_id") {
+      const wrote = await sheets("PUT", "Visits!A1:O1", "valueInputOption=RAW", { values: [SHEET_HEADERS] });
+      if (!wrote.ok) return probeResult(false, probeStage(wrote.status, "append-failed"));
+    }
+    const found = await findRow(SHEET_PROBE_ID);
+    if (found.error) return probeResult(false, probeStage(found.error, "read-failed"));
+    let row = found.row;
+    if (!row) {
+      sentAppend = true;
+      const appended = await sheets("POST", "Visits!A:O", "valueInputOption=RAW&insertDataOption=INSERT_ROWS", { values: [PROBE_ROW] }, ":append");
+      if (!appended.ok) return probeResult(false, probeStage(appended.status, appended.status >= 500 ? "append-unknown" : "append-failed"));
+      row = rowNumber(appended.body.updates?.updatedRange);
+      if (!row) {
+        const again = await findRow(SHEET_PROBE_ID);
+        if (again.error || !again.row) return probeResult(false, "append-unknown");
+        row = again.row;
+      }
+    }
+    const read = await sheets("GET", "Visits!A" + row + ":O" + row);
+    if (!read.ok) return probeResult(false, probeStage(read.status, "read-failed"));
+    const cells = read.body.values?.[0] || [];
+    if (!rowIsProbe(cells) && !rowIsClear(cells)) return probeResult(false, "readback-mismatch");
+    const cleared = await writeRow(row, deletedRowValues(SHEET_PROBE_ID));
+    if (!cleared.ok) return probeResult(false, probeStage(cleared.status, "clear-failed"));
+    const check = await sheets("GET", "Visits!A" + row + ":O" + row);
+    if (!check.ok) return probeResult(false, probeStage(check.status, "clear-unverified"));
+    if (!rowIsClear(check.body.values?.[0] || [])) return probeResult(false, "clear-unverified");
+    return probeResult(true, "verified");
+  } catch {
+    return probeResult(false, sentAppend ? "append-unknown" : "read-failed");
+  } finally {
+    if (held) await store.delete(lockKey);
+  }
+}
+
 export async function syncVisitRow(visit, melbourne) {
     if (!sheetConfigured()) return { status: "not-configured" };
   const store = visitorStore();
