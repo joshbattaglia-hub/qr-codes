@@ -775,6 +775,12 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(signIn.includes("When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation."), true);
   assert.equal(signIn.includes('id="in-done" hidden'), true);
   assert.equal(signIn.includes("/api/visit/sign-in"), true);
+  assert.equal(signIn.includes("Any issues to report"), false);
+  assert.equal(signOut.includes("Any issues to report"), true);
+  assert.equal(signOut.includes('data-testid="visit-out-issues"'), true);
+  assert.equal(signOut.includes('visit-out-issues" required'), false);
+  assert.equal(both.split('id="in-form"')[1].split('id="in-done"')[0].includes("Any issues to report"), false);
+  assert.equal(both.includes('data-testid="visit-out-issues"'), true);
   assert.match(signIn, /href="\/visit\/sign-out">Sign out</);
   assert.equal(signIn.includes("Sign out with a receipt"), false);
   assert.equal(signIn.includes("existing receipt"), false);
@@ -915,4 +921,55 @@ test("a 12MP camera frame is too large until the phone reduces it under the uplo
   const marked = Buffer.concat([encoded.data.subarray(0, 2), app1, encoded.data.subarray(2)]);
   assert.equal(jpegOrientation(marked), 6);
   assert.equal(jpegOrientation(encoded.data), 1);
+});
+
+test("sign-out issues are kept beside sign-in issues and do not leak on a failed match", async () => {
+  process.env.VISITOR_COLLECTION = "open";
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  visitLib.setVisitorTestHooks({ collect: true, now: () => Date.parse("2027-07-01T00:00:00.000Z") });
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", {
+    body: { location: "Issue site", name: "Issue Visitor", phone: "0411555001", company: "Issue Co", issues: "Gate was open", photo: photoBytes().toString("base64") },
+    ip: "203.0.113.150",
+  })));
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const tooLong = await read(await publicFn(req("POST", "/api/visit/sign-out", {
+    body: { name: "Issue Visitor", company: "Issue Co", issues: "x".repeat(501), cardReturned: true },
+    ip: "203.0.113.151",
+  })));
+  assert.equal(tooLong.status, 400);
+  assert.equal(tooLong.body.error.includes("x".repeat(20)), false);
+  const missed = await read(await publicFn(req("POST", "/api/visit/sign-out", {
+    body: { name: "Missing Visitor", company: "Issue Co", issues: "private complaint", cardReturned: true },
+    ip: "203.0.113.152",
+  })));
+  assert.equal(missed.status, 400);
+  assert.equal(JSON.stringify(missed.body).includes("private complaint"), false);
+  assert.equal(JSON.stringify(missed.body).includes("0411555001"), false);
+  const signed = await read(await publicFn(req("POST", "/api/visit/sign-out", {
+    body: { name: "Issue Visitor", company: "Issue Co", issues: "=Lock was stiff", cardReturned: true },
+    ip: "203.0.113.153",
+  })));
+  assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  assert.equal(JSON.stringify(signed.body).includes("Lock was stiff"), false);
+  assert.equal(JSON.stringify(signed.body).includes("Gate was open"), false);
+  const visit = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.phone === "0411555001");
+  assert.equal(visit.issues, "Gate was open");
+  assert.equal(visit.signOutIssues, "=Lock was stiff");
+  assert.equal(sheetLib.SHEET_HEADERS.length, 15);
+  assert.equal(sheetLib.SHEET_HEADERS[5], "issues");
+  const cell = sheetLib.sheetRowValues(visit, () => "time")[5];
+  assert.match(cell, /Sign-in: Gate was open/);
+  assert.match(cell, /Sign-out: '=Lock was stiff/);
+  otpLib.setOtpTestHooks({ now: () => Date.parse("2027-07-02T00:00:00.000Z"), deliver: async (message) => { otpMail.push(message); return { status: "sent", id: "local-mock" }; } });
+  const joshua = await otpCookie(JOSHUA, "203.0.113.154");
+  const record = await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visit.id, { cookie: joshua })));
+  assert.equal(record.body.visit.issues, "Gate was open");
+  assert.equal(record.body.visit.signOutIssues, "=Lock was stiff");
+  const exported = await read(await adminFn(req("GET", "/api/visitor-log/export", { cookie: joshua })));
+  assert.match(exported.body.toString(), /sign_out_issues/);
+  assert.match(exported.body.toString(), /Gate was open/);
+  assert.match(exported.body.toString(), /=Lock was stiff/);
 });

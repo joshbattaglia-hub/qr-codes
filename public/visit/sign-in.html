@@ -59,7 +59,6 @@
       <p class="muted" id="photo-note"></p>
       <p class="muted">Take photo opens the camera. Choose photo opens your library. A clear JPEG or PNG is saved. HEIC is converted only when this browser can read it.</p>
     </div>
-    <label>Any issues to report<textarea name="issues" maxlength="500"></textarea></label>
     <button type="submit">Sign in</button>
     <p class="err" id="in-error" data-testid="visit-error"></p>
   </form>
@@ -98,7 +97,7 @@ form.addEventListener("submit", async (event) => {
   });
   const response = await fetch("/api/visit/sign-in", {
     method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), issues: data.get("issues"), photo }),
+    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), photo }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { error.textContent = body.error || "Sign-in was not saved."; return; }

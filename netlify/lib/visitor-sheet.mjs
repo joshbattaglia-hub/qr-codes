@@ -98,6 +98,13 @@ export function recordUrl(visitId) {
   return publicBase().replace(/\/$/, "") + "/admin#/visitors/" + visitId;
 }
 
+export function sheetIssues(visit) {
+  const parts = [];
+  if (visit?.issues) parts.push("Sign-in: " + sheetSafe(visit.issues));
+  if (visit?.signOutIssues) parts.push("Sign-out: " + sheetSafe(visit.signOutIssues));
+  return parts.join("\n");
+}
+
 export function sheetRowValues(visit, melbourne) {
   return [
     visit.id,
@@ -105,7 +112,7 @@ export function sheetRowValues(visit, melbourne) {
     sheetSafe(visit.name),
     sheetSafe(visit.phone),
     sheetSafe(visit.company),
-    sheetSafe(visit.issues || ""),
+    sheetIssues(visit),
     visit.signedInAt || "",
     melbourne(visit.signedInAt),
     visit.signedOutAt || "",

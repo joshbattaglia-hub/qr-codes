@@ -62,7 +62,6 @@
       <p class="muted" id="photo-note"></p>
       <p class="muted">Take photo opens the camera. Choose photo opens your library. A clear JPEG or PNG is saved. HEIC is converted only when this browser can read it.</p>
     </div>
-    <label>Any issues to report<textarea name="issues" maxlength="500"></textarea></label>
     <button type="submit">Sign in</button>
     <p class="err" id="in-error" data-testid="visit-error"></p>
   </form>
@@ -76,6 +75,7 @@
     <p>Return the Shell card to the lockbox before you sign out.</p>
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <label>Any issues to report<span class="muted">Optional</span><textarea name="issues" maxlength="500" data-testid="visit-out-issues"></textarea></label>
     <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
     <button type="submit">Sign out</button>
     <p class="err" id="out-error"></p>
@@ -114,7 +114,7 @@ form.addEventListener("submit", async (event) => {
   });
   const response = await fetch("/api/visit/sign-in", {
     method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), issues: data.get("issues"), photo }),
+    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), photo }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { error.textContent = body.error || "Sign-in was not saved."; return; }
@@ -129,7 +129,7 @@ document.getElementById("out-form").addEventListener("submit", async (event) => 
   const data = new FormData(event.target);
   const response = await fetch("/api/visit/sign-out", {
     method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), cardReturned: data.get("cardReturned") === "yes" }),
+    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { error.textContent = body.error || "That sign-out could not be completed. Ask the site contact for help."; return; }
