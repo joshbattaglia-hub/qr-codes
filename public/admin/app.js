@@ -1696,7 +1696,10 @@ async function paintVisitor() {
     + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. The only eligible recipient is Joshua\'s existing visitor-log access. Saving this does not grant access to anyone else.</p>'
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
-    + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>';
+    + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
+    + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
+    + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
+    + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
   const statusSelect = document.getElementById("visitor-status");
@@ -1773,6 +1776,18 @@ async function visitorAction(button) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "The record was not deleted");
     location.hash = "#/visitors";
+    return;
+  }
+  if (act === "visitor-sheet-check") {
+    if (!document.getElementById("visitor-sheet-check")?.checked) throw new Error("Confirm the connection check first.");
+    const response = await fetch("/api/visitor-log/sheet-check", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirm: "CHECK" }),
+    });
+    const body = await response.json().catch(() => ({}));
+    const note = document.getElementById("visitor-sheet-note");
+    const stage = typeof body.stage === "string" && /^[a-z-]+$/.test(body.stage) ? body.stage : "";
+    if (note) note.textContent = response.ok ? (body.ok ? "verified" : stage || "The check did not finish") : (body.error || "The check did not run");
     return;
   }
   if (act === "visitor-save") {

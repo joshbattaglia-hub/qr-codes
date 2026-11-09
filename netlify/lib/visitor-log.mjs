@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
-import { recordUrl, sheetConfigured, syncVisitRow } from "./visitor-sheet.mjs";
+import { recordUrl, runSheetConnectionProbe, sheetConfigured, syncVisitRow } from "./visitor-sheet.mjs";
 
 export const JOSHUA_EMAIL = "jbattaglia@libertyretail.com.au";
 export const PHOTO_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -67,6 +67,7 @@ export function visitorReadiness() {
   if (access.error === "site-scope-not-used" || access.error === "invalid" || access.error === "entra-oid" || access.error === "too-large") blockers.push("access-map-rejected");
   else if (!access.joshuaOtp && !access.joshuaEntraOid) blockers.push("access-map-missing");
   if (!sheetConfigured()) blockers.push("sheet-not-configured");
+  if (!visitorCollectionOpen()) blockers.push("collection-closed");
   return {
     open: blockers.length === 0,
     blockers,
@@ -74,10 +75,16 @@ export function visitorReadiness() {
     photoRetention: "90 days after sign-out, or 90 days after sign-in if still open",
     openVisitPhotoRetention: "90 days after sign-in",
     textRetention: "until Joshua deletes the record",
+    collection: visitorCollectionOpen() ? "open" : "closed",
     sheetConfigured: sheetConfigured(),
     sheetSharing: "none",
     viewer: "Joshua's explicit visitor-log access only",
   };
+}
+
+/** New submissions stay closed until a later explicit approval sets this exact value. Sheet credentials do not open the form. */
+export function visitorCollectionOpen() {
+  return env("VISITOR_COLLECTION").trim() === "open";
 }
 
 function melbourne(iso) {
@@ -435,6 +442,20 @@ export async function notificationSettings(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const stored = await visitorStore().get("notify/settings", { type: "json" });
   return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipient: stored?.enabled ? JOSHUA_EMAIL : "" } };
+}
+
+export async function sheetConnectionCheck(actor) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await runSheetConnectionProbe();
+  const stage = result.stage;
+  await audit("sheet-probe", actor.id || "", "");
+  await visitorStore().setJSON("sheet-probe/last", {
+    ok: result.ok === true,
+    stage,
+    at: new Date(now()).toISOString(),
+    actorId: String(actor.id || "").slice(0, 80),
+  });
+  return { status: 200, body: { ok: result.ok === true, stage } };
 }
 
 export async function saveNotificationSettings(actor, body) {
