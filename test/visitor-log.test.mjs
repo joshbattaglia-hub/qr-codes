@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import jpeg from "jpeg-js";
 import { PNG } from "pngjs";
 
@@ -755,4 +756,97 @@ test("the sheet connection check stays closed, writes one synthetic row, and doe
   const stillClosed = await read(await publicFn(req("GET", "/api/visit/status")));
   assert.equal(stillClosed.body.open, false);
   process.env.VISITOR_COLLECTION = "open";
+});
+
+test("sign-in and sign-out are separate public pages and /visit still has both", () => {
+  const signIn = fs.readFileSync(new URL("../public/visit/sign-in.html", import.meta.url), "utf8");
+  const signOut = fs.readFileSync(new URL("../public/visit/sign-out.html", import.meta.url), "utf8");
+  const both = fs.readFileSync(new URL("../public/visit.html", import.meta.url), "utf8");
+  const toml = fs.readFileSync(new URL("../netlify.toml", import.meta.url), "utf8");
+  assert.match(toml, /from = "\/visit\/sign-in"/);
+  assert.match(toml, /from = "\/visit\/sign-out"/);
+  assert.match(toml, /from = "\/visit"/);
+  assert.equal(signIn.includes('data-testid="visit-photo"'), true);
+  assert.equal(signIn.includes('data-testid="visit-location"'), true);
+  assert.equal(signIn.includes('data-testid="visit-receipt-input"'), false);
+  assert.equal(signIn.includes('name="receipt"'), false);
+  assert.equal(signIn.includes("Thanks for signing in"), true);
+  assert.equal(signIn.includes("When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation."), true);
+  assert.equal(signIn.includes('id="in-done" hidden'), true);
+  assert.equal(signIn.includes("/api/visit/sign-in"), true);
+  assert.equal(signOut.includes('data-testid="visit-photo"'), false);
+  assert.equal(signOut.includes('name="location"'), false);
+  assert.equal(signOut.includes('name="phone"'), false);
+  assert.equal(signOut.includes('name="receipt"'), false);
+  assert.equal(signOut.includes('data-testid="visit-out-name"'), true);
+  assert.equal(signOut.includes('data-testid="visit-out-company"'), true);
+  assert.equal(signOut.includes('type="radio"'), true);
+  assert.equal(signOut.includes("I Returned the Shell Card"), true);
+  assert.equal(signOut.includes("checked"), false);
+  assert.equal(signOut.includes("Thanks, you’ve signed out"), true);
+  assert.equal(signOut.includes('id="out-done" hidden'), true);
+  assert.equal(signOut.includes("/api/visit/sign-out"), true);
+  assert.equal(both.includes('data-testid="visit-photo"'), true);
+  assert.equal(both.includes('name="receipt"'), false);
+  assert.equal(both.includes("Thanks for signing in"), true);
+  assert.equal(both.includes("Thanks, you’ve signed out"), true);
+  assert.match(signIn, /name="viewport"/);
+  assert.match(signOut, /name="viewport"/);
+});
+
+test("name and company sign out one active visit and refuse a missing or duplicate pair", async () => {
+  process.env.VISITOR_COLLECTION = "open";
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" });
+  let clock = Date.parse("2027-05-01T00:00:00.000Z");
+  visitLib.setVisitorTestHooks({ collect: true, now: () => clock });
+  const sample = (name, company, phone) => ({ location: "Match site", name, phone, company, photo: photoBytes().toString("base64") });
+  const first = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample("Pat Visitor", "ACME", "0411222001"), ip: "203.0.113.120" })));
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const byReceipt = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { receipt: first.body.receipt, cardReturned: true }, ip: "203.0.113.121" })));
+  assert.equal(byReceipt.status, 200);
+  const created = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample("  Pat   Visitor ", "acme", "0411222002"), ip: "203.0.113.122" })));
+  assert.equal(created.status, 200);
+  const missingCard = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Pat Visitor", company: "ACME", cardReturned: false }, ip: "203.0.113.123" })));
+  assert.equal(missingCard.status, 400);
+  const open = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.phone === "0411222002");
+  assert.equal(open.signedOutAt, "");
+  const matched = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "pat visitor", company: "ACME", cardReturned: true }, ip: "203.0.113.124" })));
+  assert.equal(matched.status, 200, JSON.stringify(matched.body));
+  assert.equal(matched.body.cardReturned, true);
+  assert.equal(JSON.stringify(matched.body).includes("0411222002"), false);
+  assert.equal((await lib.visitorStore().get("visit/" + open.id, { type: "json" })).cardReturned, true);
+  const none = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Nobody Here", company: "ACME", cardReturned: true }, ip: "203.0.113.125" })));
+  const second = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample("Twin Visitor", "Twin Co", "0411222003"), ip: "203.0.113.126" })));
+  const third = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample("Twin Visitor", "Twin Co", "0411222004"), ip: "203.0.113.127" })));
+  assert.equal(second.status, 200);
+  assert.equal(third.status, 200);
+  const ambiguous = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Twin Visitor", company: "Twin Co", cardReturned: true }, ip: "203.0.113.128" })));
+  assert.equal(ambiguous.status, 400);
+  assert.equal(ambiguous.body.error, none.body.error);
+  assert.equal(JSON.stringify(ambiguous.body).includes("0411222003"), false);
+  assert.equal(JSON.stringify(ambiguous.body).includes("0411222004"), false);
+  const twins = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).filter((row) => row && row.name === "Twin Visitor");
+  assert.equal(twins.every((row) => row.signedOutAt === ""), true);
+  const lone = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: sample("Race Visitor", "Race Co", "0411222005"), ip: "203.0.113.129" })));
+  assert.equal(lone.status, 200);
+  const raced = await Promise.all([
+    read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Race Visitor", company: "Race Co", cardReturned: true }, ip: "203.0.113.130" }))),
+    read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Race Visitor", company: "Race Co", cardReturned: true }, ip: "203.0.113.131" }))),
+  ]);
+  assert.equal(raced.filter((item) => item.status === 200).length >= 1, true);
+  const racedVisit = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.phone === "0411222005");
+  assert.equal(racedVisit.cardReturned, true);
+  assert.equal(Boolean(racedVisit.signedOutAt), true);
+  let blocked = 0;
+  for (let i = 0; i < 9; i++) {
+    const res = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { name: "Rate Visitor", company: "Rate Co", cardReturned: true }, ip: "203.0.113.140", forwarded: "198.51.100." + i })));
+    if (res.status === 429) blocked += 1;
+  }
+  assert.equal(blocked >= 1, true);
+  const audits = JSON.stringify(await Promise.all((await lib.visitorStore().list({ prefix: "audit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" }))));
+  assert.equal(audits.includes("0411222003"), false);
+  assert.equal(audits.includes("Twin Co"), false);
 });

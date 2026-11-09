@@ -17,10 +17,14 @@
   .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
   label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
   input, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  input[type="checkbox"] { width:1.25rem; height:1.25rem; margin-top:0.2rem; }
   textarea { min-height:80px; }
-  button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; }
+  button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; min-height:44px; }
+  a { color:var(--blue); }
   button:disabled { opacity:.6; }
-  .check { flex-direction:row; align-items:flex-start; font-weight:600; }
+  .choice { flex-direction:row; align-items:center; gap:10px; font-weight:600; }
+  .tick { width:48px; height:48px; border-radius:50%; background:#067647; color:#fff; display:grid; place-items:center; font-size:28px; margin:0 0 8px; }
+  .done h2 { margin-top:8px; }
   .err { color:#d92d20; min-height:1.2em; }
   .ok { color:#067647; }
   .muted { color:var(--muted); }
@@ -29,6 +33,7 @@
 <body>
 <main>
   <h1>Visitor log</h1>
+  <p class="links"><a href="/visit/sign-in">Sign in</a> <a href="/visit/sign-out">Sign out</a></p>
   <p class="notice" id="intro" data-testid="visit-intro">Loading…</p>
   <section class="card" id="closed" hidden data-testid="visit-closed">
     <h2>The form is not open</h2>
@@ -46,17 +51,25 @@
     <label>Any issues to report<textarea name="issues" maxlength="500"></textarea></label>
     <button type="submit">Sign in</button>
     <p class="err" id="in-error" data-testid="visit-error"></p>
-    <p class="ok" id="receipt" data-testid="visit-receipt"></p>
   </form>
+  <section class="card done" id="in-done" hidden data-testid="visit-signed-in">
+    <p class="tick" aria-hidden="true">✓</p>
+    <h2>Thanks for signing in</h2>
+    <p>When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation.</p>
+  </section>
   <form class="card" id="out-form" data-testid="visit-out">
     <h2>Sign out</h2>
-    <p>Return the Shell card to the lockbox before you sign out. Keep the receipt from sign-in. It is not a link.</p>
-    <label>Receipt<input name="receipt" required autocomplete="off" data-testid="visit-receipt-input"></label>
-    <label class="check"><input type="checkbox" name="cardReturned" value="yes" data-testid="visit-card"> I returned the Shell card to the lockbox.</label>
+    <p>Return the Shell card to the lockbox before you sign out.</p>
+    <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
+    <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
     <button type="submit">Sign out</button>
     <p class="err" id="out-error"></p>
-    <p class="ok" id="out-ok" data-testid="visit-out-ok"></p>
   </form>
+  <section class="card done" id="out-done" hidden data-testid="visit-signed-out">
+    <svg class="door" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><path d="M8 8h16v32H8z" fill="none" stroke="#067647" stroke-width="2"/><path d="M24 10l14 4v28l-14 4z" fill="none" stroke="#067647" stroke-width="2"/><circle cx="22" cy="24" r="1.4" fill="#067647"/></svg>
+    <h2>Thanks, you’ve signed out</h2>
+  </section>
 </main>
 <script>
 const intro = document.getElementById("intro");
@@ -90,23 +103,23 @@ form.addEventListener("submit", async (event) => {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { error.textContent = body.error || "Sign-in was not saved."; return; }
-  document.getElementById("receipt").textContent = "Keep this receipt for sign-out. It is shown once: " + body.receipt;
+  form.hidden = true;
+  document.getElementById("in-done").hidden = false;
 });
 
 document.getElementById("out-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const error = document.getElementById("out-error");
-  const ok = document.getElementById("out-ok");
   error.textContent = "";
-  ok.textContent = "";
   const data = new FormData(event.target);
   const response = await fetch("/api/visit/sign-out", {
     method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ receipt: data.get("receipt"), cardReturned: data.get("cardReturned") === "yes" }),
+    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), cardReturned: data.get("cardReturned") === "yes" }),
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) { error.textContent = body.error || "Sign-out was not saved."; return; }
-  ok.textContent = "Signed out at " + (body.signedOutMelbourne || body.signedOutAt || "the recorded time") + ". The Shell card return was recorded.";
+  if (!response.ok) { error.textContent = body.error || "That sign-out could not be completed. Ask the site contact for help."; return; }
+  event.target.hidden = true;
+  document.getElementById("out-done").hidden = false;
 });
 </script>
 </body>

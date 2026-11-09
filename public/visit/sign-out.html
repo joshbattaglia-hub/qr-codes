@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Visitor sign out</title>
+<style>
+  :root { color-scheme: light; --ink:#1c2434; --muted:#667085; --line:#e6e8ee; --blue:#1f4bdb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 "Segoe UI", system-ui, sans-serif; background:#f3f4f8; color:var(--ink); }
+  main { width:min(560px,100%); margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:28px; margin:0 0 8px; }
+  h2 { font-size:18px; margin:0 0 8px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; }
+  .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
+  label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
+  input { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  input[type="radio"] { width:1.25rem; height:1.25rem; }
+  button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; min-height:44px; }
+  .choice { flex-direction:row; align-items:center; gap:10px; font-weight:600; }
+  .done h2 { margin-top:8px; }
+  a { color:var(--blue); }
+  .err { color:#d92d20; min-height:1.2em; }
+  .ok { color:#067647; }
+  .muted { color:var(--muted); font-weight:400; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Visitor sign out</h1>
+  <p><a href="/visit/sign-in">Sign in</a></p>
+  <p class="notice" id="intro" data-testid="visit-intro">Loading…</p>
+  <form class="card" id="out-form" data-testid="visit-out">
+    <h2>Sign out</h2>
+    <p>Return the Shell card to the lockbox before you sign out.</p>
+    <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
+    <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
+    <button type="submit">Sign out</button>
+    <p class="err" id="out-error"></p>
+  </form>
+  <section class="card done" id="out-done" hidden data-testid="visit-signed-out">
+    <svg class="door" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><path d="M8 8h16v32H8z" fill="none" stroke="#067647" stroke-width="2"/><path d="M24 10l14 4v28l-14 4z" fill="none" stroke="#067647" stroke-width="2"/><circle cx="22" cy="24" r="1.4" fill="#067647"/></svg>
+    <h2>Thanks, you’ve signed out</h2>
+  </section>
+</main>
+<script>
+const intro = document.getElementById("intro");
+fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.json()).then((status) => {
+  intro.textContent = status.notice || "Visitor log";
+}).catch(() => { intro.textContent = "Visitor log is not available."; });
+
+document.getElementById("out-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const error = document.getElementById("out-error");
+  error.textContent = "";
+  const data = new FormData(event.target);
+  const response = await fetch("/api/visit/sign-out", {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), cardReturned: data.get("cardReturned") === "yes" }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { error.textContent = body.error || "That sign-out could not be completed. Ask the site contact for help."; return; }
+  event.target.hidden = true;
+  document.getElementById("out-done").hidden = false;
+});
+</script>
+</body>
+</html>

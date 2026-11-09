@@ -110,9 +110,13 @@ export function start(port = 8888) {
         const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1");
         return send(res, await redirectFn(request, { params: { slug }, geo, ip }));
       }
-      if (url.pathname === "/visit" || url.pathname === "/visit/") {
+      const visitPage = url.pathname === "/visit" || url.pathname === "/visit/" ? "visit.html"
+        : url.pathname === "/visit/sign-in" || url.pathname === "/visit/sign-in/" ? "visit/sign-in.html"
+        : url.pathname === "/visit/sign-out" || url.pathname === "/visit/sign-out/" ? "visit/sign-out.html"
+        : "";
+      if (visitPage) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-        fs.createReadStream(path.join(root, "visit.html")).pipe(res);
+        fs.createReadStream(path.join(root, visitPage)).pipe(res);
         return;
       }
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
