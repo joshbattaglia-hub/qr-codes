@@ -17,6 +17,12 @@
   .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
   label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
   input, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  .photo-actions { display:flex; flex-direction:column; gap:8px; }
+  .photo-action { position:relative; height:48px; }
+  .photo-action span { display:flex; align-items:center; justify-content:center; height:48px; border-radius:8px; background:var(--blue); color:#fff; font-weight:700; text-align:center; }
+  .photo-action:focus-within { outline:2px solid #111827; outline-offset:2px; }
+  input.photo-hit { position:absolute; left:0; top:0; z-index:2; width:100%; height:48px; margin:0; padding:0; border:0; opacity:0.02; font-size:16px; }
+  #photo-preview { width:100%; max-height:240px; object-fit:contain; background:#f3f4f8; border-radius:8px; }
   textarea { min-height:80px; }
   button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; min-height:44px; }
   a { color:var(--blue); }
@@ -30,11 +36,11 @@
 <body>
 <main>
   <h1>Visitor sign in</h1>
-  <p><a href="/visit/sign-out">Sign out with a receipt</a></p>
+  <p><a href="/visit/sign-out">Sign out</a></p>
   <p class="notice" id="intro" data-testid="visit-intro">Loading…</p>
   <section class="card" id="closed" hidden data-testid="visit-closed">
     <h2>Sign in is not open</h2>
-    <p class="muted">A new visit cannot be saved until collection is open. An existing receipt can still be used on the sign-out page.</p>
+    <p class="muted">A new visit cannot be saved until collection is open. An open visit can still be signed out.</p>
     <p id="blockers"></p>
   </section>
   <form class="card" id="in-form" hidden data-testid="visit-form">
@@ -43,8 +49,16 @@
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name"></label>
     <label>Phone<input name="phone" required maxlength="40" inputmode="tel" autocomplete="tel" placeholder="04xx xxx xxx"></label>
     <label>Your company<input name="company" required maxlength="80"></label>
-    <label>Photo of identification<input name="photo" type="file" accept="image/jpeg,image/png" capture="environment" required data-testid="visit-photo"></label>
-    <p class="muted">Use a clear JPEG or PNG. HEIC photos from some phones are not accepted.</p>
+    <div class="photo-field">
+      <p id="photo-label">Photo of identification</p>
+      <div class="photo-actions">
+        <div class="photo-action"><span aria-hidden="true">Take photo</span><input id="photo-camera" class="photo-hit" type="file" accept="image/*" capture="environment" aria-label="Take photo of identification"></div>
+        <div class="photo-action"><span aria-hidden="true">Choose photo</span><input id="photo-library" class="photo-hit" type="file" accept="image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif" aria-label="Choose a photo of identification" data-testid="visit-photo"></div>
+      </div>
+      <img id="photo-preview" alt="" hidden>
+      <p class="muted" id="photo-note"></p>
+      <p class="muted">Take photo opens the camera. Choose photo opens your library. A clear JPEG or PNG is saved. HEIC is converted only when this browser can read it.</p>
+    </div>
     <label>Any issues to report<textarea name="issues" maxlength="500"></textarea></label>
     <button type="submit">Sign in</button>
     <p class="err" id="in-error" data-testid="visit-error"></p>
@@ -55,6 +69,7 @@
     <p>When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation.</p>
   </section>
 </main>
+<script src="/visit/photo.js"></script>
 <script>
 const intro = document.getElementById("intro");
 const closed = document.getElementById("closed");
@@ -74,8 +89,8 @@ form.addEventListener("submit", async (event) => {
   const error = document.getElementById("in-error");
   error.textContent = "";
   const data = new FormData(form);
-  const file = data.get("photo");
-  if (!file || !file.size) { error.textContent = "A photo of the ID is required."; return; }
+  const file = window.visitorIdPhoto ? window.visitorIdPhoto() : null;
+  if (!file || !file.size) { error.textContent = "A photo of the ID is required. Use Take photo or Choose photo."; return; }
   const photo = await new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
