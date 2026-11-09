@@ -778,6 +778,15 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(signIn.includes("Sign out with a receipt"), false);
   assert.equal(signIn.includes("existing receipt"), false);
   assert.equal(signOut.toLowerCase().includes("receipt"), false);
+  assert.equal(signIn.includes('id="photo-camera"'), true);
+  assert.equal(signIn.includes('capture="environment"'), true);
+  assert.equal(signIn.includes('id="photo-library"'), true);
+  assert.equal(signIn.includes('aria-label="Take photo of identification"'), true);
+  assert.equal(signIn.includes('aria-label="Choose a photo of identification"'), true);
+  assert.equal(/id="photo-library"[^>]*capture=/.test(signIn), false);
+  assert.equal(signIn.includes('accept="image/jpeg,image/png" capture="environment"'), false);
+  assert.equal(both.includes('id="photo-camera"'), true);
+  assert.equal(both.includes('id="photo-library"'), true);
   assert.equal(signOut.includes('data-testid="visit-photo"'), false);
   assert.equal(signOut.includes('name="location"'), false);
   assert.equal(signOut.includes('name="phone"'), false);
