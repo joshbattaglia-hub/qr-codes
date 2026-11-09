@@ -21,8 +21,20 @@ export function setVisitorSheetFetch(fn) {
   tokenCache = null;
 }
 
+/** Accept a real multiline PEM or the JSON private_key text, where line breaks are the two characters backslash and n. */
+export function sheetPrivateKey(raw = env("VISITOR_SHEETS_PRIVATE_KEY")) {
+  let text = String(raw || "").replace(/^\uFEFF/, "").trim();
+  if (text.length >= 2 && ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")))) {
+    text = text.slice(1, -1).trim();
+  }
+  text = text.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\r\n/g, "\n").trim();
+  if (text.includes("-----END") && !text.endsWith("\n")) text += "\n";
+  return text;
+}
+
 export function sheetConfigured() {
-  return !!(env("VISITOR_SHEETS_SPREADSHEET_ID") && env("VISITOR_SHEETS_CLIENT_EMAIL") && env("VISITOR_SHEETS_PRIVATE_KEY").includes("PRIVATE KEY"));
+  const key = sheetPrivateKey();
+  return !!(env("VISITOR_SHEETS_SPREADSHEET_ID") && env("VISITOR_SHEETS_CLIENT_EMAIL") && key.includes("-----BEGIN") && key.includes("PRIVATE KEY") && key.includes("-----END"));
 }
 
 export function sheetSafe(value) {
@@ -46,7 +58,7 @@ async function accessToken() {
     exp: now + 3600,
   }));
   const unsigned = header + "." + claim;
-  const signature = crypto.sign("RSA-SHA256", Buffer.from(unsigned), env("VISITOR_SHEETS_PRIVATE_KEY")).toString("base64url");
+  const signature = crypto.sign("RSA-SHA256", Buffer.from(unsigned), sheetPrivateKey()).toString("base64url");
   const body = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: unsigned + "." + signature });
   const response = await request("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
   if (!response.ok) return "";

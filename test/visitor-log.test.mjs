@@ -561,3 +561,47 @@ test("an in-flight sheet append and a pending notification cannot restore a dele
   setMailTransport(async (message) => { sentMail.push(message); return { status: "sent", id: "local-mock" }; });
   await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, events: "both" } }));
 });
+
+test("the sheet private key accepts a multiline PEM and the JSON escaped form", async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const escaped = pem.replaceAll("\n", "\\n");
+  const quoted = '"' + escaped + '"';
+  assert.equal(escaped.includes("\n"), false);
+  assert.throws(() => crypto.sign("RSA-SHA256", Buffer.from("fixture"), escaped));
+  assert.equal(sheetLib.sheetPrivateKey(pem), pem);
+  assert.equal(sheetLib.sheetPrivateKey(escaped), pem);
+  assert.equal(sheetLib.sheetPrivateKey(quoted), pem);
+  const pub = publicKey.export({ type: "spki", format: "pem" });
+  for (const form of [pem, escaped, quoted]) {
+    const sig = crypto.sign("RSA-SHA256", Buffer.from("fixture"), sheetLib.sheetPrivateKey(form));
+    assert.equal(crypto.verify("RSA-SHA256", Buffer.from("fixture"), pub, sig), true);
+  }
+  process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
+  process.env.VISITOR_SHEETS_SPREADSHEET_ID = "sheet-id";
+  process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
+  process.env.VISITOR_SHEETS_PRIVATE_KEY = escaped;
+  assert.equal(sheetLib.sheetConfigured(), true);
+  let assertion = "";
+  sheetLib.setVisitorSheetFetch(async (url, init) => {
+    if (String(url).includes("oauth2.googleapis.com")) {
+      assertion = new URLSearchParams(String(init.body)).get("assertion");
+      return new Response(JSON.stringify({ access_token: "sheet-token", expires_in: 3600 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const decoded = decodeURIComponent(String(url));
+    assert.equal(decoded.includes("Visits!"), true);
+    if (decoded.includes(":append")) return new Response(JSON.stringify({ updates: { updatedRange: "Visits!A2:O2" } }), { status: 200, headers: { "content-type": "application/json" } });
+    if (init.method === "PUT") return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ values: [["visit_id"]] }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const id = "v" + "ab".repeat(16);
+  await lib.visitorStore().setJSON("visit/" + id, { id, location: "Key", name: "Fixture", phone: "0411000001", company: "ACME", signedInAt: "2026-11-09T00:00:00.000Z", photoStatus: "stored", storage: "sheet" });
+  const synced = await sheetLib.syncVisitRow({ id }, () => "time");
+  assert.equal(synced.status, "synced", JSON.stringify(synced));
+  const [header, payload, signature] = assertion.split(".");
+  const body = JSON.parse(Buffer.from(payload, "base64url").toString());
+  assert.equal(body.scope, "https://www.googleapis.com/auth/spreadsheets");
+  assert.equal(crypto.verify("RSA-SHA256", Buffer.from(header + "." + payload), pub, Buffer.from(signature, "base64url")), true);
+  assert.equal(assertion.includes(pem), false);
+  assert.equal(assertion.includes("\\n"), false);
+});
