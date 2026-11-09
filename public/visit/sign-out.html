@@ -15,6 +15,11 @@
   h2 { font-size:18px; margin:0 0 8px; }
   .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; }
   .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
+  .details { margin: 4px 0 12px; }
+  .details summary { display:list-item; min-height:44px; padding:12px 8px; font-weight:700; cursor:pointer; overflow-wrap:anywhere; }
+  .details summary:focus { outline:2px solid #111827; outline-offset:2px; }
+  .details h2 { font-size:18px; margin:4px 0 8px; }
+  .details p { margin:0 0 12px; font-weight:400; overflow-wrap:anywhere; }
   label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
   input, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
   textarea { min-height:80px; }
@@ -40,6 +45,16 @@
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
     <label>Any issues to report<span class="muted">Optional</span><textarea name="issues" maxlength="500" data-testid="visit-out-issues"></textarea></label>
     <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
+    <details class="details" data-testid="visit-details">
+      <summary>Details</summary>
+      <h2>How we store your information</h2>
+      <p>Liberty Oil Convenience uses this visitor log to keep a record of everyone who attends our sites, for safety, security and site access purposes.</p>
+      <p>Please sign in when you arrive and sign out when you leave. Before signing out, return the Shell card to the lockbox. Your visit is only closed and the card recorded as returned when you complete the sign-out form.</p>
+      <p>A clear photo of your identification is required at sign-in. It is stored securely and privately, and is never shared through a public link.</p>
+      <p>Your ID photo is permanently deleted 90 days after you sign out. If a visit is not signed out, the photo is deleted 90 days after sign-in and the visit is flagged for review. Deleted photos cannot be recovered.</p>
+      <p>Your written visit details (name, company, contact number, site and any issues reported) are kept as part of our site records until they are removed by an authorised Liberty Oil Convenience administrator.</p>
+      <p>Access to visitor records and ID photos is restricted to authorised Liberty Oil Convenience personnel only.</p>
+    </details>
     <button type="submit">Sign out</button>
     <p class="err" id="out-error"></p>
   </form>
@@ -51,7 +66,7 @@
 <script>
 const intro = document.getElementById("intro");
 fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.json()).then((status) => {
-  intro.textContent = status.notice || "Visitor log";
+  intro.hidden = true;
 }).catch(() => { intro.textContent = "Visitor log is not available."; });
 
 document.getElementById("out-form").addEventListener("submit", async (event) => {
