@@ -152,6 +152,7 @@ export function publicVisit(visit) {
     phone: visit.phone,
     company: visit.company,
     issues: visit.issues || "",
+    signOutIssues: visit.signOutIssues || "",
     signedInAt: visit.signedInAt,
     signedInMelbourne: melbourne(visit.signedInAt),
     signedOutAt: visit.signedOutAt || "",
@@ -178,7 +179,7 @@ async function audit(action, actorId, visitId) {
 function sheetFingerprint(visit) {
   return JSON.stringify({
     location: visit.location, name: visit.name, phone: visit.phone, company: visit.company,
-    issues: visit.issues || "", signedOutAt: visit.signedOutAt || "", cardReturned: visit.cardReturned === true,
+    issues: visit.issues || "", signOutIssues: visit.signOutIssues || "", signedOutAt: visit.signedOutAt || "", cardReturned: visit.cardReturned === true,
     photoStatus: visit.photoStatus || "",
   });
 }
@@ -326,7 +327,13 @@ async function activeNameMatches(name, company) {
   return rows.filter((row) => normalizeVisitorMatch(row.name) === name && normalizeVisitorMatch(row.company) === company);
 }
 
+function readSignOutIssues(body) {
+  return textField(body?.issues, 500, "Issues", false);
+}
+
 async function signOutWithName(req, body) {
+  const issues = readSignOutIssues(body);
+  if (issues.error) return { status: 400, error: issues.error };
   if (body?.cardReturned !== true) return { status: 400, error: "Confirm that the Shell card was returned to the lockbox." };
   const name = textField(body?.name, 80, "Visitor name", true);
   const company = textField(body?.company, 80, "Company", true);
@@ -357,7 +364,7 @@ async function signOutWithName(req, body) {
     const atMs = now();
     const signedOutAt = new Date(atMs).toISOString();
     const openExpired = signInPhotoDeadline(meta.data) <= atMs;
-    const next = { ...meta.data, signedOutAt, cardReturned: true, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
+    const next = { ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
     if (openExpired || meta.data.photoStatus === "purged") {
       next.photoStatus = "purged";
       next.photoExpiredAt = meta.data.photoExpiredAt || new Date(signInPhotoDeadline(meta.data)).toISOString();
@@ -379,6 +386,8 @@ async function signOutWithName(req, body) {
 export async function signOut(req, body) {
   const receipt = String(body?.receipt || "");
   if (!receipt) return signOutWithName(req, body);
+  const issues = readSignOutIssues(body);
+  if (issues.error) return { status: 400, error: issues.error };
   const gate = await limited(req, "out");
   if (gate) return gate;
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(receipt)) return { status: 401, error: "That receipt was not accepted." };
@@ -398,7 +407,7 @@ export async function signOut(req, body) {
     const atMs = now();
     const signedOutAt = new Date(atMs).toISOString();
     const openExpired = signInPhotoDeadline(meta.data) <= atMs;
-    const next = { ...meta.data, signedOutAt, cardReturned: true, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
+    const next = { ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
     if (openExpired || meta.data.photoStatus === "purged") {
       next.photoStatus = "purged";
       next.photoExpiredAt = meta.data.photoExpiredAt || new Date(signInPhotoDeadline(meta.data)).toISOString();
@@ -489,11 +498,11 @@ export function csvEscape(value) {
 export async function exportVisits(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const listed = await listVisits(actor, new URLSearchParams());
-  const header = ["id", "location", "name", "phone", "company", "issues", "signed_in_melbourne", "signed_out_melbourne", "card_returned", "photo_status"];
+  const header = ["id", "location", "name", "phone", "company", "issues", "sign_out_issues", "signed_in_melbourne", "signed_out_melbourne", "card_returned", "photo_status"];
   const lines = [header.join(",")];
   for (const visit of listed.body.visits) {
     lines.push([
-      visit.id, visit.location, visit.name, visit.phone, visit.company, visit.issues,
+      visit.id, visit.location, visit.name, visit.phone, visit.company, visit.issues, visit.signOutIssues,
       visit.signedInMelbourne, visit.signedOutMelbourne, visit.cardReturned ? "yes" : "", visit.photoStatus,
     ].map(csvEscape).join(","));
   }

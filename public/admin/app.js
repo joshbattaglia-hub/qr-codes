@@ -1684,7 +1684,11 @@ async function paintVisitor() {
   if (location) params.set("location", location);
   const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
   const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
-  const rows = (listed.visits || []).map((visit) => '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>').join("");
+  const rows = (listed.visits || []).map((visit) => {
+    const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
+    const brief = notes.length > 80 ? notes.slice(0, 77) + "…" : notes;
+    return '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + esc(brief) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>';
+  }).join("");
   box.innerHTML = '<p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open for this test configuration.") + '</p>'
     + '<p class="muted">Sign in: <a href="/visit/sign-in">/visit/sign-in</a>. Sign out: <a href="/visit/sign-out">/visit/sign-out</a>. The combined page remains at <a href="/visit">/visit</a>.</p>'
     + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
@@ -1692,7 +1696,7 @@ async function paintVisitor() {
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
     + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button><button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button></div>'
-    + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">No visits.</td></tr>') + '</tbody></table></div>'
+    + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>'
     + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. The only eligible recipient is Joshua\'s existing visitor-log access. Saving this does not grant access to anyone else.</p>'
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
@@ -1726,7 +1730,8 @@ async function paintVisitorRecord(id) {
     + '<p>Signed out ' + esc(visit.signedOutMelbourne || "Still on site") + '</p>'
     + '<p>Shell card ' + (visit.cardReturned ? "returned" : "not recorded") + '</p>'
     + '<p>Photo ' + esc(visit.photoStatus) + '</p>'
-    + (visit.issues ? '<p>' + esc(visit.issues) + '</p>' : '')
+    + (visit.issues ? '<p data-testid="visitor-issues-in">Sign-in: ' + esc(visit.issues) + '</p>' : '')
+    + (visit.signOutIssues ? '<p data-testid="visitor-issues-out">Sign-out: ' + esc(visit.signOutIssues) + '</p>' : '')
     + (visit.review ? '<p data-testid="visitor-review">Flagged for review: ' + esc(visit.review) + '</p>' : '')
     + (visit.photoStatus === "stored" ? '<button class="btn" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID photo</button>' : '')
     + '<p class="err">Deleting removes the written record and the ID photo. This cannot be undone in Express Help.</p>'

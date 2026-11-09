@@ -16,7 +16,8 @@
   .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; }
   .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
   label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
-  input { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  input, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  textarea { min-height:80px; }
   input[type="radio"] { width:1.25rem; height:1.25rem; }
   button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; min-height:44px; }
   .choice { flex-direction:row; align-items:center; gap:10px; font-weight:600; }
@@ -37,6 +38,7 @@
     <p>Return the Shell card to the lockbox before you sign out.</p>
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <label>Any issues to report<span class="muted">Optional</span><textarea name="issues" maxlength="500" data-testid="visit-out-issues"></textarea></label>
     <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
     <button type="submit">Sign out</button>
     <p class="err" id="out-error"></p>
@@ -59,7 +61,7 @@ document.getElementById("out-form").addEventListener("submit", async (event) => 
   const data = new FormData(event.target);
   const response = await fetch("/api/visit/sign-out", {
     method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), cardReturned: data.get("cardReturned") === "yes" }),
+    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { error.textContent = body.error || "That sign-out could not be completed. Ask the site contact for help."; return; }
