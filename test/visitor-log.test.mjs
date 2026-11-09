@@ -781,6 +781,34 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(signOut.includes('visit-out-issues" required'), false);
   assert.equal(both.split('id="in-form"')[1].split('id="in-done"')[0].includes("Any issues to report"), false);
   assert.equal(both.includes('data-testid="visit-out-issues"'), true);
+  const detailLines = [
+    "<summary>Details</summary>",
+    "<h2>How we store your information</h2>",
+    "Liberty Oil Convenience uses this visitor log to keep a record of everyone who attends our sites, for safety, security and site access purposes.",
+    "Please sign in when you arrive and sign out when you leave. Before signing out, return the Shell card to the lockbox. Your visit is only closed and the card recorded as returned when you complete the sign-out form.",
+    "A clear photo of your identification is required at sign-in. It is stored securely and privately, and is never shared through a public link.",
+    "Your ID photo is permanently deleted 90 days after you sign out. If a visit is not signed out, the photo is deleted 90 days after sign-in and the visit is flagged for review. Deleted photos cannot be recovered.",
+    "Your written visit details (name, company, contact number, site and any issues reported) are kept as part of our site records until they are removed by an authorised Liberty Oil Convenience administrator.",
+    "Access to visitor records and ID photos is restricted to authorised Liberty Oil Convenience personnel only.",
+  ];
+  const bannedPublic = /\bGoogle\b|Google Sheets|spreadsheets?|version history|\bbackups?\b|\bJoshua\b|This visitor log asks you to sign in and to sign out|status\.notice/i;
+  for (const page of [signIn, signOut, both]) {
+    assert.equal(bannedPublic.test(page), false);
+    for (const line of detailLines) assert.equal(page.includes(line), true);
+    assert.match(page, /\.details summary \{[^}]*min-height:44px/);
+    assert.match(page, /\.details summary:focus \{[^}]*outline:2px solid #111827/);
+  }
+  const beforeSignIn = /<details class="details" data-testid="visit-details">[\s\S]*?<\/details>\s*<button type="submit">Sign in<\/button>/;
+  const beforeSignOut = /<details class="details" data-testid="visit-details">[\s\S]*?<\/details>\s*<button type="submit">Sign out<\/button>/;
+  assert.match(signIn, beforeSignIn);
+  assert.equal(/<details[^>]*\bopen\b/.test(signIn), false);
+  assert.match(signOut, beforeSignOut);
+  assert.equal(/<details[^>]*\bopen\b/.test(signOut), false);
+  const combinedIn = both.split('id="in-form"')[1].split('id="in-done"')[0];
+  const combinedOut = both.split('id="out-form"')[1].split('id="out-done"')[0];
+  assert.match(combinedIn, beforeSignIn);
+  assert.match(combinedOut, beforeSignOut);
+  assert.equal(/<details[^>]*\bopen\b/.test(both), false);
   assert.match(signIn, /href="\/visit\/sign-out">Sign out</);
   assert.equal(signIn.includes("Sign out with a receipt"), false);
   assert.equal(signIn.includes("existing receipt"), false);
