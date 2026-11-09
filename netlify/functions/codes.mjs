@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import {
   codes, stats, json, validSlug, readSettings, buildCode, applyPatch,
-  normalizeCode, publicCode, migrateStats, statsForList, publicBase, healthStore,
+  normalizeCode, publicCode, statsForList, groupedCountryStats, publicBase, healthStore,
 } from "../lib/lib.mjs";
 import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
 import { validateVoucher } from "../lib/vouchers.mjs";
@@ -77,7 +77,7 @@ export default async (req, context) => {
   if (req.method === "GET") {
     const raw = await stats().get(codeSlug, { type: "json" });
     const health = await healthStore().get(codeSlug, { type: "json" }).catch(() => null);
-    return json(200, { code: publicCode(existing, { logo: true }), stats: migrateStats(raw), health: health || null });
+    return json(200, { code: publicCode(existing, { logo: true }), stats: groupedCountryStats(raw), health: health || null });
   }
 
   if (req.method === "PATCH") {

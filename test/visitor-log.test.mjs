@@ -103,6 +103,8 @@ test("visitor access is Joshua-only and ignores site directory grants", () => {
   assert.equal(visitLib.parseVisitorAccess(JSON.stringify({ joshuaOtp: true, allSites: true })).error, "site-scope-not-used");
   process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
   assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: JOSHUA }), true);
+  assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: "  JBATTAGLIA@LIBERTYRETAIL.COM.AU " }), true);
+  assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: "other@libertyretail.com.au" }), false);
   assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: NEIL, approverKey: "neil", role: "approver" }), false);
   assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: JOSHUA, approverKey: "joshua", role: "approver" }), true);
   assert.equal(visitLib.visitorCapability({ role: "head", id: "head-office" }), false);
@@ -781,6 +783,11 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(signOut.includes('visit-out-issues" required'), false);
   assert.equal(both.split('id="in-form"')[1].split('id="in-done"')[0].includes("Any issues to report"), false);
   assert.equal(both.includes('data-testid="visit-out-issues"'), true);
+  const admin = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
+  assert.equal(admin.includes("Visitor records are restricted. Sign in with your authorised email account to view them."), true);
+  assert.equal(admin.includes('data-testid="visitor-email-signin">Sign in with email'), true);
+  assert.equal(admin.includes("limited to Joshua's explicit visitor-log access"), false);
+  assert.match(admin, /act === "visitor-email-signin"[\s\S]{0,400}method: "DELETE"/);
   const detailLines = [
     "<summary>Details</summary>",
     "<h2>How we store your information</h2>",
