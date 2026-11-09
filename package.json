@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs test/ops.test.mjs test/pos.test.mjs test/approval.test.mjs test/site-import.test.mjs test/entra.test.mjs test/code39.test.mjs test/otp.test.mjs",
+    "test": "node --test test/lib.test.mjs test/pages.test.mjs test/competitions.test.mjs test/ops.test.mjs test/pos.test.mjs test/approval.test.mjs test/site-import.test.mjs test/entra.test.mjs test/code39.test.mjs test/otp.test.mjs test/visitor-log.test.mjs",
     "dev": "node scripts/dev-server.mjs"
   },
   "keywords": [],
@@ -14,6 +14,8 @@
   "dependencies": {
     "@netlify/blobs": "11.1.7",
     "jose": "^5.10.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
