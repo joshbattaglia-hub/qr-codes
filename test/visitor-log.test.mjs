@@ -774,6 +774,10 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(signIn.includes("When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation."), true);
   assert.equal(signIn.includes('id="in-done" hidden'), true);
   assert.equal(signIn.includes("/api/visit/sign-in"), true);
+  assert.match(signIn, /href="\/visit\/sign-out">Sign out</);
+  assert.equal(signIn.includes("Sign out with a receipt"), false);
+  assert.equal(signIn.includes("existing receipt"), false);
+  assert.equal(signOut.toLowerCase().includes("receipt"), false);
   assert.equal(signOut.includes('data-testid="visit-photo"'), false);
   assert.equal(signOut.includes('name="location"'), false);
   assert.equal(signOut.includes('name="phone"'), false);
