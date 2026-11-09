@@ -48,6 +48,7 @@ export const entraStore = () => openStore("entra-sessions");
 export const otpStore = () => openStore("otp-auth");
 export const siteImports = () => openStore("site-imports");
 export const rateStore = () => openStore("auth-rate");
+export const visitorStore = () => openStore("visitor-log");
 
 /**
  * Durable counter. Succeeds only with onlyIfNew or onlyIfMatch.

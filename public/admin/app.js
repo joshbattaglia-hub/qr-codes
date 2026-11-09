@@ -1661,6 +1661,89 @@ function assetPage() {
     + '<p id="asset-copy" class="small" role="status" data-testid="asset-status"></p></div>'
     + '<div class="card"><h2>Preview</h2><div id="asset-preview" class="asset-preview"></div><p id="asset-notes" class="asset-note small"></p></div></form></div>';
 }
+function visitorPage() {
+  return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
+}
+async function paintVisitor() {
+  const box = document.getElementById("visitor-body");
+  if (!box) return;
+  const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
+  if (!readiness?.granted) {
+    box.innerHTML = '<h2>Not available</h2><p data-testid="visitor-denied">Visitor records, ID photos, settings, history, and export are limited to Joshua\'s explicit visitor-log access. The shared password and POS roles do not open them.</p>';
+    return;
+  }
+  const params = new URLSearchParams();
+  const status = document.getElementById("visitor-status")?.value || "all";
+  const from = document.getElementById("visitor-from")?.value || "";
+  const to = document.getElementById("visitor-to")?.value || "";
+  const location = document.getElementById("visitor-location")?.value || "";
+  if (status && status !== "all") params.set("status", status);
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (location) params.set("location", location);
+  const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
+  const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
+  const rows = (listed.visits || []).map((visit) => '<tr><td>' + esc(visit.location) + '</td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>').join("");
+  box.innerHTML = '<p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open for this test configuration.") + '</p>'
+    + '<p class="muted">General form: <a href="/visit">/visit</a></p>'
+    + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
+    + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
+    + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
+    + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
+    + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button><button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button></div>'
+    + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">No visits.</td></tr>') + '</tbody></table></div>'
+    + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. The only eligible recipient is Joshua\'s existing visitor-log access. Saving this does not grant access to anyone else.</p>'
+    + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
+    + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
+    + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>';
+  const events = document.getElementById("visitor-events");
+  if (events && settings.events) events.value = settings.events;
+  const statusSelect = document.getElementById("visitor-status");
+  if (statusSelect) statusSelect.value = status || "all";
+}
+async function visitorAction(button) {
+  const act = button.dataset.act;
+  if (act === "visitor-filter") return paintVisitor();
+  if (act === "visitor-export") {
+    const response = await fetch("/api/visitor-log/export", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Export was not available");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "visitor-log.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return;
+  }
+  if (act === "visitor-photo") {
+    const response = await fetch("/api/visitor-log/visits/" + encodeURIComponent(button.dataset.id) + "/photo", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("The ID photo is not available");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return;
+  }
+  if (act === "visitor-recover") {
+    const response = await fetch("/api/visitor-log/visits/" + encodeURIComponent(button.dataset.id) + "/recover", { method: "POST", credentials: "same-origin" });
+    const body = await response.json().catch(() => ({}));
+    const note = document.getElementById("visitor-note");
+    if (note) note.textContent = response.ok ? "Replacement receipt, shown once: " + body.receipt : (body.error || "Recovery failed");
+    return;
+  }
+  if (act === "visitor-save") {
+    const response = await fetch("/api/visitor-log/settings", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: document.getElementById("visitor-enabled").checked, events: document.getElementById("visitor-events").value }),
+    });
+    const body = await response.json().catch(() => ({}));
+    const note = document.getElementById("visitor-note");
+    if (note) note.textContent = response.ok ? (body.enabled ? "Notifications enabled for " + body.recipient : "Notifications are off.") : (body.error || "Settings were not saved");
+  }
+}
 function placeholder(title, body) {
   return '<div class="page-head"><h1>' + title + '</h1></div><div class="card empty"><div class="empty-mark">L</div><h2>' + title + '</h2><p class="muted">' + body + "</p></div>";
 }
@@ -1674,6 +1757,7 @@ function pageFor(r) {
   if (r.name === "sites") return sitesPage();
   if (r.name === "pos") return posList();
   if (r.name === "assets") return assetPage();
+  if (r.name === "visitors") return visitorPage();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -1870,6 +1954,7 @@ async function render(opts = {}) {
     if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
     if (r.name === "assets") paintAsset();
+    if (r.name === "visitors") paintVisitor();
   }
   if (state.focus) {
     const el = document.querySelector(state.focus);
@@ -2287,6 +2372,10 @@ document.body.addEventListener("click", (e) => {
     if (goEl.dataset.mode) state.createMode = goEl.dataset.mode === "link" ? "link" : "qr";
     if (goEl.dataset.focus) state.focus = goEl.dataset.focus;
     go(goEl.dataset.go);
+    return;
+  }
+  if (actEl && actEl.closest("#visitor-page")) {
+    Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("visitor-note"); if (note) note.textContent = err.message; });
     return;
   }
   if (actEl && actEl.closest("#asset-page")) {

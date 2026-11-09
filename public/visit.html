@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Visitor log</title>
+<style>
+  :root { color-scheme: light; --ink:#1c2434; --muted:#667085; --line:#e6e8ee; --blue:#1f4bdb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 "Segoe UI", system-ui, sans-serif; background:#f3f4f8; color:var(--ink); }
+  main { width:min(560px,100%); margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:28px; margin:0 0 8px; }
+  h2 { font-size:18px; margin:0 0 8px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; }
+  .notice { background:#e7ecfb; border-radius:12px; padding:12px; }
+  label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
+  input, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  textarea { min-height:80px; }
+  button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; width:100%; }
+  button:disabled { opacity:.6; }
+  .check { flex-direction:row; align-items:flex-start; font-weight:600; }
+  .err { color:#d92d20; min-height:1.2em; }
+  .ok { color:#067647; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Visitor log</h1>
+  <p class="notice" id="intro" data-testid="visit-intro">Loading…</p>
+  <section class="card" id="closed" hidden data-testid="visit-closed">
+    <h2>The form is not open</h2>
+    <p class="muted">No visitor record or ID photo can be submitted until the remaining policy is decided and the recording setup is in place.</p>
+    <p id="blockers"></p>
+  </section>
+  <form class="card" id="in-form" hidden data-testid="visit-form">
+    <h2>Sign in</h2>
+    <label>Site location<span class="muted">Type the site or suburb. It is not chosen from a stored site list.</span><input name="location" required maxlength="120" data-testid="visit-location"></label>
+    <label>Visitor name<input name="name" required maxlength="80" autocomplete="name"></label>
+    <label>Phone<input name="phone" required maxlength="40" inputmode="tel" autocomplete="tel" placeholder="04xx xxx xxx"></label>
+    <label>Your company<input name="company" required maxlength="80"></label>
+    <label>Photo of identification<input name="photo" type="file" accept="image/jpeg,image/png" capture="environment" required data-testid="visit-photo"></label>
+    <p class="muted">Use a clear JPEG or PNG. HEIC photos from some phones are not accepted.</p>
+    <label>Any issues to report<textarea name="issues" maxlength="500"></textarea></label>
+    <button type="submit">Sign in</button>
+    <p class="err" id="in-error" data-testid="visit-error"></p>
+    <p class="ok" id="receipt" data-testid="visit-receipt"></p>
+  </form>
+  <form class="card" id="out-form" data-testid="visit-out">
+    <h2>Sign out</h2>
+    <p>Return the Shell card to the lockbox before you sign out. Keep the receipt from sign-in. It is not a link.</p>
+    <label>Receipt<input name="receipt" required autocomplete="off" data-testid="visit-receipt-input"></label>
+    <label class="check"><input type="checkbox" name="cardReturned" value="yes" data-testid="visit-card"> I returned the Shell card to the lockbox.</label>
+    <button type="submit">Sign out</button>
+    <p class="err" id="out-error"></p>
+    <p class="ok" id="out-ok" data-testid="visit-out-ok"></p>
+  </form>
+</main>
+<script>
+const intro = document.getElementById("intro");
+const closed = document.getElementById("closed");
+const form = document.getElementById("in-form");
+fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.json()).then((status) => {
+  intro.textContent = status.notice || "Visitor log";
+  if (!status.open) {
+    closed.hidden = false;
+    document.getElementById("blockers").textContent = "Still required: " + (status.blockers || []).join(", ") + ".";
+    return;
+  }
+  form.hidden = false;
+}).catch(() => { intro.textContent = "Visitor log is not available."; closed.hidden = false; });
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const error = document.getElementById("in-error");
+  error.textContent = "";
+  const data = new FormData(form);
+  const file = data.get("photo");
+  if (!file || !file.size) { error.textContent = "A photo of the ID is required."; return; }
+  const photo = await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.readAsDataURL(file);
+  });
+  const response = await fetch("/api/visit/sign-in", {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), issues: data.get("issues"), photo }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { error.textContent = body.error || "Sign-in was not saved."; return; }
+  document.getElementById("receipt").textContent = "Keep this receipt for sign-out. It is shown once: " + body.receipt;
+});
+
+document.getElementById("out-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const error = document.getElementById("out-error");
+  const ok = document.getElementById("out-ok");
+  error.textContent = "";
+  ok.textContent = "";
+  const data = new FormData(event.target);
+  const response = await fetch("/api/visit/sign-out", {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ receipt: data.get("receipt"), cardReturned: data.get("cardReturned") === "yes" }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { error.textContent = body.error || "Sign-out was not saved."; return; }
+  ok.textContent = "Signed out at " + (body.signedOutMelbourne || body.signedOutAt || "the recorded time") + ". The Shell card return was recorded.";
+});
+</script>
+</body>
+</html>
