@@ -29,6 +29,14 @@ const server = await start(8920);
 const page = await browser.newPage();
 try {
   await page.setViewport({ width: 1280, height: 900 });
+  await page.goto("http://127.0.0.1:8920/visit/sign-in", { waitUntil: "networkidle0" });
+  await page.waitForFunction(() => document.body.innerText.includes("Sign in is not open"));
+  assert(!(await page.$("[data-testid=visit-receipt-input]")), "sign-in page has a receipt field");
+  await page.goto("http://127.0.0.1:8920/visit/sign-out", { waitUntil: "networkidle0" });
+  await page.waitForSelector("[data-testid=visit-out-name]");
+  assert(!(await page.$("[data-testid=visit-photo]")), "sign-out page has a photo field");
+  assert(!(await page.$("[name=receipt]")), "sign-out page has a receipt field");
+  assert((await page.$eval("[data-testid=visit-card]", (el) => el.checked)) === false, "card radio starts checked");
   await page.goto("http://127.0.0.1:8920/visit", { waitUntil: "networkidle0" });
   await page.waitForFunction(() => document.body.innerText.includes("The form is not open"));
   await page.waitForFunction(() => document.body.innerText.includes("90 days"));
@@ -47,6 +55,7 @@ try {
   await shot(page, "visitor-admin-denied-desktop");
 
   visitLib.setVisitorTestHooks({ collect: true });
+  process.env.VISITOR_COLLECTION = "open";
   process.env.VISITOR_ACCESS_MAP = JSON.stringify({ joshuaOtp: true });
   process.env.VISITOR_SHEETS_SPREADSHEET_ID = "local-sheet";
   process.env.VISITOR_SHEETS_CLIENT_EMAIL = "visitor-log@example.iam.gserviceaccount.com";
@@ -73,15 +82,41 @@ try {
   await input.uploadFile(file);
   await shot(page, "visit-synthetic-form-mobile");
   await page.click("#in-form button[type=submit]");
-  await page.waitForFunction(() => document.body.innerText.includes("Keep this receipt"));
+  await page.waitForFunction(() => document.body.innerText.includes("Thanks for signing in"));
   await shot(page, "visit-synthetic-receipt-mobile");
-  const receipt = await page.$eval("[data-testid=visit-receipt]", (el) => el.textContent.split("once: ")[1]);
-  await page.type("[data-testid=visit-receipt-input]", receipt);
+  await page.type("[data-testid=visit-out-name]", "Synthetic Visitor");
+  await page.type("[data-testid=visit-out-company]", "Synthetic Co");
   await page.click("[data-testid=visit-card]");
   await page.click("#out-form button[type=submit]");
-  await page.waitForFunction(() => document.body.innerText.includes("Shell card return was recorded"));
+  await page.waitForFunction(() => document.body.innerText.includes("Thanks, you’ve signed out"));
   await shot(page, "visit-synthetic-signed-out-mobile");
-  assert(receipt && !receipt.includes("http"), receipt);
+  await page.setViewport({ width: 1280, height: 900 });
+  await page.goto("http://127.0.0.1:8920/visit/sign-in", { waitUntil: "networkidle0" });
+  await page.waitForSelector("[data-testid=visit-form]");
+  assert(!(await page.$("[data-testid=visit-receipt-input]")), "open sign-in page has a receipt field");
+  await shot(page, "visit-sign-in-desktop");
+  await page.setViewport({ width: 390, height: 844 });
+  await shot(page, "visit-sign-in-mobile");
+  await page.type("[data-testid=visit-location]", "Synthetic route");
+  await page.type("[name=name]", "Synthetic Route");
+  await page.type("[name=phone]", "0400000001");
+  await page.type("[name=company]", "Synthetic Co");
+  await (await page.$("[data-testid=visit-photo]")).uploadFile(file);
+  await page.click("#in-form button[type=submit]");
+  await page.waitForFunction(() => document.body.innerText.includes("Thanks for signing in"));
+  await page.waitForFunction(() => document.body.innerText.includes("Sign Out QR Code"));
+  await page.goto("http://127.0.0.1:8920/visit/sign-out", { waitUntil: "networkidle0" });
+  await page.waitForSelector("[data-testid=visit-out-name]");
+  assert(!(await page.$("[name=location]")), "sign-out page has a location field");
+  assert((await page.$eval("[data-testid=visit-signed-out]", (el) => el.hidden)) === true, "sign-out success is visible before submit");
+  await shot(page, "visit-sign-out-mobile");
+  await page.setViewport({ width: 1280, height: 900 });
+  await shot(page, "visit-sign-out-desktop");
+  await page.type("[data-testid=visit-out-name]", "Synthetic Route");
+  await page.type("[data-testid=visit-out-company]", "Synthetic Co");
+  await page.click("[data-testid=visit-card]");
+  await page.click("#out-form button[type=submit]");
+  await page.waitForFunction(() => document.body.innerText.includes("Thanks, you’ve signed out"));
   process.env.OTP_SESSION_SECRET = "local-otp-session-secret-32-characters";
   process.env.OTP_ALLOWLIST = JSON.stringify({ "jbattaglia@libertyretail.com.au": { approverKey: "joshua", preparerClass: "joshua", siteIds: ["s00000001"] } });
   const otp = await import("../netlify/lib/otp.mjs");
@@ -94,7 +129,7 @@ try {
     const row = await visitorStore().get(blob.key, { type: "json" });
     if (row && row.location === "Synthetic suburb") record = row;
   }
-  assert(record && record.id && record.receiptHash !== receipt, "synthetic visit missing");
+  assert(record && record.id && record.cardReturned === true, "synthetic visit missing");
   await page.setViewport({ width: 1280, height: 900 });
   await page.goto("http://127.0.0.1:8920/admin#/visitors/" + record.id, { waitUntil: "networkidle0" });
   await page.waitForFunction(() => document.body.innerText.includes("shared password"));
@@ -114,7 +149,7 @@ try {
   await shot(page, "visitor-joshua-record-desktop");
   await page.click("#visitor-delete-confirm");
   await page.click("[data-act=visitor-delete]");
-  await page.waitForFunction(() => document.body.innerText.includes("No visits."));
+  await page.waitForFunction(() => location.hash === "#/visitors" && !document.body.innerText.includes("Synthetic suburb"));
   await shot(page, "visitor-joshua-deleted-desktop");
   console.log("visitor ui ok");
 } finally {

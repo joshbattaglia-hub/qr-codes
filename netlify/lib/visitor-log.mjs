@@ -112,7 +112,7 @@ function trustedIp(req) {
 async function limited(req, kind) {
   const windowId = Math.floor(now() / 900000);
   const ip = trustedIp(req);
-  const max = ip === "untrusted" ? 8 : kind === "in" ? 10 : 20;
+  const max = ip === "untrusted" ? (kind === "match" ? 5 : 8) : kind === "in" ? 10 : kind === "match" ? 8 : 20;
   const result = await conditionalIncrement(rateStore(), `visitor/${kind}/${ip}/${windowId}`, max);
   if (!result.ok && result.reason === "unsupported") return { status: 503, error: "Visitor log is temporarily unavailable." };
   if (result.reason === "limit") return { status: 429, error: "Too many attempts. Wait and try again." };
@@ -125,6 +125,12 @@ function textField(value, max, label, required) {
   if (text.length > max) return { error: label + " is too long." };
   return { text };
 }
+
+export function normalizeVisitorMatch(value) {
+  return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const NEUTRAL_SIGN_OUT = "That sign-out could not be completed. Ask the site contact for help.";
 
 function hashReceipt(receipt) {
   return crypto.createHash("sha256").update(String(receipt)).digest("hex");
@@ -314,10 +320,67 @@ export async function signIn(req, body) {
   return { status: 200, body: { ok: true, receipt, signedInAt, signedInMelbourne: melbourne(signedInAt) } };
 }
 
+async function activeNameMatches(name, company) {
+  const { blobs } = await visitorStore().list({ prefix: "visit/" });
+  const rows = (await Promise.all(blobs.map((blob) => visitorStore().get(blob.key, { type: "json" })))).filter((row) => row && row.id && !row.deleted && !row.signedOutAt);
+  return rows.filter((row) => normalizeVisitorMatch(row.name) === name && normalizeVisitorMatch(row.company) === company);
+}
+
+async function signOutWithName(req, body) {
+  if (body?.cardReturned !== true) return { status: 400, error: "Confirm that the Shell card was returned to the lockbox." };
+  const name = textField(body?.name, 80, "Visitor name", true);
+  const company = textField(body?.company, 80, "Company", true);
+  const fieldError = [name, company].find((item) => item.error);
+  if (fieldError) return { status: 400, error: fieldError.error };
+  const wantedName = normalizeVisitorMatch(name.text);
+  const wantedCompany = normalizeVisitorMatch(company.text);
+  if (!wantedName || !wantedCompany) return { status: 400, error: "Visitor name is required." };
+  const gate = await limited(req, "match");
+  if (gate) return gate;
+  const hits = await activeNameMatches(wantedName, wantedCompany);
+  if (hits.length !== 1) {
+    await audit(hits.length > 1 ? "sign-out-ambiguous" : "sign-out-unmatched", "public", "");
+    return { status: 400, error: NEUTRAL_SIGN_OUT };
+  }
+  const id = hits[0].id;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const meta = await visitorStore().getWithMetadata("visit/" + id, { type: "json", consistency: "strong" });
+    if (!meta?.etag || meta.data.deleted) return { status: 400, error: NEUTRAL_SIGN_OUT };
+    if (meta.data.signedOutAt) {
+      return { status: 200, body: { ok: true, alreadySignedOut: true, signedOutAt: meta.data.signedOutAt, signedOutMelbourne: melbourne(meta.data.signedOutAt), cardReturned: meta.data.cardReturned === true } };
+    }
+    const active = await activeNameMatches(wantedName, wantedCompany);
+    if (active.length !== 1 || active[0].id !== id) {
+      await audit(active.length > 1 ? "sign-out-ambiguous" : "sign-out-unmatched", "public", "");
+      return { status: 400, error: NEUTRAL_SIGN_OUT };
+    }
+    const atMs = now();
+    const signedOutAt = new Date(atMs).toISOString();
+    const openExpired = signInPhotoDeadline(meta.data) <= atMs;
+    const next = { ...meta.data, signedOutAt, cardReturned: true, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
+    if (openExpired || meta.data.photoStatus === "purged") {
+      next.photoStatus = "purged";
+      next.photoExpiredAt = meta.data.photoExpiredAt || new Date(signInPhotoDeadline(meta.data)).toISOString();
+      next.review = meta.data.review || "open-photo-expired";
+    }
+    const write = await visitorStore().setJSON("visit/" + id, next, { onlyIfMatch: meta.etag });
+    if (write?.modified === true) {
+      if (next.photoStatus === "purged") await visitorStore().delete("photo/" + id);
+      await audit("sign-out", "public", id);
+      await syncVisit(next);
+      await notify(next, "out");
+      return { status: 200, body: { ok: true, signedOutAt, signedOutMelbourne: melbourne(signedOutAt), cardReturned: true } };
+    }
+    if (write?.modified !== false) return { status: 503, error: "Visitor log is temporarily unavailable." };
+  }
+  return { status: 409, error: "Sign-out could not be saved. Try again." };
+}
+
 export async function signOut(req, body) {
+  const receipt = String(body?.receipt || "");
+  if (!receipt) return signOutWithName(req, body);
   const gate = await limited(req, "out");
   if (gate) return gate;
-  const receipt = String(body?.receipt || "");
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(receipt)) return { status: 401, error: "That receipt was not accepted." };
   if (body?.cardReturned !== true) return { status: 400, error: "Confirm that the Shell card was returned to the lockbox." };
   const digest = hashReceipt(receipt);

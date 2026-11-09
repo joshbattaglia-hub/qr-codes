@@ -3,6 +3,22 @@
   publish = "public"
   functions = "netlify/functions"
 [[redirects]]
+  from = "/visit/sign-in"
+  to = "/visit/sign-in.html"
+  status = 200
+[[redirects]]
+  from = "/visit/sign-in/"
+  to = "/visit/sign-in.html"
+  status = 200
+[[redirects]]
+  from = "/visit/sign-out"
+  to = "/visit/sign-out.html"
+  status = 200
+[[redirects]]
+  from = "/visit/sign-out/"
+  to = "/visit/sign-out.html"
+  status = 200
+[[redirects]]
   from = "/visit"
   to = "/visit.html"
   status = 200
