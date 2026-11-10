@@ -408,3 +408,28 @@ test("token diagnostics label the problem without revealing values", () => {
   assert.equal(inbound.tokenProblem("https://expresshelp.site/x?token=" + "x".repeat(SECRET.length), h), "token-mismatch-same-length");
   assert.equal(inbound.tokenProblem("https://expresshelp.site/x?token=%20" + SECRET, h), "token-whitespace");
 });
+
+test("Postmark verdicts decide auth; upstream Microsoft 365 Authentication-Results cannot fail or pass a message", async () => {
+  const from = { FromFull: { Email: "requester@libertyretail.com.au" } };
+  const m365Upstream = { Name: "Authentication-Results", Value: "dkim=none (message not signed) header.d=none;dmarc=none action=none header.from=libertyretail.com.au;" };
+  // Aligned DKIM from Postmark's SpamAssassin run passes even with M365's internal "dkim=none; dmarc=none".
+  const aligned = inbound.evaluateAuth("postmark", { ...from, Headers: [m365Upstream, { Name: "X-Spam-Tests", Value: "DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,SPF_HELO_PASS,SPF_PASS" }] });
+  assert.equal(aligned.ok, true);
+  // SPF pass with an aligned envelope (Return-Path) passes without a custom-domain DKIM key.
+  const spfOnly = inbound.evaluateAuth("postmark", { ...from, Headers: [m365Upstream,
+    { Name: "Return-Path", Value: "<requester@libertyretail.com.au>" },
+    { Name: "Received-SPF", Value: "Pass (sender SPF authorized) identity=mailfrom; envelope-from=\"requester@libertyretail.com.au\"" },
+    { Name: "X-Spam-Tests", Value: "DKIM_SIGNED,DKIM_VALID,SPF_PASS" }] });
+  assert.equal(spfOnly.ok, true);
+  // A forged upstream pass does not help a message Postmark could not verify.
+  const forged = inbound.evaluateAuth("postmark", { ...from, Headers: [
+    { Name: "Authentication-Results", Value: "spf=pass; dkim=pass; dmarc=pass" },
+    { Name: "Return-Path", Value: "<bounce@attacker.example>" },
+    { Name: "Received-SPF", Value: "Pass (sender SPF authorized) identity=mailfrom" },
+    { Name: "X-Spam-Tests", Value: "DKIM_SIGNED,DKIM_VALID,SPF_PASS" }] });
+  assert.equal(forged.ok, false);
+  assert.equal(forged.detail.spfAligned, false);
+  assert.equal(JSON.stringify(forged.detail).includes("attacker"), false);
+  const none = inbound.evaluateAuth("postmark", { ...from, Headers: [{ Name: "X-Spam-Tests", Value: "SPF_NONE" }] });
+  assert.equal(none.ok, false);
+});
