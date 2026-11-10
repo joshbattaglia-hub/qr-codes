@@ -314,3 +314,88 @@ test("settings copy names the secret but does not display a value, and quoted te
   assert.equal(inbound.stripQuoted("Hello\n> quoted\nOn Mon, Jane wrote:\nolder").includes("quoted"), false);
   assert.equal(inbound.stripQuoted("Hello\n> quoted\nOn Mon, Jane wrote:\nolder"), "Hello");
 });
+
+test("plus-addressed queues on one Postmark inbound address route to the right queue", async () => {
+  sent.length = 0;
+  process.env.TICKET_INBOUND_SECRET = SECRET;
+  const base = "0000example0000hash@inbound.postmarkapp.com";
+  const current = tickets.normaliseSettings(await lib.ticketStore().get("settings", { type: "json" }));
+  await lib.ticketStore().setJSON("settings", tickets.normaliseSettings({
+    ...current,
+    inbound: { enabled: true, addresses: { screens: "0000example0000hash+screens@inbound.postmarkapp.com", signage: "0000example0000hash+signage@inbound.postmarkapp.com" } },
+  }));
+  const post = (payload) => supportFn(req("POST", "/api/support/inbound/postmark?token=" + SECRET, { body: payload })).then(read);
+  const signage = await post(postmarkPayload({
+    from: "Requester@LibertyRetail.com.au", to: "0000Example0000hash+Signage@inbound.postmarkapp.com", hash: "Signage",
+    subject: "New sign", text: "Please print a sign.",
+  }));
+  assert.equal(signage.status, 200, JSON.stringify(signage.body));
+  assert.equal(signage.body.threaded, false);
+  const signageTicket = await lib.ticketStore().get("ticket/" + signage.body.ticketId, { type: "json" });
+  assert.equal(signageTicket.queue, "signage");
+  assert.equal(signageTicket.requesterEmail, "requester@libertyretail.com.au");
+  assert.equal(signageTicket.description, "Please print a sign.");
+
+  const screens = await post(postmarkPayload({
+    from: "requester@libertyretail.com.au", to: "0000example0000hash+screens@inbound.postmarkapp.com", hash: "screens",
+    subject: "Screen fault", text: "",
+  }));
+  const screensTicket = await lib.ticketStore().get("ticket/" + screens.body.ticketId, { type: "json" });
+  assert.equal(screensTicket.queue, "screens");
+
+  // Outlook HTML-only body falls back to text.
+  const htmlOnly = await post({ ...postmarkPayload({ from: "requester@libertyretail.com.au", to: "0000example0000hash+screens@inbound.postmarkapp.com", hash: "screens", subject: "Html", text: "" }), HtmlBody: "<p>Hello <b>there</b></p>" });
+  const htmlTicket = await lib.ticketStore().get("ticket/" + htmlOnly.body.ticketId, { type: "json" });
+  assert.equal(htmlTicket.description, "Hello there");
+
+  // Reply-to style base+tNNNN threads into the signage ticket.
+  const reply = await post(postmarkPayload({
+    from: "requester@libertyretail.com.au", to: `0000example0000hash+t${signageTicket.number}@inbound.postmarkapp.com`, hash: `t${signageTicket.number}`,
+    subject: "Re: New sign", text: "Follow up", stripped: "Follow up",
+  }));
+  assert.equal(reply.body.threaded, true);
+  assert.equal(reply.body.ticketId, signageTicket.id);
+
+  // Bare base address cannot pick a queue and goes to review, not silently dropped.
+  const bare = await post(postmarkPayload({ from: "requester@libertyretail.com.au", to: base, subject: "Which queue", text: "?" }));
+  assert.equal(bare.body.quarantined, true);
+  assert.equal(bare.body.reason, "queue");
+
+  // Cc to the queue address is matched too.
+  const cc = await post({ ...postmarkPayload({ from: "requester@libertyretail.com.au", to: "someone@example.com", subject: "Cc", text: "cc body" }), OriginalRecipient: "", CcFull: [{ Email: "0000example0000hash+signage@inbound.postmarkapp.com", MailboxHash: "signage" }] });
+  const ccTicket = await lib.ticketStore().get("ticket/" + cc.body.ticketId, { type: "json" });
+  assert.equal(ccTicket.queue, "signage");
+  assert.equal(sent.length, 0);
+});
+
+test("routeRecipients handles plain and mixed queue addresses", () => {
+  const settings = (screens, signage) => ({ inbound: { addresses: { screens, signage } } });
+  assert.equal(inbound.routeRecipients(settings("screens@example.com", "signage@example.com"), ["screens+t1001@example.com"]).queue, "screens");
+  assert.equal(inbound.routeRecipients(settings("screens@example.com", "signage@example.com"), ["SIGNAGE@example.com"]).queue, "signage");
+  assert.deepEqual(inbound.routeRecipients(settings("screens@example.com", "signage@example.com"), ["nobody@example.com"]), { queue: "", known: false });
+  assert.equal(inbound.routeRecipients(settings("hash@inbound.postmarkapp.com", "hash+signage@inbound.postmarkapp.com"), ["hash+signage@inbound.postmarkapp.com"]).queue, "signage");
+  assert.equal(inbound.routeRecipients(settings("hash@inbound.postmarkapp.com", "hash+signage@inbound.postmarkapp.com"), ["hash@inbound.postmarkapp.com"]).queue, "screens");
+  assert.equal(inbound.routeRecipients(settings("hash+screens@inbound.postmarkapp.com", "hash+signage@inbound.postmarkapp.com"), ["hash+t1001@inbound.postmarkapp.com"]).known, true);
+});
+
+test("Microsoft 365 style headers pass, and failures log outcome without addresses or tokens", async () => {
+  const m365 = inbound.evaluateAuth("postmark", { Headers: [
+    { Name: "Received-SPF", Value: "Pass (sender SPF authorized) identity=mailfrom" },
+    { Name: "X-Spam-Tests", Value: "DKIM_SIGNED,DKIM_VALID,SPF_HELO_PASS,SPF_PASS" },
+    { Name: "Authentication-Results", Value: "spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com" },
+    { Name: "Authentication-Results", Value: "dmarc=bestguesspass action=none header.from=example.com" },
+  ] });
+  assert.equal(m365.ok, true);
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    const res = await read(await supportFn(req("POST", "/api/support/inbound/postmark?token=wrong-token-value-xx", { body: {} })));
+    assert.equal(res.status, 401);
+  } finally { console.log = original; }
+  const logged = lines.find((line) => line.includes("ticket-inbound"));
+  assert.ok(logged);
+  assert.deepEqual(JSON.parse(logged), { event: "ticket-inbound", kind: "postmark", status: 401, outcome: "rejected", reason: "token" });
+  assert.equal(lines.join("\n").includes(SECRET), false);
+  assert.equal(lines.join("\n").includes("wrong-token-value-xx"), false);
+});
