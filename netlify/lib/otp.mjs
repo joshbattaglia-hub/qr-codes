@@ -215,7 +215,7 @@ async function releaseLock(hash) {
   await otpStore().delete("lock/" + hash);
 }
 
-async function sendCode(email, code, id) {
+export async function sendOtpCode(email, code, id) {
   const message = {
     to: email,
     subject: "Express Help sign-in code",
@@ -257,7 +257,7 @@ export async function startOtp(req, email) {
     const created = await otpStore().setJSON("ch/" + id, record, { onlyIfNew: true });
     if (created?.modified !== true) return uniform();
     let result;
-    try { result = await sendCode(normalized, code, id); }
+    try { result = await sendOtpCode(normalized, code, id); }
     catch { result = { status: "unknown" }; }
     if (result?.status !== "sent") {
       await patchChallenge(id, { consumed: true, pending: true, superseded: true });

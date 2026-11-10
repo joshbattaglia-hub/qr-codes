@@ -38,6 +38,18 @@
   from = "/showcase/*"
   to = "/showcase/index.html"
   status = 200
+[[redirects]]
+  from = "/support"
+  to = "/support/index.html"
+  status = 200
+[[redirects]]
+  from = "/support/"
+  to = "/support/index.html"
+  status = 200
+[[redirects]]
+  from = "/support/*"
+  to = "/support/index.html"
+  status = 200
 
 [[headers]]
   for = "/admin/*"
@@ -52,6 +64,18 @@
 [[headers]]
   for = "/showcase/*"
   [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/support"
+  [headers.values]
+    Cache-Control = "no-cache"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/support/*"
+  [headers.values]
+    Cache-Control = "no-cache"
     X-Robots-Tag = "noindex, nofollow"
 
 [[headers]]
