@@ -1,4 +1,5 @@
 import { CODE39_DEFAULTS, readLayout, validatePayload, parseBatch, code39Svg, safeAssetName, zipStore, printHtml } from "./code39.mjs";
+import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const NAME_TO_CODE = {
@@ -1819,6 +1820,7 @@ function pageFor(r) {
   if (r.name === "pos") return posList();
   if (r.name === "assets") return assetPage();
   if (r.name === "visitors") return visitorPage();
+  if (r.name === "tickets") return ticketShell();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
   return placeholder("Not found", "That page is not part of this admin.");
@@ -2016,6 +2018,7 @@ async function render(opts = {}) {
     view.innerHTML = pageFor(r);
     if (r.name === "assets") paintAsset();
     if (r.name === "visitors") paintVisitor();
+    if (r.name === "tickets") paintTickets(r.id, state).catch((err) => { const box = document.getElementById("ticket-body"); if (box) box.textContent = err.message; });
   }
   if (state.focus) {
     const el = document.querySelector(state.focus);
@@ -2433,6 +2436,10 @@ document.body.addEventListener("click", (e) => {
     if (goEl.dataset.mode) state.createMode = goEl.dataset.mode === "link" ? "link" : "qr";
     if (goEl.dataset.focus) state.focus = goEl.dataset.focus;
     go(goEl.dataset.go);
+    return;
+  }
+  if (actEl && actEl.closest("#ticket-page")) {
+    Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) note.textContent = err.message; else toast(err.message); });
     return;
   }
   if (actEl && actEl.closest("#visitor-page")) {
