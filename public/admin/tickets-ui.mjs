@@ -95,6 +95,8 @@ async function paintSettings(box, access) {
     return;
   }
   const settings = await api("/api/tickets/settings");
+  const held = await api("/api/tickets/quarantine").catch(() => ({ quarantine: [] }));
+  const quarantine = (held.quarantine || []).map((row) => '<p>' + esc(row.from) + ' · ' + esc(row.subject) + ' <button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="approve" data-id="' + esc(row.id) + '">Approve</button> <button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="discard" data-id="' + esc(row.id) + '">Discard</button></p>').join("");
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
     + '<h2>Ticket settings</h2><p class="muted">Notifications are off until you turn a queue on. Shared-password and POS roles are not staff.</p>'
     + '<label class="field"><span>Screens staff emails</span><textarea id="ticket-staff-screens">' + esc(settings.staff.screens.join("\n")) + "</textarea></label>"
@@ -106,7 +108,7 @@ async function paintSettings(box, access) {
     + '<label class="field"><span>Visibility</span><select id="ticket-visibility"><option value="own-and-sites">Own tickets plus mapped sites</option><option value="own-only">Own tickets only</option></select></label>'
     + '<label class="check"><input id="ticket-notify-screens" type="checkbox"' + (settings.notify.screens ? " checked" : "") + "> Screens notifications</label>"
     + '<label class="check"><input id="ticket-notify-signage" type="checkbox"' + (settings.notify.signage ? " checked" : "") + "> Signage notifications</label>"
-    + '<button class="btn" type="button" data-act="ticket-save-settings">Save ticket settings</button><p id="ticket-note-msg" class="small"></p>';
+    + '<button class="btn" type="button" data-act="ticket-save-settings">Save ticket settings</button><h2>Quarantine</h2>' + (quarantine || '<p class="muted">No held mail.</p>') + '<p id="ticket-note-msg" class="small"></p>';
   const visibility = document.getElementById("ticket-visibility");
   if (visibility) visibility.value = settings.visibility;
 }
@@ -135,6 +137,11 @@ export async function ticketAction(button, state, go) {
   if (act === "ticket-note") await api("/api/tickets/" + id + "/note", { method: "POST", body: JSON.stringify({ text: document.getElementById("ticket-note").value }) });
   if (act === "ticket-reply") await api("/api/tickets/" + id + "/reply", { method: "POST", body: JSON.stringify({ text: document.getElementById("ticket-reply").value }) });
   if (act === "ticket-close") await api("/api/tickets/" + id + "/close", { method: "POST", body: JSON.stringify({ notes: document.getElementById("ticket-close").value }) });
+  if (act === "ticket-quarantine") {
+    await api("/api/tickets/quarantine/" + button.dataset.id + "/" + (button.dataset.decision === "approve" ? "approve" : "discard"), { method: "POST", body: JSON.stringify({}) });
+    go("tickets/settings");
+    return;
+  }
   if (act === "ticket-save-settings") {
     const current = state.ticketAccess?.settings || await api("/api/tickets/settings");
     await api("/api/tickets/settings", { method: "PUT", body: JSON.stringify({
