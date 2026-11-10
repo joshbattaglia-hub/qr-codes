@@ -1,15 +1,7 @@
 import { CODE39_DEFAULTS, readLayout, validatePayload, parseBatch, code39Svg, safeAssetName, zipStore, printHtml } from "./code39.mjs";
+import { countryGroupKey } from "./country.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
-const NAME_TO_CODE = {
-  Australia: "AU", "United States": "US", "United States of America": "US", Japan: "JP",
-  "United Kingdom": "GB", "New Zealand": "NZ", Canada: "CA", Germany: "DE", France: "FR",
-  India: "IN", Singapore: "SG", Ireland: "IE", Netherlands: "NL", China: "CN",
-  "South Korea": "KR", Brazil: "BR", Mexico: "MX", Italy: "IT", Spain: "ES",
-  Indonesia: "ID", Malaysia: "MY", Philippines: "PH", "Hong Kong": "HK", Taiwan: "TW",
-  Sweden: "SE", Norway: "NO", Denmark: "DK", Finland: "FI", Switzerland: "CH",
-  "South Africa": "ZA", "United Arab Emirates": "AE", Thailand: "TH", Vietnam: "VN",
-};
 const DEVICE_OPTIONS = [
   ["mobile", "Mobile"], ["tablet", "Tablet"], ["desktop", "Desktop"],
   ["ios", "iOS"], ["android", "Android"], ["windows", "Windows"],
@@ -185,14 +177,24 @@ async function entraLoginState() {
     box.textContent = status.testIssuer ? "Local test issuer only. This is not the workplace tenant." : "Work account sign-in is configured. Access still depends on a verified object id.";
   } catch { box.textContent = "Microsoft sign-in is not operational."; }
 }
-function showLogin(message) {
+function showLogin(message, focusEmail) {
   $("#boot").classList.add("hidden");
   $("#shell").classList.add("hidden");
   $("#login").classList.remove("hidden");
   const err = $("#login-error");
   if (err) err.textContent = message || "";
   entraLoginState();
-  otpLoginState();
+  Promise.resolve(otpLoginState()).then(() => {
+    if (!focusEmail) return;
+    document.getElementById("otp-card")?.scrollIntoView({ block: "center" });
+    document.getElementById("otp-email")?.focus();
+  });
+}
+function paintAvatar() {
+  const name = String(state.actor?.name || state.settings?.workspaceName || "Liberty").trim();
+  const letter = (name.match(/[A-Za-z0-9]/) || ["L"])[0].toUpperCase();
+  const avatar = document.querySelector(".avatar");
+  if (avatar) avatar.textContent = letter;
 }
 async function otpLoginState() {
   const box = $("#otp-setup");
@@ -370,7 +372,10 @@ function sumDim(days, keys, channel, dim) {
   const channels = channel === "all" ? ["scan", "click"] : [channel];
   for (const key of keys) {
     for (const ch of channels) {
-      for (const [name, n] of Object.entries(days?.[key]?.[ch]?.[dim] || {})) out[name] = (out[name] || 0) + n;
+      for (const [name, n] of Object.entries(days?.[key]?.[ch]?.[dim] || {})) {
+        const bucket = dim === "country" ? countryGroupKey(name) : name;
+        out[bucket] = (out[bucket] || 0) + n;
+      }
     }
   }
   return out;
@@ -407,14 +412,15 @@ function pageSeries(keys) {
   return keys.map((date) => ({ date, value: viewSources().reduce((s, p) => s + (Number(p.daily?.[date]) || 0), 0) }));
 }
 function countryLabel(key) {
-  if (!key || key === "Unknown") return "Unknown";
-  if (/^[A-Z]{2}$/.test(key)) {
-    try { return new Intl.DisplayNames(["en"], { type: "region" }).of(key) || key; } catch { return key; }
+  const code = countryGroupKey(key);
+  if (!code || code === "Unknown") return "Unknown";
+  if (/^[A-Z]{2}$/.test(code)) {
+    try { return new Intl.DisplayNames(["en"], { type: "region" }).of(code) || code; } catch { return code; }
   }
-  return key;
+  return code;
 }
 function flagFor(key) {
-  const code = /^[A-Z]{2}$/.test(key || "") ? key : (NAME_TO_CODE[key] || "");
+  const code = countryGroupKey(key);
   if (!/^[A-Z]{2}$/.test(code)) return "•";
   return String.fromCodePoint(...[...code].map((c) => 0x1F1E6 + c.charCodeAt(0) - 65));
 }
@@ -760,7 +766,10 @@ function mergeBucket(into, src) {
   if (!src) return;
   into.n += src.n || 0;
   for (const dim of ["browser", "os", "device", "country", "city", "referrer"]) {
-    for (const [k, n] of Object.entries(src[dim] || {})) into[dim][k] = (into[dim][k] || 0) + n;
+    for (const [k, n] of Object.entries(src[dim] || {})) {
+      const bucket = dim === "country" ? countryGroupKey(k) : k;
+      into[dim][bucket] = (into[dim][bucket] || 0) + n;
+    }
   }
 }
 function topTable(rows, label) {
@@ -1661,6 +1670,9 @@ function assetPage() {
     + '<p id="asset-copy" class="small" role="status" data-testid="asset-status"></p></div>'
     + '<div class="card"><h2>Preview</h2><div id="asset-preview" class="asset-preview"></div><p id="asset-notes" class="asset-note small"></p></div></form></div>';
 }
+function visitorDenied() {
+  return '<h2>Visitor records are restricted</h2><p data-testid="visitor-denied">Visitor records are restricted. Sign in with your authorised email account to view them.</p><p><button class="btn" type="button" data-act="visitor-email-signin" data-testid="visitor-email-signin">Sign in with email</button></p>';
+}
 function visitorPage() {
   return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
 }
@@ -1670,7 +1682,7 @@ async function paintVisitor() {
   if (route().id) return paintVisitorRecord(route().id);
   const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
   if (!readiness?.granted) {
-    box.innerHTML = '<h2>Not available</h2><p data-testid="visitor-denied">Visitor records, ID photos, settings, history, and export are limited to Joshua\'s explicit visitor-log access. The shared password and POS roles do not open them.</p>';
+    box.innerHTML = visitorDenied();
     return;
   }
   const params = new URLSearchParams();
@@ -1713,7 +1725,7 @@ async function paintVisitorRecord(id) {
   const box = document.getElementById("visitor-body");
   const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
   if (!readiness?.granted) {
-    box.innerHTML = '<h2>Not available</h2><p data-testid="visitor-denied">Visitor records, ID photos, settings, history, and export are limited to Joshua\'s explicit visitor-log access. The shared password and POS roles do not open them.</p>';
+    box.innerHTML = visitorDenied();
     return;
   }
   const response = await fetch("/api/visitor-log/visits/" + encodeURIComponent(id), { credentials: "same-origin" });
@@ -2110,6 +2122,7 @@ async function onSettings(form) {
     state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ workspaceName: data.workspaceName, defaultFg: fg, defaultBg: bg }) });
     $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
     $("#account-label").innerHTML = "<strong>" + esc(state.settings.workspaceName) + "</strong><div class='muted small'>Admin session</div>";
+    paintAvatar();
     toast("Saved");
     render({ refetch: false, keepScroll: true });
   } catch (e) { toast(e.message); }
@@ -2213,6 +2226,14 @@ async function handleAction(el) {
     document.body.appendChild(link);
     link.click();
     link.remove();
+    return;
+  }
+  if (act === "visitor-email-signin") {
+    await api("/api/auth", { method: "DELETE" });
+    state.actor = { authenticated: false };
+    state.codes = [];
+    state.detail = null;
+    showLogin("", true);
     return;
   }
   if (act === "logout") {
@@ -2654,6 +2675,7 @@ async function enter() {
   $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
   const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : state.actor.role === "preparer" ? "Preparer" : "No access") + (state.actor.provider === "otp" ? " · email code" : "") : state.actor?.role === "manager" ? "Site manager" : "Head office";
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
+  paintAvatar();
   ensureRanges();
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();

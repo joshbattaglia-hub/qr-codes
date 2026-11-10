@@ -97,14 +97,75 @@ test("legacy aggregate stats migrate into daily scan buckets", () => {
     referrer: { "Direct / QR scan": 4 },
     last: "2026-11-02T00:00:00.000Z",
   });
+  const stored = JSON.stringify(migrated);
   const all = collect(migrated, ["2026-11-01", "2026-11-02"], "scan");
   assert.equal(all.total, 4);
-  assert.equal(all.country.Australia, 4);
-  assert.equal(collect(migrated, ["2026-11-01"], "scan").country.Australia, 1);
+  assert.equal(all.country.AU, 4);
+  assert.equal(all.country.Australia, undefined);
+  assert.equal(collect(migrated, ["2026-11-01"], "scan").country.AU, 1);
   assert.equal(collect(migrated, ["2026-11-02"], "scan").total, 3);
+  assert.equal(JSON.stringify(migrated), stored);
   const weights = [1, 3];
   const parts = allocateCounts({ Australia: 4 }, weights);
   assert.equal(parts[0].Australia + parts[1].Australia, 4);
+});
+
+test("country codes and names group into one row without rewriting stored keys", () => {
+  const day = "2026-11-05";
+  let written = null;
+  for (const country of ["AU", "au ", "Australia", " australia "]) {
+    written = recordHit(written, { day, at: "2026-11-05T00:00:00.000Z", channel: "scan", browser: "Safari", os: "iOS", device: "Mobile", country, city: "Sydney", referrer: "Direct / QR scan" });
+  }
+  assert.equal(written.days[day].scan.country.AU, 4);
+  assert.equal(written.days[day].scan.country.Australia, undefined);
+  assert.equal(Object.keys(written.days[day].scan.country).length, 1);
+  const stored = {
+    v: 2,
+    days: {
+      [day]: {
+        scan: { n: 7, u: [], browser: {}, os: {}, device: {}, country: { Australia: 6, AU: 1, "au ": 1 }, city: {}, referrer: {} },
+        click: { n: 0, u: [], browser: {}, os: {}, device: {}, country: {}, city: {}, referrer: {} },
+      },
+    },
+    last: null,
+  };
+  const before = JSON.stringify(stored);
+  const next = recordHit(stored, { day, at: "2026-11-05T03:00:00.000Z", channel: "scan", country: "AUS", city: "Melbourne", referrer: "Direct / QR scan" });
+  assert.equal(stored.days[day].scan.country.Australia, 6);
+  assert.equal(stored.days[day].scan.country["au "], 1);
+  assert.equal(JSON.stringify(stored), before);
+  assert.equal(next.days[day].scan.country.Australia, 6);
+  assert.equal(next.days[day].scan.country["au "], 1);
+  assert.equal(next.days[day].scan.country.AU, 2);
+  const grouped = collect(next, [day], "scan");
+  assert.equal(grouped.country.AU, 9);
+  assert.equal(grouped.country.Australia, undefined);
+  assert.equal(lib.groupedCountryStats(next).days[day].scan.country.AU, 9);
+  assert.equal(lib.statsForList(next).days[day].scan.country.AU, 9);
+  assert.equal(next.days[day].scan.country.Australia, 6);
+  const live = {
+    v: 2,
+    days: {
+      [day]: {
+        scan: { n: 12, u: [], browser: {}, os: {}, device: {}, country: { AU: 10, Australia: 1, IT: 1 }, city: {}, referrer: {} },
+        click: { n: 0, u: [], browser: {}, os: {}, device: {}, country: {}, city: {}, referrer: {} },
+      },
+    },
+  };
+  const liveBefore = JSON.stringify(live);
+  const liveView = collect(live, [day], "scan");
+  assert.equal(liveView.country.AU, 11);
+  assert.equal(liveView.country.IT, 1);
+  assert.equal(liveView.country.Australia, undefined);
+  assert.equal(JSON.stringify(live), liveBefore);
+  const namedOnly = recordHit(null, { day, at: "2026-11-05T04:00:00.000Z", channel: "scan", country: "Australia" });
+  assert.deepEqual(namedOnly.days[day].scan.country, { AU: 1 });
+  const unmapped = recordHit(null, { day, at: "2026-11-05T05:00:00.000Z", channel: "scan", country: "Not A Country" });
+  assert.deepEqual(unmapped.days[day].scan.country, { Unknown: 1 });
+  const nameOnly = lib.readGeo({ country: { name: "Australia" } });
+  assert.equal(nameOnly.countryCode, "");
+  const fromName = recordHit(null, { day, at: "2026-11-05T06:00:00.000Z", channel: "scan", country: nameOnly.countryCode || nameOnly.countryName || "Unknown" });
+  assert.deepEqual(fromName.days[day].scan.country, { AU: 1 });
 });
 
 test("sydney calendar buckets late UTC evenings onto the next local day", () => {

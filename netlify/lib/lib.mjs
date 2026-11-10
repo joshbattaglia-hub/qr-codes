@@ -1,5 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
+import { countryGroupKey, countryWriteKey, groupCountryMap } from "../../public/admin/country.mjs";
 
 /** Product calendar for scan buckets. Matches the Liberty / expresshelp.site audience. */
 export const METRICS_TZ = "Australia/Sydney";
@@ -304,7 +305,7 @@ export function recordHit(raw, hit) {
   addDim(b.browser, hit.browser);
   addDim(b.os, hit.os);
   addDim(b.device, hit.device);
-  addDim(b.country, hit.country || "Unknown");
+  addDim(b.country, countryWriteKey(hit.country || "Unknown"));
   addDim(b.city, hit.city || "Unknown");
   addDim(b.referrer, hit.referrer || "Direct / QR scan");
   if (hit.visitor) {
@@ -371,7 +372,10 @@ export function collect(stats, keys, channel) {
       if (!b) continue;
       n += b.n || 0;
       for (const dim of Object.keys(dims)) {
-        for (const [name, count] of Object.entries(b[dim] || {})) dims[dim][name] = (dims[dim][name] || 0) + count;
+        for (const [name, count] of Object.entries(b[dim] || {})) {
+          const key = dim === "country" ? countryGroupKey(name) : name;
+          dims[dim][key] = (dims[dim][key] || 0) + count;
+        }
       }
       for (const h of b.u || []) visitors.add(h);
     }
@@ -398,10 +402,23 @@ function stripBucket(b) {
     browser: b.browser || {},
     os: b.os || {},
     device: b.device || {},
-    country: b.country || {},
+    country: groupCountryMap(b.country),
     city: b.city || {},
     referrer: b.referrer || {},
   };
+}
+
+/** Read view only. The stored blob is not rewritten. */
+export function groupedCountryStats(raw) {
+  const s = migrateStats(raw);
+  const days = {};
+  for (const [key, day] of Object.entries(s.days)) {
+    days[key] = {
+      scan: { ...day.scan, country: groupCountryMap(day.scan?.country) },
+      click: { ...day.click, country: groupCountryMap(day.click?.country) },
+    };
+  }
+  return { v: 2, days, last: s.last || null };
 }
 
 /** List payload omits visitor hashes. */
