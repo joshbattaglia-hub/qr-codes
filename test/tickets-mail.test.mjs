@@ -395,7 +395,16 @@ test("Microsoft 365 style headers pass, and failures log outcome without address
   } finally { console.log = original; }
   const logged = lines.find((line) => line.includes("ticket-inbound"));
   assert.ok(logged);
-  assert.deepEqual(JSON.parse(logged), { event: "ticket-inbound", kind: "postmark", status: 401, outcome: "rejected", reason: "token" });
+  assert.deepEqual(JSON.parse(logged), { event: "ticket-inbound", kind: "postmark", status: 401, outcome: "rejected", reason: "token-mismatch-length" });
   assert.equal(lines.join("\n").includes(SECRET), false);
   assert.equal(lines.join("\n").includes("wrong-token-value-xx"), false);
+});
+
+test("token diagnostics label the problem without revealing values", () => {
+  process.env.TICKET_INBOUND_SECRET = SECRET;
+  const h = new Headers();
+  assert.equal(inbound.tokenProblem("https://expresshelp.site/api/support/inbound/postmark", h), "token-missing");
+  assert.equal(inbound.tokenProblem("https://expresshelp.site/x?token=short", h), "token-mismatch-length");
+  assert.equal(inbound.tokenProblem("https://expresshelp.site/x?token=" + "x".repeat(SECRET.length), h), "token-mismatch-same-length");
+  assert.equal(inbound.tokenProblem("https://expresshelp.site/x?token=%20" + SECRET, h), "token-whitespace");
 });

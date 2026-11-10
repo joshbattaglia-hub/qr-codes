@@ -244,6 +244,18 @@ export function inboundTokenOk(url, headers) {
   return sameSecret(token, secret) || sameSecret(password, secret);
 }
 
+// Diagnostic label only: never includes the token or the secret.
+export function tokenProblem(url, headers) {
+  let token = "";
+  try { token = new URL(url).searchParams.get("token") || ""; } catch { token = ""; }
+  const hasBasic = String(headers.get("authorization") || "").toLowerCase().startsWith("basic ");
+  if (!token && !hasBasic) return "token-missing";
+  if (!token) return "basic-mismatch";
+  const secret = env("TICKET_INBOUND_SECRET");
+  if (token.trim() !== token) return "token-whitespace";
+  return token.length === secret.length ? "token-mismatch-same-length" : "token-mismatch-length";
+}
+
 export function verifySvix(raw, headers, secret) {
   const id = headers.get("svix-id") || "";
   const timestamp = headers.get("svix-timestamp") || "";
@@ -328,7 +340,7 @@ async function handleInbound(kind, raw, headers, url) {
     const reason = env("TICKET_INBOUND_SECRET").length < 16 ? "secret-missing" : (settings?.inbound?.enabled !== true ? "disabled" : "no-address");
     return { status: 404, error: "Not found", logReason: reason };
   }
-  if (!inboundTokenOk(url, headers)) return { status: 401, error: "Not authorised", logReason: "token" };
+  if (!inboundTokenOk(url, headers)) return { status: 401, error: "Not authorised", logReason: tokenProblem(url, headers) };
   const svixSecret = env("RESEND_WEBHOOK_SECRET");
   if (kind === "resend" && svixSecret && !verifySvix(raw, headers, svixSecret)) return { status: 401, error: "Not authorised", logReason: "signature" };
   let payload;
