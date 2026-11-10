@@ -215,10 +215,17 @@ async function paintSettings(box, access) {
   }
   const settings = await api("/api/tickets/settings");
   const sites = await api("/api/tickets/sites").then((body) => body.sites || []).catch(() => []);
+  const held = await api("/api/tickets/quarantine").catch(() => ({ quarantine: [] }));
   const siteRef = sites.map((site) => esc(site.id) + " — " + esc(site.name) + (site.area ? " · " + esc(site.area) : "")).join("<br>");
+  const origin = (location.origin || "https://expresshelp.site").replace(/\/+$/, "");
+  const postmarkUrl = origin + "/api/support/inbound/postmark?token=";
+  const resendUrl = origin + "/api/support/inbound/resend?token=";
+  const quarantine = (held.quarantine || []).map((row) =>
+    "<tr><td>" + esc((row.at || "").slice(0, 16).replace("T", " ")) + "</td><td>" + esc(row.from) + "</td><td>" + esc(row.subject) + "</td><td>" + esc(row.reason || "") + '</td><td><button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="approve" data-id="' + esc(row.id) + '">Approve</button> <button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="discard" data-id="' + esc(row.id) + '">Discard</button></td></tr>'
+  ).join("");
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
     + "<h2>Ticket settings</h2>"
-    + '<p class="muted">Staff access is a verified email-code identity listed for that queue. Shared-password and POS roles are not ticket staff. Notifications stay off until you turn a queue on and the global switch on. Inbound mail is not sent or received in this release.</p>'
+    + '<p class="muted">Staff access is a verified email-code identity listed for that queue. Shared-password and POS roles are not ticket staff. Notifications stay off until you turn a queue on and the global switch on. Inbound mail stays off until the TICKET_INBOUND_SECRET environment variable, the inbound addresses, and the inbound switch are all set.</p>'
     + '<label class="field"><span>Screens staff emails (one per line)</span><textarea id="ticket-staff-screens" rows="4">' + esc(settings.staff.screens.join("\n")) + "</textarea></label>"
     + '<label class="field"><span>Signage staff emails (one per line)</span><textarea id="ticket-staff-signage" rows="4">' + esc(settings.staff.signage.join("\n")) + "</textarea></label>"
     + '<label class="field"><span>Screens request types</span><textarea id="ticket-types-screens" rows="5">' + esc(settings.types.screens.join("\n")) + "</textarea></label>"
@@ -233,7 +240,21 @@ async function paintSettings(box, access) {
     + '<label class="check"><input id="ticket-notify-signage" type="checkbox"' + (settings.notify.signage ? " checked" : "") + "> Signage notifications</label>"
     + '<label class="field"><span>Screens inbound email</span><input id="ticket-inbound-screens" value="' + esc(settings.inbound?.addresses?.screens || "") + '" placeholder="screens@support.example"></label>'
     + '<label class="field"><span>Signage inbound email</span><input id="ticket-inbound-signage" value="' + esc(settings.inbound?.addresses?.signage || "") + '" placeholder="signage@support.example"></label>'
+    + '<label class="check"><input id="ticket-inbound-enabled" type="checkbox"' + (settings.inbound?.enabled ? " checked" : "") + "> Enable inbound email (off until the secret, addresses and this switch are set)</label>"
     + '<button class="btn" type="button" data-act="ticket-save-settings">Save ticket settings</button>'
+    + '<div class="field-card" data-testid="ticket-inbound-setup"><h2>Inbound email setup</h2>'
+    + '<p>Postmark is recommended. Its inbound webhook includes the message body and a stripped reply, so Express Help does not need a second provider call. Resend can receive mail, but the <code>email.received</code> webhook is metadata only and needs a follow-up API call for the body.</p>'
+    + "<h3>Postmark (recommended)</h3>"
+    + "<p>Add an MX record for your inbound domain or subdomain pointing to <code>inbound.postmarkapp.com</code> with priority 10. Use a subdomain if the root domain already receives mail.</p>"
+    + "<p>Set the inbound webhook to <code>" + esc(postmarkUrl) + "</code> and append the <code>TICKET_INBOUND_SECRET</code> environment variable as the token, or use HTTP basic authentication with that secret as the password. This page never shows the secret.</p>"
+    + '<p>Docs: <a href="https://postmarkapp.com/developer/webhooks/inbound-webhook" target="_blank" rel="noopener">Inbound webhook</a>, <a href="https://postmarkapp.com/developer/user-guide/inbound/configure-an-inbound-server" target="_blank" rel="noopener">Configure an inbound server</a>, <a href="https://postmarkapp.com/developer/user-guide/inbound/inbound-domain-forwarding" target="_blank" rel="noopener">Inbound domain forwarding</a>.</p>'
+    + "<h3>Resend (optional)</h3>"
+    + "<p>If you use Resend receiving, copy the MX record shown for your domain in the Resend dashboard (values vary by region). Webhook URL: <code>" + esc(resendUrl) + "</code> plus <code>TICKET_INBOUND_SECRET</code>. Optionally set <code>RESEND_WEBHOOK_SECRET</code> so the Svix signature is also checked. The receiving API uses the existing <code>RESEND_API_KEY</code>.</p>"
+    + '<p>Docs: <a href="https://resend.com/docs/dashboard/receiving/" target="_blank" rel="noopener">Receiving emails</a>, <a href="https://resend.com/docs/webhooks/emails/received" target="_blank" rel="noopener">email.received</a>, <a href="https://resend.com/docs/webhooks/verify-webhooks-requests" target="_blank" rel="noopener">Verify webhooks</a>, <a href="https://resend.com/docs/dashboard/receiving/custom-domains" target="_blank" rel="noopener">Custom receiving domains</a>.</p>'
+    + "<p class=\"muted small\">Inbound mail is not accepted until the secret, at least one queue address, and the inbound switch are set. There are no auto-replies. Failed authentication or an unknown sender is held for review.</p></div>"
+    + "<h2>Quarantine</h2>"
+    + '<div class="table-wrap"><table><thead><tr><th>When</th><th>From</th><th>Subject</th><th>Reason</th><th></th></tr></thead><tbody>'
+    + (quarantine || '<tr><td colspan="5">No held mail.</td></tr>') + "</tbody></table></div>"
     + note("ticket-note-msg");
   const visibility = document.getElementById("ticket-visibility");
   if (visibility) visibility.value = settings.visibility;
@@ -337,6 +358,11 @@ export async function ticketAction(button, state, go) {
     if (!uploads.length) throw new Error("Choose a file.");
     await api("/api/tickets/" + id + "/file", { method: "POST", body: JSON.stringify(uploads[0]) });
   }
+  if (act === "ticket-quarantine") {
+    await api("/api/tickets/quarantine/" + button.dataset.id + "/" + (button.dataset.decision === "approve" ? "approve" : "discard"), { method: "POST", body: JSON.stringify({}) });
+    go("tickets/settings");
+    return;
+  }
   if (act === "ticket-close") {
     const photo = (await filesFromInput("ticket-close-photo", { photoOnly: true }))[0];
     await api("/api/tickets/" + id + "/close", { method: "POST", body: JSON.stringify({ notes: document.getElementById("ticket-close").value, photo: photo?.data || "" }) });
@@ -353,7 +379,7 @@ export async function ticketAction(button, state, go) {
       notify: { screens: document.getElementById("ticket-notify-screens").checked, signage: document.getElementById("ticket-notify-signage").checked },
       notifyGlobal: document.getElementById("ticket-notify-global").checked,
       inbound: {
-        enabled: current.inbound?.enabled === true,
+        enabled: document.getElementById("ticket-inbound-enabled").checked,
         addresses: {
           screens: document.getElementById("ticket-inbound-screens").value,
           signage: document.getElementById("ticket-inbound-signage").value,

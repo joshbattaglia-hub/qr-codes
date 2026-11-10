@@ -60,7 +60,7 @@ export function requesterAllowed(email, settings) {
   return domainAllowed(value, settings?.domains);
 }
 
-function emailOf(value) {
+export function emailOf(value) {
   const email = String(value || "").trim().toLowerCase();
   if (!email || email.length > 254 || !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) return "";
   return email;
@@ -604,3 +604,85 @@ export async function listSiteChoices() {
   const sites = (await Promise.all(blobs.map((blob) => sitesStore().get(blob.key, { type: "json" })))).filter(isSiteRecord);
   return sites.map((site) => ({ id: site.id, name: site.name, area: site.operationalRegion || "" })).sort((a, b) => a.name.localeCompare(b.name));
 }
+
+export async function ingestEmailReply(ticketId, actorEmail, text, files = []) {
+  const address = emailOf(actorEmail);
+  const body = String(text || "").trim().slice(0, TEXT_MAX);
+  if (!address) return { status: 400, error: "The sender was not accepted." };
+  if (!body && !(files || []).length) return { status: 400, error: "Write a comment first." };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const meta = await ticketStore().getWithMetadata("ticket/" + ticketId, { type: "json", consistency: "strong" });
+    if (!meta?.etag || !meta.data) return { status: 404, error: "That ticket is not available." };
+    const at = new Date(now()).toISOString();
+    const messages = [...(meta.data.messages || [])];
+    if (body) {
+      messages.push({ id: "m" + crypto.randomBytes(6).toString("hex"), at, actor: address, kind: "public", text: body });
+    }
+    const nextFiles = [...(meta.data.files || [])];
+    for (const file of files || []) {
+      if (nextFiles.length >= 8) break;
+      const saved = { id: "f" + crypto.randomBytes(8).toString("hex"), name: file.name, contentType: file.contentType };
+      await ticketStore().setJSON("file/" + saved.id, { ...saved, ticketId, bytes: file.bytes });
+      nextFiles.push(saved);
+    }
+    const next = { ...meta.data, messages, files: nextFiles, updatedAt: at };
+    const write = await ticketStore().setJSON("ticket/" + ticketId, next, { onlyIfMatch: meta.etag });
+    if (write?.modified === true) {
+      await audit(address, "email-reply", ticketId);
+      return { status: 200, body: { ticket: presentTicket(next, { staff: true }) } };
+    }
+    if (write?.modified !== false) return { status: 503, error: "Tickets are temporarily unavailable." };
+  }
+  return { status: 409, error: "That ticket changed. Try again." };
+}
+
+export async function ingestEmailTicket({ queue, requesterEmail, subject, description, siteId, siteOther, files = [] }) {
+  const settings = await readSettings();
+  const chosen = QUEUES.includes(queue) ? queue : "";
+  if (!chosen) return { status: 400, error: "Choose a queue." };
+  const address = emailOf(requesterEmail);
+  if (!address) return { status: 400, error: "Requester email is required." };
+  const title = String(subject || "").trim().slice(0, 140) || "Email request";
+  const details = String(description || "").trim().slice(0, TEXT_MAX) || "(empty message)";
+  const fallbackType = (settings.types[chosen] || []).includes("Other") ? "Other" : (settings.types[chosen] || [])[0];
+  if (!fallbackType) return { status: 400, error: "Choose a request type." };
+  const site = await siteChoice(siteId || "other", siteOther || "Email");
+  if (site.error) return { status: 400, error: site.error };
+  const count = await conditionalIncrement(ticketStore(), "counter", 1000000);
+  if (!count.ok) return { status: 503, error: "Tickets are temporarily unavailable." };
+  const at = new Date(now()).toISOString();
+  const ticket = {
+    id: "t" + crypto.randomBytes(8).toString("hex"),
+    number: 1000 + count.n,
+    queue: chosen, ...site, requestType: fallbackType, priority: "normal", neededBy: "",
+    subject: title, description: details, requesterEmail: address,
+    status: "new",
+    statusHistory: [{ at, from: "", to: "new", actor: address }],
+    assignee: "",
+    messages: [],
+    closeOut: null,
+    files: [],
+    createdAt: at,
+    updatedAt: at,
+  };
+  const savedFiles = [];
+  for (const file of files || []) {
+    if (savedFiles.length >= 8) break;
+    const saved = { id: "f" + crypto.randomBytes(8).toString("hex"), name: file.name, contentType: file.contentType };
+    await ticketStore().setJSON("file/" + saved.id, { ...saved, ticketId: ticket.id, bytes: file.bytes });
+    savedFiles.push(saved);
+  }
+  ticket.files = savedFiles;
+  await ticketStore().setJSON("ticket/" + ticket.id, ticket);
+  await audit(address, "email-create", ticket.id, chosen);
+  return { status: 200, body: { ticket: presentTicket(ticket, { staff: true }) } };
+}
+
+export async function findTicketByNumber(number) {
+  const n = Number(number);
+  if (!Number.isInteger(n) || n < 1) return null;
+  const { blobs } = await ticketStore().list({ prefix: "ticket/" });
+  const rows = await Promise.all(blobs.map((blob) => ticketStore().get(blob.key, { type: "json" })));
+  return rows.find((row) => row && row.number === n) || null;
+}
+

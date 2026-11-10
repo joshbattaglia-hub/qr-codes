@@ -1,6 +1,7 @@
 import { json } from "../lib/lib.mjs";
 import { forbidden, jsonCookies, originBlocked } from "../lib/access.mjs";
 import { clearSupportCookie, deleteSupportSession, startSupportCode, supportFromRequest, verifySupportCode } from "../lib/support-auth.mjs";
+import { receiveInbound } from "../lib/ticket-mail.mjs";
 import {
   addRequesterFile, commentRequesterTicket, createRequesterTicket, listRequesterTickets, listSiteChoices, readRequesterFile, readRequesterTicket, readSettings,
 } from "../lib/tickets.mjs";
@@ -10,6 +11,12 @@ const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-r
 export default async (req) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
+  const inbound = path.match(/^\/api\/support\/inbound\/(postmark|resend)$/);
+  if (inbound && req.method === "POST") {
+    const raw = await req.text();
+    const result = await receiveInbound(inbound[1], raw, req.headers, req.url);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
   if (req.method !== "GET" && originBlocked(req)) return forbidden();
   if (path === "/api/support/start" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
@@ -69,4 +76,4 @@ export default async (req) => {
   return json(404, { error: "Not found" }, PRIVATE);
 };
 
-export const config = { path: ["/api/support/start", "/api/support/verify", "/api/support/logout", "/api/support/session", "/api/support/tickets", "/api/support/tickets/*"] };
+export const config = { path: ["/api/support/start", "/api/support/verify", "/api/support/logout", "/api/support/session", "/api/support/tickets", "/api/support/tickets/*", "/api/support/inbound/postmark", "/api/support/inbound/resend"] };
