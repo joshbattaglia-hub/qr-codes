@@ -84,7 +84,8 @@ function headerMap(headers) {
   for (const row of Array.isArray(headers) ? headers : []) {
     const name = String(row?.Name || row?.name || "").trim().toLowerCase();
     if (!name) continue;
-    out[name] = String(row?.Value ?? row?.value ?? "");
+    const value = String(row?.Value ?? row?.value ?? "");
+    out[name] = out[name] ? out[name] + "; " + value : value;
   }
   if (headers && !Array.isArray(headers) && typeof headers === "object") {
     for (const [name, value] of Object.entries(headers)) out[String(name).toLowerCase()] = String(value ?? "");
@@ -120,7 +121,7 @@ export function evaluateAuth(kind, payload, fetched = {}) {
   let dmarc = "";
   const dmarcHit = authResults.match(/dmarc\s*=\s*([a-z]+)/i);
   if (dmarcHit) dmarc = dmarcHit[1].toLowerCase();
-  const dmarcOk = !dmarc || dmarc === "pass";
+  const dmarcOk = !dmarc || dmarc === "pass" || dmarc === "bestguesspass";
   const ok = spf === "pass" && dkim === "pass" && dmarcOk;
   return { ok, reason: ok ? "" : "auth-failed", spf, dkim, dmarc };
 }
@@ -147,26 +148,58 @@ export function ticketToken(subject, hash) {
   return hashHit ? Number(hashHit[1]) : 0;
 }
 
-function queueForRecipients(settings, recipients) {
-  const addresses = settings.inbound?.addresses || {};
-  const keys = new Set((recipients || []).map(baseEmail).filter(Boolean));
+export function routeRecipients(settings, recipients) {
+  const addresses = settings?.inbound?.addresses || {};
+  const configured = {};
   for (const queue of ["screens", "signage"]) {
-    const configured = baseEmail(addresses[queue] || "");
-    if (configured && keys.has(configured)) return queue;
+    const full = emailOf(addresses[queue] || "");
+    if (full) configured[queue] = { full, base: baseEmail(full) };
   }
-  return "";
+  const list = [...new Set((recipients || []).map(emailOf).filter(Boolean))];
+  for (const address of list) {
+    for (const [queue, row] of Object.entries(configured)) {
+      if (row.full === address) return { queue, known: true };
+    }
+  }
+  let known = false;
+  for (const address of list) {
+    const base = baseEmail(address);
+    const hits = Object.entries(configured).filter(([, row]) => row.base === base);
+    if (!hits.length) continue;
+    known = true;
+    const plain = hits.filter(([, row]) => row.full === row.base);
+    if (hits.length === 1 && (plain.length === 1 || !plusHash(address))) return { queue: hits[0][0], known };
+    if (plain.length === 1 && !/^t\d+$/i.test(plusHash(address))) return { queue: plain[0][0], known };
+  }
+  return { queue: "", known };
+}
+
+function queueForRecipients(settings, recipients) {
+  return routeRecipients(settings, recipients).queue;
+}
+
+function addressList(rows) {
+  return Array.isArray(rows) ? rows.map((row) => row?.Email || row?.email || "").filter(Boolean) : [];
+}
+
+function htmlText(html) {
+  return String(html || "").replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/[ \t]+/g, " ").trim();
 }
 
 export function postmarkMessage(payload) {
   const from = payload?.FromFull?.Email || payload?.From || "";
-  const toFull = Array.isArray(payload?.ToFull) ? payload.ToFull.map((row) => row?.Email).filter(Boolean) : [];
-  if (!toFull.length && payload?.OriginalRecipient) toFull.push(String(payload.OriginalRecipient));
+  const toFull = [
+    ...(payload?.OriginalRecipient ? [String(payload.OriginalRecipient)] : []),
+    ...addressList(payload?.ToFull),
+    ...addressList(payload?.CcFull),
+    ...addressList(payload?.BccFull),
+  ];
   const hash = payload?.MailboxHash || toFull.map(plusHash).find(Boolean) || "";
   return {
     from,
     to: toFull,
     subject: payload?.Subject || "",
-    text: payload?.StrippedTextReply || stripQuoted(payload?.TextBody || ""),
+    text: payload?.StrippedTextReply || stripQuoted(payload?.TextBody || "") || stripQuoted(htmlText(payload?.HtmlBody || "")),
     hash,
     attachments: (payload?.Attachments || []).map((file) => ({
       name: file.Name || file.name || "attachment",
@@ -184,7 +217,7 @@ export function resendMessage(event, fetched = {}) {
     from: data.from || fetched.from || "",
     to,
     subject: fetched.subject || data.subject || "",
-    text: fetched.text ? stripQuoted(fetched.text) : stripQuoted(fetched.html ? String(fetched.html).replace(/<[^>]+>/g, " ") : ""),
+    text: fetched.text ? stripQuoted(fetched.text) : stripQuoted(htmlText(fetched.html || "")),
     hash,
     attachments: fetched.attachments || [],
   };
@@ -271,36 +304,60 @@ async function quarantine(row) {
   return { status: 200, body: { ok: true, quarantined: true, reason: saved.reason } };
 }
 
+function logInbound(kind, status, outcome, reason = "") {
+  // Outcome only: never the token, addresses, subject or body.
+  console.log(JSON.stringify({ event: "ticket-inbound", kind, status, outcome, reason }));
+}
+
 export async function receiveInbound(kind, raw, headers, url) {
+  try {
+    const result = await handleInbound(kind, raw, headers, url);
+    const outcome = result.body?.quarantined ? "quarantined" : (result.body?.threaded ? "threaded" : (result.status === 200 ? "created" : "rejected"));
+    logInbound(kind, result.status, outcome, result.body?.reason || result.logReason || "");
+    delete result.logReason;
+    return result;
+  } catch (error) {
+    logInbound(kind, 500, "error", String(error?.name || "Error"));
+    return { status: 500, error: "The message could not be processed." };
+  }
+}
+
+async function handleInbound(kind, raw, headers, url) {
   const settings = await readSettings();
-  if (!inboundReady(settings)) return { status: 404, error: "Not found" };
-  if (!inboundTokenOk(url, headers)) return { status: 401, error: "Not authorised" };
+  if (!inboundReady(settings)) {
+    const reason = env("TICKET_INBOUND_SECRET").length < 16 ? "secret-missing" : (settings?.inbound?.enabled !== true ? "disabled" : "no-address");
+    return { status: 404, error: "Not found", logReason: reason };
+  }
+  if (!inboundTokenOk(url, headers)) return { status: 401, error: "Not authorised", logReason: "token" };
   const svixSecret = env("RESEND_WEBHOOK_SECRET");
-  if (kind === "resend" && svixSecret && !verifySvix(raw, headers, svixSecret)) return { status: 401, error: "Not authorised" };
+  if (kind === "resend" && svixSecret && !verifySvix(raw, headers, svixSecret)) return { status: 401, error: "Not authorised", logReason: "signature" };
   let payload;
-  try { payload = JSON.parse(raw); } catch { return { status: 400, error: "The message was not accepted." }; }
+  try { payload = JSON.parse(raw); } catch { return { status: 400, error: "The message was not accepted.", logReason: "json" }; }
   let fetched = {};
   if (kind === "resend") {
     fetched = await fetchResendEmail(payload?.data?.email_id);
-    if (!fetched) return { status: 503, error: "The message body is not available." };
+    if (!fetched) return { status: 503, error: "The message body is not available.", logReason: "fetch" };
   }
   const message = kind === "postmark" ? postmarkMessage(payload) : resendMessage(payload, fetched);
   const from = emailOf(message.from);
-  const queue = queueForRecipients(settings, message.to);
+  const route = routeRecipients(settings, message.to);
+  let queue = route.queue;
   const scope = requesterScope(settings, from);
   const auth = evaluateAuth(kind, payload, fetched);
   if (!from || !scope) return quarantine({ ...message, queue, reason: "sender" });
   if (!auth.ok) return quarantine({ ...message, queue, reason: auth.reason || "auth-failed" });
-  if (!queue) return quarantine({ ...message, queue, reason: "queue" });
-  const files = await acceptAttachments(message.attachments);
+  if (!route.known) return quarantine({ ...message, queue, reason: "queue" });
   const number = ticketToken(message.subject, message.hash);
   const existing = number ? await findTicketByNumber(number) : null;
   if (existing) {
-    if (existing.requesterEmail !== from) return quarantine({ ...message, queue, reason: "thread" });
+    if (existing.requesterEmail !== from) return quarantine({ ...message, queue: existing.queue || queue, reason: "thread" });
+    const files = await acceptAttachments(message.attachments);
     const result = await ingestEmailReply(existing.id, from, message.text || "", files);
-    if (result.status !== 200) return quarantine({ ...message, queue, reason: "thread" });
+    if (result.status !== 200) return quarantine({ ...message, queue: existing.queue || queue, reason: "thread" });
     return { status: 200, body: { ok: true, ticketId: existing.id, threaded: true } };
   }
+  if (!queue) return quarantine({ ...message, queue, reason: "queue" });
+  const files = await acceptAttachments(message.attachments);
   const created = await ingestEmailTicket({
     queue,
     requesterEmail: from,
@@ -310,7 +367,7 @@ export async function receiveInbound(kind, raw, headers, url) {
     siteOther: scope.sites[0] ? "" : "Email",
     files,
   });
-  if (created.status !== 200) return { status: created.status, body: created.body || { error: created.error } };
+  if (created.status !== 200) return quarantine({ ...message, queue, reason: "create-failed" });
   return { status: 200, body: { ok: true, ticketId: created.body.ticket.id, threaded: false } };
 }
 
