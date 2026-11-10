@@ -45,6 +45,7 @@ export async function deliver(message) {
         subject: message.subject,
         text: message.text,
         attachments: message.attachments || undefined,
+        reply_to: message.replyTo || undefined,
       }),
     });
     if (res.ok) {
