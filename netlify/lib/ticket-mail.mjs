@@ -108,22 +108,43 @@ export function evaluateAuth(kind, payload, fetched = {}) {
     const ok = spf === "pass" && dkim === "pass" && dmarcOk;
     return { ok, reason: ok ? "" : "auth-failed", spf, dkim, dmarc };
   }
+  // Only Postmark's own verdicts are trusted: X-Spam-Tests (SpamAssassin run by Postmark) and
+  // Received-SPF. Authentication-Results headers in the payload were added upstream (for example
+  // by the sender's Microsoft 365 tenant, often "dkim=none; dmarc=none") and can be forged.
   const headers = headerMap(payload?.Headers || payload?.headers || fetched?.headers);
   const tests = headers["x-spam-tests"] || "";
   const receivedSpf = headers["received-spf"] || "";
-  const authResults = headers["authentication-results"] || "";
-  const spf = resultPass(receivedSpf) || /\bSPF_PASS\b/.test(tests) || /(?:^|[\s;])spf=pass\b/i.test(authResults)
-    ? "pass"
-    : (receivedSpf || (/\bSPF_/.test(tests) ? "fail" : (/spf=/i.test(authResults) ? "fail" : "")));
-  const dkim = /\bDKIM_VALID\b/.test(tests) || /(?:^|[\s;])dkim=pass\b/i.test(authResults)
-    ? "pass"
-    : ((/\bDKIM_/.test(tests) || /dkim=/i.test(authResults)) ? "fail" : "");
-  let dmarc = "";
-  const dmarcHit = authResults.match(/dmarc\s*=\s*([a-z]+)/i);
-  if (dmarcHit) dmarc = dmarcHit[1].toLowerCase();
-  const dmarcOk = !dmarc || dmarc === "pass" || dmarc === "bestguesspass";
-  const ok = spf === "pass" && dkim === "pass" && dmarcOk;
-  return { ok, reason: ok ? "" : "auth-failed", spf, dkim, dmarc };
+  const testList = tests.split(/[\s,]+/).filter(Boolean);
+  const has = (name) => testList.includes(name);
+  const spfPass = resultPass(receivedSpf) || has("SPF_PASS");
+  const spfFail = /^\s*(fail|softfail)\b/i.test(receivedSpf) || has("SPF_FAIL") || has("SPF_SOFTFAIL");
+  const dkimValid = has("DKIM_VALID");
+  const dkimAligned = has("DKIM_VALID_AU");
+  const fromDomain = (emailOf(payload?.FromFull?.Email || payload?.From || "").split("@")[1]) || "";
+  const envelope = envelopeDomain(headers, receivedSpf);
+  const spfAligned = Boolean(spfPass && envelope && fromDomain && aligned(envelope, fromDomain));
+  const ok = dkimAligned || spfAligned || (spfPass && dkimValid && !envelope);
+  const spf = spfPass ? "pass" : (spfFail ? "fail" : (receivedSpf || testList.some((t) => t.startsWith("SPF_")) ? "other" : "none"));
+  const dkim = dkimAligned ? "pass-aligned" : (dkimValid ? "pass-unaligned" : (has("DKIM_SIGNED") ? "invalid" : "none"));
+  return {
+    ok, reason: ok ? "" : "auth-failed", spf, dkim, dmarc: "",
+    detail: { spf, dkim, spfAligned, envelopeKnown: Boolean(envelope), tests: testList.filter((t) => /^(SPF_|DKIM_|DMARC)/.test(t)).slice(0, 20) },
+  };
+}
+
+function aligned(a, b) {
+  const x = String(a || "").toLowerCase();
+  const y = String(b || "").toLowerCase();
+  if (!x || !y) return false;
+  return x === y || x.endsWith("." + y) || y.endsWith("." + x);
+}
+
+function envelopeDomain(headers, receivedSpf) {
+  const rp = String(headers["return-path"] || "").match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  if (rp) return rp[1].toLowerCase();
+  const ef = String(receivedSpf || "").match(/envelope-from=["<]?[^@\s;"]*@([a-z0-9.-]+\.[a-z]{2,})/i);
+  if (ef) return ef[1].toLowerCase();
+  return "";
 }
 
 export function baseEmail(value) {
@@ -311,21 +332,25 @@ async function quarantine(row) {
     text: String(row.text || "").slice(0, 4000),
     queue: row.queue || "",
     reason: row.reason || "rejected",
+    auth: row.auth || null,
   };
   await ticketStore().setJSON("quarantine/" + id, saved);
-  return { status: 200, body: { ok: true, quarantined: true, reason: saved.reason } };
+  return { status: 200, body: { ok: true, quarantined: true, reason: saved.reason }, logAuth: saved.auth || undefined };
 }
 
-function logInbound(kind, status, outcome, reason = "") {
+function logInbound(kind, status, outcome, reason = "", auth = undefined) {
   // Outcome only: never the token, addresses, subject or body.
-  console.log(JSON.stringify({ event: "ticket-inbound", kind, status, outcome, reason }));
+  const row = { event: "ticket-inbound", kind, status, outcome, reason };
+  if (auth) row.auth = auth;
+  console.log(JSON.stringify(row));
 }
 
 export async function receiveInbound(kind, raw, headers, url) {
   try {
     const result = await handleInbound(kind, raw, headers, url);
     const outcome = result.body?.quarantined ? "quarantined" : (result.body?.threaded ? "threaded" : (result.status === 200 ? "created" : "rejected"));
-    logInbound(kind, result.status, outcome, result.body?.reason || result.logReason || "");
+    logInbound(kind, result.status, outcome, result.body?.reason || result.logReason || "", result.logAuth);
+    delete result.logAuth;
     delete result.logReason;
     return result;
   } catch (error) {
@@ -357,7 +382,7 @@ async function handleInbound(kind, raw, headers, url) {
   const scope = requesterScope(settings, from);
   const auth = evaluateAuth(kind, payload, fetched);
   if (!from || !scope) return quarantine({ ...message, queue, reason: "sender" });
-  if (!auth.ok) return quarantine({ ...message, queue, reason: auth.reason || "auth-failed" });
+  if (!auth.ok) return quarantine({ ...message, queue, reason: auth.reason || "auth-failed", auth: auth.detail || null });
   if (!route.known) return quarantine({ ...message, queue, reason: "queue" });
   const number = ticketToken(message.subject, message.hash);
   const existing = number ? await findTicketByNumber(number) : null;

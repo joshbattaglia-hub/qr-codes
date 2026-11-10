@@ -221,7 +221,7 @@ async function paintSettings(box, access) {
   const postmarkUrl = origin + "/api/support/inbound/postmark?token=";
   const resendUrl = origin + "/api/support/inbound/resend?token=";
   const quarantine = (held.quarantine || []).map((row) =>
-    "<tr><td>" + esc((row.at || "").slice(0, 16).replace("T", " ")) + "</td><td>" + esc(row.from) + "</td><td>" + esc(row.subject) + "</td><td>" + esc(row.reason || "") + '</td><td><button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="approve" data-id="' + esc(row.id) + '">Approve</button> <button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="discard" data-id="' + esc(row.id) + '">Discard</button></td></tr>'
+    "<tr><td>" + esc((row.at || "").slice(0, 16).replace("T", " ")) + "</td><td>" + esc(row.from) + "</td><td>" + esc(row.subject) + "</td><td>" + esc(row.reason || "") + (row.auth ? " (SPF " + esc(row.auth.spf || "") + ", DKIM " + esc(row.auth.dkim || "") + ")" : "") + '</td><td><button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="approve" data-id="' + esc(row.id) + '">Approve</button> <button class="btn ghost" type="button" data-act="ticket-quarantine" data-decision="discard" data-id="' + esc(row.id) + '">Discard</button></td></tr>'
   ).join("");
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
     + "<h2>Ticket settings</h2>"
