@@ -152,7 +152,9 @@ test("requester domain gate is exact and rejects lookalikes", () => {
   assert.equal(tickets.requesterAllowed("jbattaglia@libertyretail.com.au", settings), true);
   assert.equal(tickets.requesterAllowed("Store.Manager@LibertyRetail.com.au", settings), true);
   assert.equal(tickets.requesterAllowed("user@shop.libertyretail.com.au", settings), false);
+  assert.equal(tickets.requesterAllowed("user@sub.libertyretail.com.au", settings), false);
   assert.equal(tickets.requesterAllowed("user@libertyretail.com.au.evil.com", settings), false);
+  assert.equal(tickets.requesterAllowed("user@evil-libertyretail.com.au", settings), false);
   assert.equal(tickets.requesterAllowed("user@libertyreta1l.com.au", settings), false);
   assert.equal(tickets.requesterAllowed("user@notlibertyretail.com.au", settings), false);
   assert.equal(tickets.domainAllowed("user@example.com", settings.domains), false);
@@ -162,4 +164,41 @@ test("requester domain gate is exact and rejects lookalikes", () => {
   assert.equal(tickets.requesterAllowed("contractor@example.com", withExtra), true);
   assert.equal(withExtra.requesters[0].sites[0], "s00000001");
   assert.equal(withExtra.requesters[0].area, "North");
+});
+
+test("staff on one queue cannot act on the other queue", async () => {
+  lib.setStoreFactory(lib.memoryBackend());
+  await lib.sitesStore().setJSON("s00000001", { id: "s00000001", name: "Example North", operationalRegion: "North" });
+  const joshua = await otpCookie(JOSHUA);
+  const saved = await read(await ticketFn(req("PUT", "/api/tickets/settings", { cookie: joshua, body: {
+    staff: { screens: [STAFF], signage: [] },
+    types: tickets.DEFAULT_TYPES,
+    notify: { screens: false, signage: false },
+    notifyGlobal: false,
+  } })));
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.notify.screens, false);
+  const signage = await read(await ticketFn(req("POST", "/api/tickets", { cookie: joshua, body: {
+    queue: "signage", siteId: "s00000001", requestType: "Damage or repair", priority: "normal",
+    subject: "Signage only", description: "A signage-only example.", requesterEmail: "requester.one@example.com",
+  } })));
+  assert.equal(signage.status, 200);
+  const screens = await otpCookie(STAFF);
+  const createOther = await read(await ticketFn(req("POST", "/api/tickets", { cookie: screens, body: {
+    queue: "signage", siteId: "s00000001", requestType: "Damage or repair", priority: "normal",
+    subject: "Should fail", description: "Screens staff cannot open signage tickets.", requesterEmail: "requester.one@example.com",
+  } })));
+  assert.equal(createOther.status, 400);
+  const id = signage.body.ticket.id;
+  for (const [path, body] of [
+    ["/status", { status: "in-progress" }],
+    ["/note", { text: "Should not save" }],
+    ["/reply", { text: "Should not send" }],
+    ["/assign", { assignee: STAFF }],
+  ]) {
+    const res = await read(await ticketFn(req("POST", "/api/tickets/" + id + path, { cookie: screens, body })));
+    assert.equal(res.status, 404, path);
+  }
+  const listed = await read(await ticketFn(req("GET", "/api/tickets/" + id, { cookie: screens })));
+  assert.equal(listed.status, 404);
 });

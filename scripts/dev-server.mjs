@@ -29,6 +29,7 @@ const visitCleanupFn = (await import("../netlify/functions/visitor-cleanup.mjs")
 const reviewFn = (await import("../netlify/functions/pos-review.mjs")).default;
 const claimFn = (await import("../netlify/functions/claim-public.mjs")).default;
 const ticketFn = (await import("../netlify/functions/tickets.mjs")).default;
+const supportFn = (await import("../netlify/functions/support.mjs")).default;
 if (process.env.POS_MAIL_MOCK === "1" && !(process.env.RESEND_API_KEY && process.env.RESEND_FROM)) {
   const { setMailTransport } = await import("../netlify/lib/mail.mjs");
   setMailTransport(async (message) => {
@@ -87,6 +88,7 @@ export function start(port = 8888) {
       if (url.pathname === "/api/pos-drafts" || url.pathname.startsWith("/api/pos-drafts/")) return send(res, await posFn(request));
       if (url.pathname === "/api/visitor-log" || url.pathname.startsWith("/api/visitor-log/")) return send(res, await visitAdminFn(request));
       if (url.pathname === "/api/tickets" || url.pathname.startsWith("/api/tickets/")) return send(res, await ticketFn(request));
+      if (url.pathname === "/api/support" || url.pathname.startsWith("/api/support/")) return send(res, await supportFn(request));
       if (url.pathname === "/api/visit" || url.pathname.startsWith("/api/visit/")) return send(res, await visitPublicFn(request));
       if (url.pathname === "/api/visitor-cleanup") return send(res, await visitCleanupFn(request));
       if (url.pathname.startsWith("/api/identity/otp")) return send(res, await otpFn(request));
@@ -128,6 +130,7 @@ export function start(port = 8888) {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) filePath = path.join(filePath, "index.html");
       if (!fs.existsSync(filePath)) {
         if (url.pathname.startsWith("/admin")) filePath = path.join(root, "admin/index.html");
+        else if (url.pathname === "/support" || url.pathname.startsWith("/support/")) filePath = path.join(root, "support/index.html");
         else { res.writeHead(404).end("Not found"); return; }
       }
       res.writeHead(200, { "content-type": TYPES[path.extname(filePath)] || "application/octet-stream", "cache-control": "no-store" });
