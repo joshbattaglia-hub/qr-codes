@@ -177,6 +177,10 @@ export function presentTicket(ticket, { staff = false } = {}) {
     subject: ticket.subject,
     description: ticket.description,
     requesterEmail: ticket.requesterEmail,
+    requesterName: staff ? ticket.requesterName || "" : "",
+    requesterPhone: staff ? ticket.requesterPhone || "" : "",
+    siteFreeText: ticket.siteId === "other",
+    source: staff ? ticket.source || "" : "",
     status: ticket.status,
     statusLabel: STATUS_LABEL[ticket.status] || ticket.status,
     assignee: ticket.assignee || "",
@@ -188,6 +192,10 @@ export function presentTicket(ticket, { staff = false } = {}) {
     files: (ticket.files || []).map((file) => ({ id: file.id, name: file.name, contentType: file.contentType })),
     statusHistory: staff ? ticket.statusHistory || [] : (ticket.statusHistory || []).map((row) => ({ at: row.at, status: row.to })),
   };
+}
+
+export async function auditRow(actorEmail, action, ticketId, detail = "") {
+  return audit(actorEmail, action, ticketId, detail);
 }
 
 async function audit(actorEmail, action, ticketId, detail = "") {
@@ -206,6 +214,10 @@ async function audit(actorEmail, action, ticketId, detail = "") {
 async function loadTicket(id) {
   if (!/^t[a-f0-9]{16}$/.test(id || "")) return null;
   return ticketStore().get("ticket/" + id, { type: "json" });
+}
+
+export function siteChoiceFor(siteId, siteOther) {
+  return siteChoice(siteId, siteOther);
 }
 
 async function siteChoice(siteId, siteOther) {
@@ -288,7 +300,7 @@ export async function listTickets(actor, query) {
     const updated = melbourneDay(Date.parse(ticket.updatedAt));
     if (from && updated < from) return false;
     if (to && updated > to) return false;
-    if (q && ![String(ticket.number), ticket.subject, ticket.siteLabel, ticket.requesterEmail].join(" ").toLowerCase().includes(q)) return false;
+    if (q && ![String(ticket.number), ticket.subject, ticket.siteLabel, ticket.requesterEmail, ticket.requesterName || "", ticket.requesterPhone || ""].join(" ").toLowerCase().includes(q)) return false;
     return true;
   }).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   return { status: 200, body: { tickets: filtered.map((ticket) => presentTicket(ticket, { staff: true })) } };
@@ -469,134 +481,6 @@ export function requesterScope(settings, email) {
   const host = address.split("@")[1];
   const mapped = (settings.domains || []).find((row) => row.domain === host);
   return { email: address, sites: mapped?.sites || [], area: mapped?.area || "" };
-}
-
-function requesterCanSee(settings, scope, ticket) {
-  if (ticket.requesterEmail === scope.email) return "own";
-  if (settings.visibility === "own-only") return "";
-  if (scope.sites.includes(ticket.siteId)) return "site";
-  if (scope.area && ticket.area && ticket.area === scope.area) return "area";
-  return "";
-}
-
-function presentRequester(ticket, access) {
-  return { ...presentTicket(ticket, { staff: false }), access: access === "own" ? "own" : "read" };
-}
-
-export async function createRequesterTicket(scope, body) {
-  const settings = await readSettings();
-  if (!requesterScope(settings, scope.email)) return { status: 403, error: "Sign in to open support." };
-  const queue = QUEUES.includes(body?.queue) ? body.queue : "";
-  if (!queue) return { status: 400, error: "Choose a queue." };
-  const requestType = String(body?.requestType || "").trim();
-  if (!settings.types[queue].includes(requestType)) return { status: 400, error: "Choose a request type." };
-  const priority = PRIORITIES.includes(body?.priority) ? body.priority : "normal";
-  const subject = String(body?.subject || "").trim().slice(0, 140);
-  const description = String(body?.description || "").trim().slice(0, TEXT_MAX);
-  if (!subject || !description) return { status: 400, error: "Subject and description are required." };
-  const neededBy = String(body?.neededBy || "");
-  if (neededBy && !/^\d{4}-\d{2}-\d{2}$/.test(neededBy)) return { status: 400, error: "Needed-by must be a date." };
-  const site = await siteChoice(body?.siteId, body?.siteOther);
-  if (site.error) return { status: 400, error: site.error };
-  const count = await conditionalIncrement(ticketStore(), "counter", 1000000);
-  if (!count.ok) return { status: 503, error: "Tickets are temporarily unavailable." };
-  const at = new Date(now()).toISOString();
-  const ticket = {
-    id: "t" + crypto.randomBytes(8).toString("hex"),
-    number: 1000 + count.n,
-    queue, ...site, requestType, priority, neededBy,
-    subject, description, requesterEmail: scope.email,
-    status: "new",
-    statusHistory: [{ at, from: "", to: "new", actor: scope.email }],
-    assignee: "",
-    messages: [],
-    closeOut: null,
-    files: [],
-    createdAt: at,
-    updatedAt: at,
-  };
-  await ticketStore().setJSON("ticket/" + ticket.id, ticket);
-  await audit(scope.email, "request", ticket.id, queue);
-  return { status: 200, body: { ticket: presentRequester(ticket, "own") } };
-}
-
-export async function listRequesterTickets(scope) {
-  const settings = await readSettings();
-  const rows = await allTickets();
-  const visible = rows.filter((ticket) => requesterCanSee(settings, scope, ticket)).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  return {
-    status: 200,
-    body: {
-      tickets: visible.map((ticket) => presentRequester(ticket, requesterCanSee(settings, scope, ticket))),
-    },
-  };
-}
-
-async function requesterTicket(scope, id) {
-  const settings = await readSettings();
-  const ticket = await loadTicket(id);
-  if (!ticket) return null;
-  const access = requesterCanSee(settings, scope, ticket);
-  if (!access) return null;
-  return { ticket, access };
-}
-
-export async function readRequesterTicket(scope, id) {
-  const found = await requesterTicket(scope, id);
-  if (!found) return { status: 404, error: "That ticket is not available." };
-  return { status: 200, body: { ticket: presentRequester(found.ticket, found.access) } };
-}
-
-async function mutateRequester(scope, id, change) {
-  const settings = await readSettings();
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const meta = await ticketStore().getWithMetadata("ticket/" + id, { type: "json", consistency: "strong" });
-    if (!meta?.etag || !meta.data) return { status: 404, error: "That ticket is not available." };
-    const access = requesterCanSee(settings, scope, meta.data);
-    if (!access) return { status: 404, error: "That ticket is not available." };
-    if (access !== "own") return { status: 403, error: "This ticket is read only." };
-    const result = await change(meta.data);
-    if (result.error) return { status: 400, error: result.error };
-    const next = { ...meta.data, ...result.patch, updatedAt: new Date(now()).toISOString() };
-    const write = await ticketStore().setJSON("ticket/" + id, next, { onlyIfMatch: meta.etag });
-    if (write?.modified === true) {
-      await audit(scope.email, result.action, id, result.detail || "");
-      return { status: 200, body: { ticket: presentRequester(next, "own") } };
-    }
-    if (write?.modified !== false) return { status: 503, error: "Tickets are temporarily unavailable." };
-  }
-  return { status: 409, error: "That ticket changed. Try again." };
-}
-
-export function commentRequesterTicket(scope, id, body) {
-  const text = String(body?.text || "").trim().slice(0, TEXT_MAX);
-  if (!text) return { status: 400, error: "Write a comment first." };
-  return mutateRequester(scope, id, (ticket) => ({
-    action: "comment",
-    patch: { messages: [...(ticket.messages || []), { id: "m" + crypto.randomBytes(6).toString("hex"), at: new Date(now()).toISOString(), actor: scope.email, kind: "public", text }] },
-  }));
-}
-
-export function addRequesterFile(scope, id, body) {
-  let bytes;
-  try { bytes = Buffer.from(String(body?.data || ""), "base64"); }
-  catch { return { status: 400, error: "The file was not accepted." }; }
-  return mutateRequester(scope, id, async (ticket) => {
-    if ((ticket.files || []).length >= 8) return { error: "This ticket already has 8 files." };
-    const file = await acceptTicketFile(bytes, body?.name);
-    if (file.error) return { error: file.error };
-    const saved = { id: "f" + crypto.randomBytes(8).toString("hex"), name: file.name, contentType: file.contentType };
-    await ticketStore().setJSON("file/" + saved.id, { ...saved, ticketId: ticket.id, bytes: file.bytes });
-    return { action: "file", detail: saved.id, patch: { files: [...(ticket.files || []), saved] } };
-  });
-}
-
-export async function readRequesterFile(scope, ticketId, fileId) {
-  const found = await requesterTicket(scope, ticketId);
-  if (!found || !(found.ticket.files || []).some((file) => file.id === fileId)) return { status: 404, error: "That file is not available." };
-  const stored = await ticketStore().get("file/" + fileId, { type: "json" });
-  if (!stored || stored.ticketId !== ticketId) return { status: 404, error: "That file is not available." };
-  return { status: 200, body: Buffer.from(stored.bytes, "base64"), contentType: stored.contentType, name: stored.name };
 }
 
 export async function listSiteChoices() {

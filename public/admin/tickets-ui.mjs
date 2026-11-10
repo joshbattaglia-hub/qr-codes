@@ -91,7 +91,7 @@ async function paintList(box, access, state) {
   ]);
   const rows = (listed.tickets || []).map((ticket) =>
     '<tr data-testid="ticket-row"><td><button class="text-btn" type="button" data-go="tickets/' + esc(ticket.id) + '">' + esc(ticket.number) + "</button></td>"
-    + "<td>" + esc(ticket.subject) + "</td><td>" + esc(ticket.siteLabel) + "</td>"
+    + "<td>" + esc(ticket.subject) + "</td><td>" + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge" data-testid="ticket-site-free-text">Free-text site</span>' : "") + "</td>"
     + "<td>" + esc(PRIORITY_LABEL[ticket.priority] || ticket.priority) + "</td>"
     + "<td>" + esc(ticket.statusLabel) + (ticket.overdue ? ' <span class="badge" data-testid="ticket-overdue">Overdue</span>' : "") + "</td>"
     + "<td>" + esc((ticket.updatedAt || "").slice(0, 10)) + "</td></tr>"
@@ -168,11 +168,11 @@ async function paintTicket(box, id, access, state) {
   ).join("");
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
     + '<div data-testid="ticket-record"><h2>' + esc(ticket.number) + " · " + esc(ticket.subject) + "</h2>"
-    + "<p>" + esc(QUEUE_LABEL[ticket.queue] || ticket.queue) + " · " + esc(ticket.siteLabel) + " · " + esc(ticket.requestType)
+    + "<p>" + esc(QUEUE_LABEL[ticket.queue] || ticket.queue) + " · " + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge" data-testid="ticket-site-free-text">Free-text site (not in site list)</span>' : "") + " · " + esc(ticket.requestType)
     + " · " + esc(PRIORITY_LABEL[ticket.priority] || ticket.priority) + " · " + esc(ticket.statusLabel)
     + (ticket.overdue ? ' <span class="badge" data-testid="ticket-overdue">Overdue</span>' : "") + "</p>"
-    + "<p>Requester " + esc(ticket.requesterEmail) + (ticket.assignee ? " · Assignee " + esc(ticket.assignee) : "")
-    + (ticket.neededBy ? " · Needed by " + esc(ticket.neededBy) : "") + "</p>"
+    + '<p data-testid="ticket-submitter">Submitter ' + (ticket.requesterName ? esc(ticket.requesterName) + " · " : "") + esc(ticket.requesterEmail) + (ticket.requesterPhone ? " · " + esc(ticket.requesterPhone) : "") + (ticket.source === "web-form" ? " · via web form" : "") + "</p>"
+    + ((ticket.assignee || ticket.neededBy) ? "<p>" + [ticket.assignee ? "Assignee " + esc(ticket.assignee) : "", ticket.neededBy ? "Needed by " + esc(ticket.neededBy) : ""].filter(Boolean).join(" · ") + "</p>" : "")
     + "<p>" + esc(ticket.description) + "</p>"
     + (history ? "<h3>Status history</h3><ul>" + history + "</ul>" : "")
     + (notes || "")
