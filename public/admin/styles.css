@@ -218,3 +218,7 @@ tr.clickable:hover{background:#f8fafc}
 }
 #notice-draft{margin-top:12px}
 #notice-draft pre{white-space:pre-wrap;background:#f6f7fb;border-radius:12px;padding:12px}
+
+.metrics.ticket-metrics{grid-template-columns:repeat(2,1fr)}
+@media (min-width:720px){.metrics.ticket-metrics{grid-template-columns:repeat(4,1fr)}}
+#ticket-page .field-card{margin-top:10px}
