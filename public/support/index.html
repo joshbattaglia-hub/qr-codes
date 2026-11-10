@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Express Help support</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314247a'/%3E%3Cpath fill='%23e7c98a' d='M9.5 8h13v3.2h-9.2V24H9.5z'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: light; --ink:#1c2434; --muted:#667085; --line:#e6e8ee; --blue:#1f4bdb; --navy:#14247a; --gold:#e7c98a; }
+  * { box-sizing: border-box; }
+  html { overflow-x: clip; }
+  body { margin:0; font:16px/1.45 "Segoe UI", system-ui, sans-serif; background:#f3f4f8; color:var(--ink); overflow-x:clip; }
+  header { display:flex; gap:10px; align-items:center; padding:16px; background:#fff; border-bottom:1px solid var(--line); }
+  header strong { display:block; }
+  header small { color:var(--muted); }
+  main { width:min(720px,100%); margin:0 auto; padding:16px 16px 48px; }
+  h1 { font-size:28px; margin:0 0 8px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; }
+  label { display:flex; flex-direction:column; gap:6px; font-weight:600; margin:12px 0; }
+  input, select, textarea { font:inherit; padding:10px 12px; border:1px solid #d0d5dd; border-radius:8px; width:100%; }
+  textarea { min-height:96px; }
+  button { font:inherit; font-weight:700; background:var(--blue); color:#fff; border:0; border-radius:8px; padding:12px 14px; min-height:44px; }
+  button.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); }
+  a { color:var(--blue); }
+  .err { color:#d92d20; min-height:1.2em; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; }
+  .mark { width:32px; height:32px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 4px; border-bottom:1px solid var(--line); }
+  .wrap { overflow-x:auto; max-width:100%; }
+</style>
+</head>
+<body>
+<header>
+  <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#14247a"/><path fill="#e7c98a" d="M9.5 8h13v3.2h-9.2V24H9.5z"/></svg>
+  <span><strong>Express Help</strong><small>Liberty Oil Convenience</small></span>
+</header>
+<main id="app">Loading…</main>
+<script>
+const app = document.getElementById("app");
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (opts.body) headers["content-type"] = "application/json";
+  const response = await fetch(path, { ...opts, headers, credentials: "same-origin" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "That request was not completed.");
+  return body;
+}
+function fileData(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.readAsDataURL(file);
+  });
+}
+function signIn() {
+  app.innerHTML = '<h1>Support</h1><p>Sign in with the email address your site uses for screen and signage requests.</p><form class="card" id="support-in"><label>Email<input type="email" id="support-email" required maxlength="254" autocomplete="username"></label><button type="submit">Email me a code</button><label id="support-code-wrap" hidden>Code<input id="support-code" inputmode="numeric" maxlength="8"></label><p id="support-status"></p><p class="err" id="support-error"></p></form>';
+  document.getElementById("support-in").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("support-error");
+    error.textContent = "";
+    const email = document.getElementById("support-email").value;
+    const wrap = document.getElementById("support-code-wrap");
+    const code = document.getElementById("support-code").value;
+    try {
+      if (wrap.hidden) {
+        const started = await api("/api/support/start", { method: "POST", body: JSON.stringify({ email }) });
+        document.getElementById("support-status").textContent = started.message || "";
+        wrap.hidden = false;
+        return;
+      }
+      await api("/api/support/verify", { method: "POST", body: JSON.stringify({ email, code }) });
+      location.href = "/support";
+    } catch (err) { error.textContent = err.message; }
+  });
+}
+async function home(session) {
+  const listed = await api("/api/support/tickets");
+  const rows = (listed.tickets || []).map((ticket) => '<tr><td><a href="/support/tickets/' + esc(ticket.id) + '">' + esc(ticket.number) + '</a></td><td>' + esc(ticket.subject) + '</td><td>' + esc(ticket.statusLabel) + '</td><td>' + (ticket.access === "own" ? "Yours" : "Read only") + "</td></tr>").join("");
+  app.innerHTML = '<h1>My tickets</h1><p>Signed in as ' + esc(session.email) + '.</p><p class="row"><a href="/support/new">Submit ticket</a></p><div class="card wrap"><table><thead><tr><th>Number</th><th>Subject</th><th>Status</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">No tickets yet.</td></tr>') + "</tbody></table></div>";
+}
+async function create(session) {
+  const sites = (session.siteChoices || []).filter((site) => session.sites.includes(site.id) || (session.area && site.area === session.area));
+  const options = sites.map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + '<option value="other">Other</option>';
+  const types = ["screens", "signage"].map((queue) => '<optgroup label="' + queue + '">' + (session.types[queue] || []).map((type) => '<option value="' + queue + "|" + esc(type) + '">' + esc(type) + "</option>").join("") + "</optgroup>").join("");
+  app.innerHTML = '<h1>Submit ticket</h1><form class="card" id="support-new"><label>Request<select id="support-type" required>' + types + '</select></label><label>Site<select id="support-site">' + options + '</select></label><label id="support-other-wrap" hidden>Other site<input id="support-other" maxlength="80"></label><label>Priority<select id="support-priority"><option>normal</option><option>low</option><option>high</option><option>urgent</option></select></label><label>Needed by<input id="support-by" type="date"></label><label>Subject<input id="support-subject" required maxlength="140"></label><label>Description<textarea id="support-body" required maxlength="4000"></textarea></label><label>Photo or PDF<input id="support-file" type="file" accept="image/jpeg,image/png,application/pdf"></label><button type="submit">Submit ticket</button><p class="err" id="support-error"></p></form>';
+  document.getElementById("support-site").addEventListener("change", (event) => { document.getElementById("support-other-wrap").hidden = event.target.value !== "other"; });
+  document.getElementById("support-new").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("support-error");
+    error.textContent = "";
+    const [queue, requestType] = document.getElementById("support-type").value.split("|");
+    const payload = {
+      queue, requestType,
+      siteId: document.getElementById("support-site").value,
+      siteOther: document.getElementById("support-other").value,
+      priority: document.getElementById("support-priority").value,
+      neededBy: document.getElementById("support-by").value,
+      subject: document.getElementById("support-subject").value,
+      description: document.getElementById("support-body").value,
+    };
+    try {
+      const created = await api("/api/support/tickets", { method: "POST", body: JSON.stringify(payload) });
+      const file = document.getElementById("support-file").files[0];
+      if (file) await api("/api/support/tickets/" + created.ticket.id + "/file", { method: "POST", body: JSON.stringify({ name: file.name, data: await fileData(file) }) });
+      location.href = "/support/tickets/" + created.ticket.id;
+    } catch (err) { error.textContent = err.message; }
+  });
+}
+async function detail(id) {
+  const body = await api("/api/support/tickets/" + id);
+  const ticket = body.ticket;
+  const timeline = (ticket.statusHistory || []).map((row) => "<li>" + esc(row.at) + " · " + esc(row.status || row.to) + "</li>").join("");
+  const notes = (ticket.messages || []).map((row) => "<p><strong>Reply</strong> " + esc(row.text) + "</p>").join("");
+  const own = ticket.access === "own";
+  app.innerHTML = '<p><a href="/support">My tickets</a></p><h1>' + esc(ticket.number) + " · " + esc(ticket.subject) + '</h1><div class="card"><p>' + esc(ticket.statusLabel) + " · " + esc(ticket.siteLabel) + "</p><p>" + esc(ticket.description) + "</p><ul>" + timeline + "</ul>" + notes + (own ? '<form id="support-comment"><label>Add a comment<textarea id="support-text" required></textarea></label><label>Add a file<input id="support-more" type="file" accept="image/jpeg,image/png,application/pdf"></label><button type="submit">Add comment</button><p class="err" id="support-error"></p></form>' : "<p>This ticket is read only.</p>") + "</div>";
+  if (!own) return;
+  document.getElementById("support-comment").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/support/tickets/" + id + "/comment", { method: "POST", body: JSON.stringify({ text: document.getElementById("support-text").value }) });
+      const file = document.getElementById("support-more").files[0];
+      if (file) await api("/api/support/tickets/" + id + "/file", { method: "POST", body: JSON.stringify({ name: file.name, data: await fileData(file) }) });
+      detail(id);
+    } catch (err) { document.getElementById("support-error").textContent = err.message; }
+  });
+}
+async function boot() {
+  let session = null;
+  try { session = await api("/api/support/session"); } catch { session = null; }
+  const path = location.pathname.replace(/\/+$/, "") || "/support";
+  if (!session) return signIn();
+  const ticket = path.match(/^\/support\/tickets\/(t[a-f0-9]{16})$/);
+  if (path === "/support/new") return create(session);
+  if (ticket) return detail(ticket[1]);
+  return home(session);
+}
+boot();
+</script>
+</body>
+</html>
