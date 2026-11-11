@@ -208,15 +208,17 @@ export async function readTracking(req, raw) {
 }
 
 export const PUBLIC_DONE_DAYS = 30;
-const PUBLIC_SITE_MAX = 40;
 
 /** Public board row. Whitelist only: number, site, queue, column, updatedAt. */
+export const PUBLIC_OTHER_SITE = "Other site";
+
+/** Public board row. Whitelist only: number, site, queue, column, updatedAt. Typed-in sites never leave the server. */
 export function publicBoardRow(ticket) {
-  let site = String(ticket.siteLabel || "").replace(/\s+/g, " ").trim();
-  if (ticket.siteId === "other" && site.length > PUBLIC_SITE_MAX) site = site.slice(0, PUBLIC_SITE_MAX - 1).trimEnd() + "…";
+  const freeText = ticket.siteId === "other" || ticket.siteFreeText === true || !/^s[a-f0-9]{8}$/.test(String(ticket.siteId || ""));
+  const site = freeText ? PUBLIC_OTHER_SITE : String(ticket.siteLabel || "").replace(/\s+/g, " ").trim().slice(0, 80) || PUBLIC_OTHER_SITE;
   return {
     number: Number(ticket.number) || 0,
-    site: site.slice(0, 80),
+    site,
     queue: QUEUES.includes(ticket.queue) ? ticket.queue : "",
     column: columnFor(ticket.status),
     updatedAt: String(ticket.updatedAt || ""),
