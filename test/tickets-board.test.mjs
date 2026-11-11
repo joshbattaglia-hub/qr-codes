@@ -148,8 +148,9 @@ test("public board returns only whitelisted fields, hides Done older than 30 day
   assert.equal(numbers.includes(oldDone.number), false);
   assert.equal(numbers.includes(recentDone.number), true);
   const freeText = res.body.tickets.find((row) => row.number === fresh.number);
-  assert.ok(freeText.site.length <= 40);
-  assert.ok(freeText.site.startsWith("TEST Unlisted Site"));
+  assert.equal(freeText.site, "Other site");
+  assert.equal(payload.includes("TEST Unlisted Site"), false);
+  assert.equal(payload.includes("Exampleville"), false);
   assert.deepEqual(res.body.columns.map((row) => row.id), ["submitted", "needs-info", "in-progress", "done"]);
   const ip = "2001:db8:cccc::1";
   let limited = 0;
@@ -245,4 +246,19 @@ test("public board page and staff board UI are wired", () => {
   for (const needle of ["Needs more info", 'draggable="true"', "data-act=\"ticket-move\"", "ticket-needs-info-dialog", 'data-view="list"', "ticket-site-filter", "ticket-type-filter"]) {
     assert.ok(ui.includes(needle), needle);
   }
+});
+
+test("public board shows typed-in sites only as Other site while staff keep the typed text", async () => {
+  const typed = await make("signage", { siteId: "other", siteOther: "TEST Jane Citizen's shop, 1 Example St" });
+  const listed = await make("screens");
+  const res = await read(await supportFn(req("GET", "/api/support/board")));
+  const payload = JSON.stringify(res.body);
+  assert.equal(payload.includes("Jane Citizen"), false);
+  assert.equal(payload.includes("Example St"), false);
+  assert.equal(res.body.tickets.find((row) => row.number === typed.number).site, "Other site");
+  assert.equal(res.body.tickets.find((row) => row.number === listed.number).site, "Example North");
+  assert.equal(publicLib.publicBoardRow({ number: 1, siteId: "", siteLabel: "Email", queue: "screens", status: "new", updatedAt: "" }).site, "Other site");
+  const staff = await tickets.readTicket(ADMIN, typed.id);
+  assert.equal(staff.body.ticket.siteLabel, "TEST Jane Citizen's shop, 1 Example St");
+  assert.equal(staff.body.ticket.siteFreeText, true);
 });
