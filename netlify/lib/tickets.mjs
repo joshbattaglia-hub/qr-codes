@@ -18,8 +18,21 @@ export const STATUS_LABEL = {
 };
 export const DEFAULT_TYPES = {
   screens: ["New screen install", "Content/playlist change", "Fault or repair", "Relocation or removal", "Other"],
-  signage: ["New sign or install", "Replacement", "Damage or repair", "Promotional install", "Other"],
+  signage: ["New sign or install", "Replacement", "Damage or repair", "Promotional install", "Print or reprint", "Other"],
 };
+/** Request types added after settings were first saved. Settings older than this version get them appended once. */
+export const TYPES_VERSION = 2;
+const ADDED_TYPES = { 2: { signage: ["Print or reprint"] } };
+/** Ticket-only site option. Not a site record: it never appears in the sites store, mappings, visitor log or POS. */
+export const NATIONAL_SITE_ID = "national";
+export const NATIONAL_SITE_LABEL = "All sites / National";
+const EXTENSION_OF = { "image/png": ".png", "image/jpeg": ".jpg", "application/pdf": ".pdf" };
+/** Filename whose extension matches the stored content type. */
+export function fileNameFor(name, contentType, fallback = "file") {
+  const ext = EXTENSION_OF[contentType] || "";
+  const base = String(name || "").replace(/[\\/]+/g, " ").trim().replace(/\.[^.]*$/, "").slice(0, 60) || fallback;
+  return base + ext;
+}
 export const BOARD_COLUMNS = [
   { id: "submitted", label: "Submitted", status: "new" },
   { id: "needs-info", label: "Needs more info", status: "awaiting" },
@@ -56,6 +69,7 @@ export function defaultSettings() {
   return {
     staff: { screens: [TICKET_ADMIN_EMAIL], signage: [TICKET_ADMIN_EMAIL] },
     types: { screens: [...DEFAULT_TYPES.screens], signage: [...DEFAULT_TYPES.signage] },
+    typesVersion: TYPES_VERSION,
     requesters: [],
     domains: [{ domain: "libertyretail.com.au", sites: [], area: "" }],
     visibility: "own-and-sites",
@@ -110,6 +124,16 @@ export function normaliseSettings(raw) {
       : [...base.staff[queue]];
     const seeded = Array.isArray(raw?.types?.[queue]) ? cleanList(raw.types[queue], 30, 80) : [];
     types[queue] = seeded.length ? seeded : [...DEFAULT_TYPES[queue]];
+    if (seeded.length) {
+      const from = Number.isInteger(raw?.typesVersion) ? raw.typesVersion : 1;
+      for (let version = from + 1; version <= TYPES_VERSION; version++) {
+        for (const added of ADDED_TYPES[version]?.[queue] || []) {
+          if (types[queue].includes(added)) continue;
+          const other = types[queue].indexOf("Other");
+          if (other >= 0) types[queue].splice(other, 0, added); else types[queue].push(added);
+        }
+      }
+    }
   }
   const requesters = [];
   for (const row of Array.isArray(raw?.requesters) ? raw.requesters : []) {
@@ -139,7 +163,7 @@ export function normaliseSettings(raw) {
   }
   const visibility = raw?.visibility === "own-only" ? "own-only" : "own-and-sites";
   return {
-    staff, types, requesters, domains, visibility,
+    staff, types, typesVersion: TYPES_VERSION, requesters, domains, visibility,
     notify: { screens: raw?.notify?.screens === true, signage: raw?.notify?.signage === true },
     notifyGlobal: raw?.notifyGlobal === true,
     inbound: {
@@ -160,7 +184,8 @@ export async function readSettings() {
 export async function saveSettings(actor, body) {
   const access = await ticketAccess(actor);
   if (access.role !== "admin") return { status: 403, error: "Ticket settings are limited to the ticket admin." };
-  const next = normaliseSettings(body);
+  // The admin's saved list is authoritative: do not re-add types they removed.
+  const next = normaliseSettings({ ...(body || {}), typesVersion: TYPES_VERSION });
   await ticketStore().setJSON("settings", next);
   await audit(access.email, "settings", "");
   return { status: 200, body: next };
@@ -193,7 +218,8 @@ export function presentTicket(ticket, { staff = false } = {}) {
     number: ticket.number,
     queue: ticket.queue,
     siteId: ticket.siteId,
-    siteLabel: ticket.siteLabel,
+    siteLabel: ticket.siteId === NATIONAL_SITE_ID ? NATIONAL_SITE_LABEL : ticket.siteLabel,
+    siteNational: ticket.siteId === NATIONAL_SITE_ID,
     requestType: ticket.requestType,
     priority: ticket.priority,
     neededBy: ticket.neededBy || "",
@@ -246,6 +272,7 @@ export function siteChoiceFor(siteId, siteOther) {
 }
 
 async function siteChoice(siteId, siteOther) {
+  if (siteId === NATIONAL_SITE_ID) return { siteId: NATIONAL_SITE_ID, siteLabel: NATIONAL_SITE_LABEL, area: "" };
   if (siteId === "other") {
     const label = String(siteOther || "").trim().slice(0, 80);
     if (!label) return { error: "Describe the other site." };
@@ -386,7 +413,9 @@ async function mutate(actor, id, change) {
     const next = { ...meta.data, ...result.patch, updatedAt: new Date(now()).toISOString() };
     const write = await ticketStore().setJSON("ticket/" + id, next, { onlyIfMatch: meta.etag });
     if (write?.modified === true) {
-      await audit(access.email, result.action, id, result.detail || "");
+      if (typeof result.after === "function") await result.after();
+      const rows = Array.isArray(result.audits) ? result.audits : [{ action: result.action, detail: result.detail }];
+      for (const row of rows) await audit(access.email, row.action, id, row.detail || "");
       return { status: 200, body: { ticket: presentTicket(next, { staff: true }) } };
     }
     if (write?.modified !== false) return { status: 503, error: "Tickets are temporarily unavailable." };
@@ -466,12 +495,88 @@ export async function acceptTicketFile(input, name) {
     if (buf.length > FILE_MAX) return { error: "The file is too large." };
     const sample = buf.subarray(0, Math.min(buf.length, 4000)).toString("latin1");
     if (/\/JavaScript|\/JS/.test(sample)) return { error: "That PDF was not accepted." };
-    return { name: String(name || "file.pdf").slice(0, 80), contentType: "application/pdf", bytes: buf.toString("base64") };
+    return { name: fileNameFor(name, "application/pdf"), contentType: "application/pdf", bytes: buf.toString("base64") };
   }
   const image = reencodeVisitorPhoto(buf);
   if (image.error) return { error: image.error };
   if (image.bytes.length > FILE_MAX) return { error: "The file is too large." };
-  return { name: String(name || "image.jpg").replace(/\.[^.]+$/, "") .slice(0, 60) + ".jpg", contentType: image.contentType, bytes: image.bytes.toString("base64") };
+  return { name: fileNameFor(name, image.contentType, "image"), contentType: image.contentType, bytes: image.bytes.toString("base64") };
+}
+
+const EDIT_NOTE_MAX = 80;
+/**
+ * Staff edit of site and request type. One audit row per changed field ("edit-site", "edit-type"),
+ * detail "old -> new", plus the optional note. No notifications.
+ */
+export function editTicket(actor, id, body) {
+  const note = String(body?.note || "").replace(/\s+/g, " ").trim().slice(0, EDIT_NOTE_MAX);
+  const wantsSite = body?.siteId !== undefined && body?.siteId !== null && body?.siteId !== "";
+  const wantsType = body?.requestType !== undefined && body?.requestType !== null && body?.requestType !== "";
+  if (!wantsSite && !wantsType) return { status: 400, error: "Choose a site or request type to change." };
+  return mutate(actor, id, async (ticket, access) => {
+    const patch = {};
+    const audits = [];
+    const edits = [];
+    const at = new Date(now()).toISOString();
+    const suffix = note ? " · " + note : "";
+    const fromSite = ticket.siteId === NATIONAL_SITE_ID ? NATIONAL_SITE_LABEL : ticket.siteLabel;
+    if (wantsSite) {
+      const site = await siteChoice(body.siteId, body.siteOther);
+      if (site.error) return { error: site.error };
+      if (site.siteId !== ticket.siteId || site.siteLabel !== ticket.siteLabel) {
+        Object.assign(patch, site, { siteFreeText: site.siteId === "other" });
+        audits.push({ action: "edit-site", detail: (String(fromSite).slice(0, 36) + " -> " + String(site.siteLabel).slice(0, 36)) + suffix });
+        edits.push({ at, actor: access.email, field: "site", from: fromSite, to: site.siteLabel, note });
+      }
+    }
+    if (wantsType) {
+      const requestType = String(body.requestType).trim();
+      if (requestType !== ticket.requestType) {
+        const settings = await readSettings();
+        if (!(settings.types[ticket.queue] || []).includes(requestType)) return { error: "Choose a request type." };
+        patch.requestType = requestType;
+        audits.push({ action: "edit-type", detail: (String(ticket.requestType).slice(0, 36) + " -> " + requestType.slice(0, 36)) + suffix });
+        edits.push({ at, actor: access.email, field: "requestType", from: ticket.requestType, to: requestType, note });
+      }
+    }
+    if (!audits.length) return { error: "Nothing changed." };
+    patch.editHistory = [...(ticket.editHistory || []), ...edits];
+    return { audits, patch };
+  });
+}
+
+/**
+ * Admin maintenance: make attachment names match their stored content type. Metadata only
+ * (ticket file list and the file record's name); bytes are untouched. One "file-rename" audit row per file.
+ */
+export async function correctFileNames(actor, id) {
+  const access = await ticketAccess(actor);
+  if (access.role !== "admin") return { status: 403, error: "Ticket settings are limited to the ticket admin." };
+  const renamed = [];
+  const result = await mutate(actor, id, async (ticket) => {
+    renamed.length = 0;
+    const files = (ticket.files || []).map((file) => {
+      if (!EXTENSION_OF[file.contentType] || file.name === "close-out.jpg") return file;
+      const name = fileNameFor(file.name, file.contentType);
+      if (name === file.name) return file;
+      renamed.push({ id: file.id, from: file.name, to: name });
+      return { ...file, name };
+    });
+    if (!renamed.length) return { error: "All attachment names already match." };
+    return {
+      patch: { files },
+      audits: renamed.map((row) => ({ action: "file-rename", detail: row.id + " " + row.from.slice(0, 60) + " -> " + row.to.slice(0, 60) })),
+      after: async () => {
+        for (const row of renamed) {
+          const meta = await ticketStore().getWithMetadata("file/" + row.id, { type: "json", consistency: "strong" });
+          if (!meta?.data || meta.data.ticketId !== id) continue;
+          await ticketStore().setJSON("file/" + row.id, { ...meta.data, name: row.to }, { onlyIfMatch: meta.etag });
+        }
+      },
+    };
+  });
+  if (result.status !== 200) return result;
+  return { status: 200, body: { ticket: result.body.ticket, renamed: [...renamed] } };
 }
 
 export function addFile(actor, id, body) {
@@ -543,6 +648,11 @@ export function requesterScope(settings, email) {
   const host = address.split("@")[1];
   const mapped = (settings.domains || []).find((row) => row.domain === host);
   return { email: address, sites: mapped?.sites || [], area: mapped?.area || "" };
+}
+
+/** Ticket site option for forms and filters; never stored in the sites store. */
+export function nationalSiteChoice() {
+  return { id: NATIONAL_SITE_ID, name: NATIONAL_SITE_LABEL, area: "", national: true };
 }
 
 export async function listSiteChoices() {

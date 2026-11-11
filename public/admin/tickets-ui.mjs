@@ -10,6 +10,7 @@ const STATUS_LABEL = {
 };
 const PRIORITY_LABEL = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
 const QUEUE_LABEL = { screens: "Screens", signage: "Signage", all: "All" };
+const NATIONAL_SITE = { id: "national", name: "All sites / National" };
 const COLUMNS = [
   { id: "submitted", label: "Submitted" },
   { id: "needs-info", label: "Needs more info" },
@@ -106,7 +107,9 @@ function typeOptionsFor(access, queue, selected) {
 }
 
 function siteFilterOptions(sites, selected) {
-  return '<option value="">Any</option>' + sites.map((site) => '<option value="' + esc(site.id) + '"' + (site.id === selected ? " selected" : "") + ">" + esc(site.name) + "</option>").join("")
+  return '<option value="">Any</option>'
+    + '<option value="' + NATIONAL_SITE.id + '"' + (selected === NATIONAL_SITE.id ? " selected" : "") + ">" + esc(NATIONAL_SITE.name) + "</option>"
+    + sites.map((site) => '<option value="' + esc(site.id) + '"' + (site.id === selected ? " selected" : "") + ">" + esc(site.name) + "</option>").join("")
     + '<option value="other"' + (selected === "other" ? " selected" : "") + ">Free-text sites</option>";
 }
 
@@ -281,6 +284,7 @@ async function loadSites(state) {
 
 function siteOptions(sites, selected) {
   return '<option value="">Choose a site</option>'
+    + '<option value="' + NATIONAL_SITE.id + '"' + (selected === NATIONAL_SITE.id ? " selected" : "") + ">" + esc(NATIONAL_SITE.name) + "</option>"
     + sites.map((site) => '<option value="' + esc(site.id) + '"' + (site.id === selected ? " selected" : "") + ">" + esc(site.name) + (site.area ? " · " + esc(site.area) : "") + "</option>").join("")
     + '<option value="other"' + (selected === "other" ? " selected" : "") + ">Other</option>";
 }
@@ -309,6 +313,13 @@ async function paintSubmit(box, access, state) {
 async function paintTicket(box, id, access, state) {
   const body = await api("/api/tickets/" + encodeURIComponent(id));
   const ticket = body.ticket;
+  const sites = await loadSites(state).catch(() => []);
+  const editTypes = access.types?.[ticket.queue] || [];
+  const typeChoices = (editTypes.includes(ticket.requestType) ? editTypes : [ticket.requestType, ...editTypes])
+    .map((type) => '<option value="' + esc(type) + '"' + (type === ticket.requestType ? " selected" : "") + ">" + esc(type) + "</option>").join("");
+  const edits = (ticket.editHistory || []).map((row) =>
+    "<li>" + esc((row.at || "").slice(0, 16).replace("T", " ")) + " · " + esc(row.field === "site" ? "Site" : "Request type") + ": " + esc(row.from) + " → " + esc(row.to) + (row.actor ? " · " + esc(row.actor) : "") + (row.note ? " · " + esc(row.note) : "") + "</li>"
+  ).join("");
   const history = (ticket.statusHistory || []).map((row) =>
     "<li>" + esc((row.at || "").slice(0, 16).replace("T", " ")) + " · " + esc(STATUS_LABEL[row.to || row.status] || row.to || row.status) + (row.actor ? " · " + esc(row.actor) : "") + "</li>"
   ).join("");
@@ -327,11 +338,16 @@ async function paintTicket(box, id, access, state) {
     + ((ticket.assignee || ticket.neededBy) ? "<p>" + [ticket.assignee ? "Assignee " + esc(ticket.assignee) : "", ticket.neededBy ? "Needed by " + esc(ticket.neededBy) : ""].filter(Boolean).join(" · ") + "</p>" : "")
     + "<p>" + esc(ticket.description) + "</p>"
     + (history ? "<h3>Status history</h3><ul>" + history + "</ul>" : "")
+    + (edits ? '<h3>Edits</h3><ul data-testid="ticket-edit-history">' + edits + "</ul>" : "")
     + (notes || "")
     + (ticket.closeOut ? "<p>Close-out: " + esc(ticket.closeOut.notes) + (ticket.closeOut.photoId ? " · photo attached" : "") + "</p>" : "")
     + (files ? "<h3>Attachments</h3><ul>" + files + "</ul>" : "")
     + '<p>Board column: <strong data-testid="ticket-column-label">' + esc(ticket.columnLabel || "") + "</strong></p>"
     + '<div class="ticket-move"><label class="field"><span>Move to column</span><select id="move-' + esc(ticket.id) + '">' + COLUMNS.filter((col) => col.id !== ticket.column).map((col) => '<option value="' + col.id + '">' + esc(col.label) + "</option>").join("") + '</select></label><button class="btn" type="button" data-act="ticket-move" data-id="' + esc(ticket.id) + '">Move</button></div>'
+    + '<div class="ticket-edit" data-testid="ticket-edit"><label class="field"><span>Site</span><select id="ticket-edit-site">' + siteOptions(sites, ticket.siteId) + "</select></label>"
+    + '<label class="field"><span>Other site</span><input id="ticket-edit-site-other" value="' + esc(ticket.siteFreeText ? ticket.siteLabel : "") + '" placeholder="Describe the site if you chose Other"></label>'
+    + '<label class="field"><span>Request type</span><select id="ticket-edit-type">' + typeChoices + "</select></label>"
+    + '<button class="btn ghost" type="button" data-act="ticket-edit" data-id="' + esc(ticket.id) + '">Save site and type</button></div>'
     + '<label class="field"><span>Detailed status</span><select id="ticket-next-status">' + options(STATUS_LABEL, ticket.status) + "</select></label>"
     + '<button class="btn" type="button" data-act="ticket-status" data-id="' + esc(ticket.id) + '">Update status</button>'
     + '<label class="field"><span>Assignee</span><input id="ticket-assignee" value="' + esc(ticket.assignee) + '" placeholder="Staff email"></label>'
@@ -518,6 +534,11 @@ export async function ticketAction(button, state, go) {
     return;
   }
   if (act === "ticket-status") await api("/api/tickets/" + id + "/status", { method: "POST", body: JSON.stringify({ status: document.getElementById("ticket-next-status").value }) });
+  if (act === "ticket-edit") await api("/api/tickets/" + id + "/edit", { method: "POST", body: JSON.stringify({
+    siteId: document.getElementById("ticket-edit-site").value,
+    siteOther: document.getElementById("ticket-edit-site-other").value,
+    requestType: document.getElementById("ticket-edit-type").value,
+  }) });
   if (act === "ticket-assign") await api("/api/tickets/" + id + "/assign", { method: "POST", body: JSON.stringify({ assignee: document.getElementById("ticket-assignee").value }) });
   if (act === "ticket-note") await api("/api/tickets/" + id + "/note", { method: "POST", body: JSON.stringify({ text: document.getElementById("ticket-note").value }) });
   if (act === "ticket-reply") await api("/api/tickets/" + id + "/reply", { method: "POST", body: JSON.stringify({ text: document.getElementById("ticket-reply").value }) });
