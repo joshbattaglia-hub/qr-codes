@@ -284,3 +284,87 @@ test("correctFileNames fixes legacy .jpg names on PNGs (metadata only, audited, 
   assert.equal(rename[0].detail, legacy[0].id + " legacy-sign.jpg -> legacy-sign.png");
   assert.equal((await tickets.correctFileNames(ADMIN, id)).error, "All attachment names already match.");
 });
+
+async function closable(requesterEmail = "closer.requester@libertyretail.com.au") {
+  const created = await tickets.createTicket(ADMIN, {
+    queue: "signage", siteId: "s00000001", requestType: "Replacement", priority: "normal",
+    subject: "TEST close-out", description: "TEST close-out photo", requesterEmail,
+  });
+  assert.equal(created.status, 200);
+  return created.body.ticket.id;
+}
+
+test("close-out accepts a PNG photo and stores it as close-out.png with image/png", async () => {
+  const id = await closable();
+  const sentBefore = sent.length;
+  const closed = await tickets.closeTicket(ADMIN, id, { notes: "TEST installed", photo: pngBytes().toString("base64") });
+  assert.equal(closed.status, 200, JSON.stringify(closed));
+  const photoId = closed.body.ticket.closeOut.photoId;
+  assert.match(photoId, /^f[a-f0-9]{16}$/);
+  assert.deepEqual(closed.body.ticket.files, [{ id: photoId, name: "close-out.png", contentType: "image/png" }]);
+  const stored = await lib.ticketStore().get("file/" + photoId, { type: "json" });
+  assert.equal(stored.name, "close-out.png");
+  assert.equal(stored.contentType, "image/png");
+  assert.equal(stored.ticketId, id);
+  assert.deepEqual([...Buffer.from(stored.bytes, "base64").subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const file = await tickets.readFile(ADMIN, id, photoId);
+  assert.equal(file.contentType, "image/png");
+  assert.equal(file.name, "close-out.png");
+  assert.equal(closed.body.ticket.status, "closed");
+  assert.equal(sent.length, sentBefore, "the lib close path never sends");
+});
+
+test("close-out still accepts JPEG and stores it as close-out.jpg with image/jpeg", async () => {
+  const id = await closable();
+  const closed = await tickets.closeTicket(ADMIN, id, { notes: "TEST installed", photo: jpegBytes().toString("base64") });
+  assert.equal(closed.status, 200, JSON.stringify(closed));
+  const photoId = closed.body.ticket.closeOut.photoId;
+  assert.deepEqual(closed.body.ticket.files, [{ id: photoId, name: "close-out.jpg", contentType: "image/jpeg" }]);
+  const stored = await lib.ticketStore().get("file/" + photoId, { type: "json" });
+  assert.equal(stored.contentType, "image/jpeg");
+  assert.deepEqual([...Buffer.from(stored.bytes, "base64").subarray(0, 2)], [0xff, 0xd8]);
+});
+
+test("close-out keeps the magic-byte check and size limits; rejects PDFs and non-images without closing", async () => {
+  const id = await closable();
+  const pdf = await tickets.closeTicket(ADMIN, id, { notes: "TEST", photo: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n").toString("base64") });
+  assert.equal(pdf.status, 400);
+  assert.equal(pdf.error, "Close-out uses a JPEG or PNG photo.");
+  const text = await tickets.closeTicket(ADMIN, id, { notes: "TEST", photo: Buffer.from("not an image at all, renamed to photo.png").toString("base64") });
+  assert.equal(text.status, 400);
+  assert.equal(text.error, "Use a JPEG or PNG photo.");
+  const huge = pngBytes();
+  huge.writeUInt32BE(20000, 16);
+  huge.writeUInt32BE(20000, 20);
+  const tooBig = await tickets.closeTicket(ADMIN, id, { notes: "TEST", photo: huge.toString("base64") });
+  assert.equal(tooBig.status, 400);
+  assert.equal(tooBig.error, "The photo is too large.");
+  const oversize = Buffer.concat([pngBytes(), Buffer.alloc(8_000_001)]);
+  const tooLarge = await tickets.closeTicket(ADMIN, id, { notes: "TEST", photo: oversize.toString("base64") });
+  assert.equal(tooLarge.status, 400);
+  assert.equal(tooLarge.error, "The file is too large.");
+  const raw = await lib.ticketStore().get("ticket/" + id, { type: "json" });
+  assert.equal(raw.status, "new");
+  assert.deepEqual(raw.files, []);
+  const notes = await tickets.closeTicket(ADMIN, id, { notes: "", photo: pngBytes().toString("base64") });
+  assert.equal(notes.error, "Completion notes are required.");
+});
+
+test("a PNG close-out photo stays hidden from the requester like the JPEG one", async () => {
+  const scope = { email: "closer.requester@libertyretail.com.au" };
+  const id = await closable(scope.email);
+  const upload = await tickets.addFile(ADMIN, id, { name: "before.png", data: pngBytes().toString("base64") });
+  const visibleId = upload.body.ticket.files[0].id;
+  const closed = await tickets.closeTicket(ADMIN, id, { notes: "TEST done", photo: pngBytes().toString("base64") });
+  const photoId = closed.body.ticket.closeOut.photoId;
+  const own = await publicLib.readOwnTicket(scope, id);
+  assert.equal(own.status, 200);
+  assert.deepEqual(own.body.ticket.files.map((row) => row.id), [visibleId]);
+  assert.equal((await publicLib.readOwnFile(scope, id, photoId)).status, 404);
+  assert.equal((await publicLib.readOwnFile(scope, id, visibleId)).status, 200);
+  assert.equal(tickets.isCloseOutFile({ closeOut: null }, { id: "fx", name: "close-out.jpg" }), true);
+  assert.equal(tickets.isCloseOutFile({ closeOut: { photoId: "fy" } }, { id: "fy", name: "renamed.png" }), true);
+  assert.equal(tickets.isCloseOutFile({ closeOut: null }, { id: "fz", name: "before.png" }), false);
+  // Legacy-name correction leaves close-out photos alone.
+  assert.equal((await tickets.correctFileNames(ADMIN, id)).error, "All attachment names already match.");
+});

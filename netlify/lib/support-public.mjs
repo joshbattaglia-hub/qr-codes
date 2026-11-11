@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { conditionalIncrement, env, rateStore, ticketStore } from "./lib.mjs";
 import {
-  BOARD_COLUMNS, PRIORITIES, QUEUES, acceptTicketFile, allTicketRows, auditRow, columnFor, columnLabel, emailOf, listSiteChoices, readSettings, siteChoiceFor,
+  BOARD_COLUMNS, PRIORITIES, QUEUES, acceptTicketFile, allTicketRows, isCloseOutFile, auditRow, columnFor, columnLabel, emailOf, listSiteChoices, readSettings, siteChoiceFor,
 } from "./tickets.mjs";
 import { derivedTrackToken, hashTrackToken, trackPath, trackTokenMatches, writeTrackIndex } from "./ticket-track.mjs";
 
@@ -237,7 +237,7 @@ function presentOwn(ticket) {
       from: emailOf(row.actor) === emailOf(ticket.requesterEmail) ? "You" : "Express Help",
       text: row.text,
     })),
-    files: (ticket.files || []).filter((file) => file.id && file.name !== "close-out.jpg").map((file) => ({ id: file.id, name: file.name, contentType: file.contentType })),
+    files: (ticket.files || []).filter((file) => file.id && !isCloseOutFile(ticket, file)).map((file) => ({ id: file.id, name: file.name, contentType: file.contentType })),
   };
 }
 
@@ -267,7 +267,7 @@ export async function readOwnTicket(scope, id) {
 
 export async function readOwnFile(scope, ticketId, fileId) {
   const ticket = await loadOwn(scope, ticketId);
-  if (!ticket || !(ticket.files || []).some((file) => file.id === fileId && file.name !== "close-out.jpg")) return { status: 404, error: "That file is not available." };
+  if (!ticket || !(ticket.files || []).some((file) => file.id === fileId && !isCloseOutFile(ticket, file))) return { status: 404, error: "That file is not available." };
   const stored = await ticketStore().get("file/" + fileId, { type: "json" });
   if (!stored || stored.ticketId !== ticketId) return { status: 404, error: "That file is not available." };
   return { status: 200, body: Buffer.from(stored.bytes, "base64"), contentType: stored.contentType, name: stored.name };

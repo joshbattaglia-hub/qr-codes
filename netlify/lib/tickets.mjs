@@ -27,6 +27,13 @@ const ADDED_TYPES = { 2: { signage: ["Print or reprint"] } };
 export const NATIONAL_SITE_ID = "national";
 export const NATIONAL_SITE_LABEL = "All sites / National";
 const EXTENSION_OF = { "image/png": ".png", "image/jpeg": ".jpg", "application/pdf": ".pdf" };
+const CLOSE_OUT_TYPES = new Set(["image/jpeg", "image/png"]);
+/** The close-out photo is staff-only. Matches by closeOut.photoId, or the stored close-out name (legacy .jpg and .png). */
+export function isCloseOutFile(ticket, file) {
+  if (!file) return false;
+  if (ticket?.closeOut?.photoId && file.id === ticket.closeOut.photoId) return true;
+  return file.name === "close-out.jpg" || file.name === "close-out.png";
+}
 /** Filename whose extension matches the stored content type. */
 export function fileNameFor(name, contentType, fallback = "file") {
   const ext = EXTENSION_OF[contentType] || "";
@@ -556,7 +563,7 @@ export async function correctFileNames(actor, id) {
   const result = await mutate(actor, id, async (ticket) => {
     renamed.length = 0;
     const files = (ticket.files || []).map((file) => {
-      if (!EXTENSION_OF[file.contentType] || file.name === "close-out.jpg") return file;
+      if (!EXTENSION_OF[file.contentType] || isCloseOutFile(ticket, file)) return file;
       const name = fileNameFor(file.name, file.contentType);
       if (name === file.name) return file;
       renamed.push({ id: file.id, from: file.name, to: name });
@@ -609,13 +616,17 @@ export function closeTicket(actor, id, body) {
   if (!notes) return { status: 400, error: "Completion notes are required." };
   return mutate(actor, id, async (ticket, access) => {
     let photoId = "";
+    let photo = null;
     if (body?.photo) {
       let bytes;
       try { bytes = Buffer.from(String(body.photo), "base64"); } catch { return { error: "The photo was not accepted." }; }
-      const file = await acceptTicketFile(bytes, "close-out.jpg");
-      if (file.error || file.contentType !== "image/jpeg") return { error: file.error || "Close-out uses a JPEG or PNG photo." };
+      // Same checks as any upload: magic-byte sniff, dimension and size limits, re-encode (metadata stripped).
+      const file = await acceptTicketFile(bytes, "close-out");
+      if (file.error) return { error: file.error };
+      if (!CLOSE_OUT_TYPES.has(file.contentType)) return { error: "Close-out uses a JPEG or PNG photo." };
       photoId = "f" + crypto.randomBytes(8).toString("hex");
-      await ticketStore().setJSON("file/" + photoId, { id: photoId, ticketId: ticket.id, name: file.name, contentType: file.contentType, bytes: file.bytes });
+      photo = { id: photoId, name: fileNameFor("close-out", file.contentType), contentType: file.contentType };
+      await ticketStore().setJSON("file/" + photoId, { ...photo, ticketId: ticket.id, bytes: file.bytes });
     }
     const at = new Date(now()).toISOString();
     return {
@@ -623,7 +634,7 @@ export function closeTicket(actor, id, body) {
       patch: {
         status: "closed",
         closeOut: { notes, photoId, at, actor: access.email },
-        files: photoId ? [...(ticket.files || []), { id: photoId, name: "close-out.jpg", contentType: "image/jpeg" }] : ticket.files,
+        files: photo ? [...(ticket.files || []), photo] : ticket.files,
         statusHistory: [...(ticket.statusHistory || []), { at, from: ticket.status, to: "closed", actor: access.email }],
       },
     };
