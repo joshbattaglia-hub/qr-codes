@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
-  addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, listAudit, listSiteChoices, listTickets, moveTicket, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
+  addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, editTicket, listAudit, listSiteChoices, listTickets, moveTicket, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
 } from "../lib/tickets.mjs";
 import { approveQuarantine, discardQuarantine, listQuarantine, notifyTicket } from "../lib/ticket-mail.mjs";
 
@@ -84,6 +84,7 @@ export default async (req) => {
     : action === "file" ? await addFile(actor, one[1], body)
     : action === "close" ? await closeTicket(actor, one[1], body)
     : action === "move" ? await moveTicket(actor, one[1], body)
+    : action === "edit" ? await editTicket(actor, one[1], body)
     : { status: 404, error: "Not found" };
   if (result.status === 200 && (action === "status" || action === "reply" || action === "close" || action === "move")) {
     const text = action === "move" ? body?.reply : action === "reply" ? body?.text : "";

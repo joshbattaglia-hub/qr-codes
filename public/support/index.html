@@ -165,7 +165,7 @@ async function list(session) {
 async function form(session) {
   document.body.classList.remove("wide");
   const meta = await api("/api/support/form");
-  const sites = (meta.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + '<option value="other">My site is not listed</option>';
+  const sites = '<option value="national">All sites / National</option>' + (meta.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + '<option value="other">My site is not listed</option>';
   const priorities = Object.entries(PRIORITY_LABEL).map(([value, label]) => '<option value="' + value + '"' + (value === "normal" ? " selected" : "") + ">" + esc(label) + "</option>").join("");
   app.innerHTML = header(session, "new") + '<h1>Submit a support ticket</h1>'
     + '<form class="card" id="support-new" novalidate>'
