@@ -125,44 +125,6 @@ test("staff list filters by queue (including all), site, request type and column
   assert.equal((await rows({ queue: "all", column: "done" })).every((row) => row.column === "done"), true);
 });
 
-test("public board returns only whitelisted fields, hides Done older than 30 days, and is rate limited", async () => {
-  fakeNow = Date.parse("2026-11-11T00:00:00.000Z");
-  const fresh = await make("screens", { siteId: "other", siteOther: "TEST Unlisted Site With A Very Long Free Text Name Exampleville", requesterEmail: "private.person@example.com" });
-  const oldDone = await make("signage");
-  await tickets.addInternalNote(ADMIN, fresh.id, { text: "Hidden internal note" });
-  fakeNow -= 40 * 86400000;
-  await tickets.moveTicket(ADMIN, oldDone.id, { column: "done" });
-  fakeNow = Date.parse("2026-11-11T00:00:00.000Z");
-  const recentDone = await make("signage");
-  await tickets.moveTicket(ADMIN, recentDone.id, { column: "done" });
-  const res = await read(await supportFn(req("GET", "/api/support/board")));
-  assert.equal(res.status, 200);
-  assert.equal(res.headers.get("cache-control"), "private, no-store");
-  assert.match(res.headers.get("x-robots-tag"), /noindex/);
-  for (const row of res.body.tickets) assert.deepEqual(Object.keys(row).sort(), ["column", "number", "queue", "site", "updatedAt"]);
-  const payload = JSON.stringify(res.body);
-  for (const hidden of ["TEST secret subject", "TEST private description", "private.person", "requester@example.com", "Hidden internal note", "@", "trackHash", tickets.TICKET_ADMIN_EMAIL]) {
-    assert.equal(payload.includes(hidden), false, hidden);
-  }
-  const numbers = res.body.tickets.map((row) => row.number);
-  assert.equal(numbers.includes(oldDone.number), false);
-  assert.equal(numbers.includes(recentDone.number), true);
-  const freeText = res.body.tickets.find((row) => row.number === fresh.number);
-  assert.equal(freeText.site, "Other site");
-  assert.equal(payload.includes("TEST Unlisted Site"), false);
-  assert.equal(payload.includes("Exampleville"), false);
-  assert.deepEqual(res.body.columns.map((row) => row.id), ["submitted", "needs-info", "in-progress", "done"]);
-  const ip = "2001:db8:cccc::1";
-  let limited = 0;
-  for (let i = 0; i < 32; i++) {
-    const hit = await supportFn(req("GET", "/api/support/board", { ip }));
-    if (hit.status === 429) limited += 1;
-  }
-  assert.ok(limited >= 1);
-  const keys = (await lib.rateStore().list({ prefix: "support/board/" })).blobs.map((row) => row.key).join(" ");
-  assert.equal(keys.includes("2001:db8"), false);
-});
-
 test("notification emails include a working private tracking link; old links stay valid; email-in tickets get one", async () => {
   sent.length = 0;
   await lib.ticketStore().setJSON("settings", tickets.normaliseSettings({
@@ -237,28 +199,12 @@ test("tokens are derived from the key, stored only as hashes, and fall back to H
   process.env.TICKET_TRACK_KEY = saved;
 });
 
-test("public board page and staff board UI are wired", () => {
-  const page = fs.readFileSync(new URL("../public/support/index.html", import.meta.url), "utf8");
-  assert.match(page, /\/api\/support\/board/);
-  assert.match(page, /href="\/support\/board"/);
-  assert.match(page, /Last ' \+ esc\(data\.doneDays\)/);
+test("staff board UI is wired and the anonymous board feed is gone", async () => {
+  const anon = await supportFn(req("GET", "/api/support/board"));
+  assert.equal(anon.status, 401);
   const ui = fs.readFileSync(new URL("../public/admin/tickets-ui.mjs", import.meta.url), "utf8");
   for (const needle of ["Needs more info", 'draggable="true"', "data-act=\"ticket-move\"", "ticket-needs-info-dialog", 'data-view="list"', "ticket-site-filter", "ticket-type-filter"]) {
     assert.ok(ui.includes(needle), needle);
   }
 });
 
-test("public board shows typed-in sites only as Other site while staff keep the typed text", async () => {
-  const typed = await make("signage", { siteId: "other", siteOther: "TEST Jane Citizen's shop, 1 Example St" });
-  const listed = await make("screens");
-  const res = await read(await supportFn(req("GET", "/api/support/board")));
-  const payload = JSON.stringify(res.body);
-  assert.equal(payload.includes("Jane Citizen"), false);
-  assert.equal(payload.includes("Example St"), false);
-  assert.equal(res.body.tickets.find((row) => row.number === typed.number).site, "Other site");
-  assert.equal(res.body.tickets.find((row) => row.number === listed.number).site, "Example North");
-  assert.equal(publicLib.publicBoardRow({ number: 1, siteId: "", siteLabel: "Email", queue: "screens", status: "new", updatedAt: "" }).site, "Other site");
-  const staff = await tickets.readTicket(ADMIN, typed.id);
-  assert.equal(staff.body.ticket.siteLabel, "TEST Jane Citizen's shop, 1 Example St");
-  assert.equal(staff.body.ticket.siteFreeText, true);
-});

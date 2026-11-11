@@ -58,6 +58,11 @@
   .board-col h2 { font-size:16px; margin:0 0 6px; display:flex; justify-content:space-between; }
   .board-row { display:flex; justify-content:space-between; gap:8px; border-top:1px solid var(--line); padding:8px 0; font-size:14px; }
   .board-row:first-of-type { border-top:0; }
+  .board-row a { color:inherit; text-decoration:none; }
+  .board-row a:hover strong { text-decoration:underline; }
+  .who { display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:14px; margin-bottom:8px; }
+  .who button { width:auto; min-height:32px; padding:4px 10px; font-size:13px; }
+  input[readonly] { background:#f2f4f7; color:#475467; }
   .board-row span:last-child { color:var(--muted); text-align:right; white-space:nowrap; }
   .filters { display:flex; gap:8px; }
   .filters > * { flex:1; }
@@ -75,7 +80,6 @@
 import { prepareTicketFile } from "/admin/ticket-file.mjs";
 
 const PRIORITY_LABEL = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
-const QUEUE_LABEL = { screens: "Screens", signage: "Signage" };
 const app = document.getElementById("app");
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
 const when = (iso) => {
@@ -86,49 +90,87 @@ const when = (iso) => {
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (opts.body) headers["content-type"] = "application/json";
-  const response = await fetch(path, { ...opts, headers, credentials: "omit", referrerPolicy: "no-referrer" });
+  const response = await fetch(path, { ...opts, headers, credentials: "same-origin", referrerPolicy: "no-referrer" });
   const type = response.headers.get("content-type") || "";
   const body = type.includes("json") ? await response.json().catch(() => ({})) : null;
-  if (!response.ok) throw new Error(body?.error || "That request was not completed.");
+  if (!response.ok) { const err = new Error(body?.error || "That request was not completed."); err.status = response.status; throw err; }
   return body;
 }
 
-function topnav(current) {
-  return '<nav class="topnav" aria-label="Support"><a href="/support"' + (current === "form" ? ' aria-current="page"' : "") + '>Submit a ticket</a><a href="/support/board"' + (current === "board" ? ' aria-current="page"' : "") + '>Ticket board</a></nav>';
+function signIn() {
+  document.body.classList.remove("wide");
+  app.innerHTML = '<h1>Support tickets</h1><p class="muted">Sign in with your @libertyretail.com.au email to submit and follow your screens and signage tickets.</p>'
+    + '<form class="card" id="support-in"><label>Work email<input type="email" id="support-email" required maxlength="254" autocomplete="username" placeholder="name@libertyretail.com.au"></label>'
+    + '<button type="submit" id="support-send">Email me a code</button>'
+    + '<label id="support-code-wrap" hidden>8-digit code<input id="support-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8"></label>'
+    + '<button type="button" class="ghost" id="support-verify" hidden>Verify code</button>'
+    + '<p class="ok" id="support-status" role="status"></p><p class="err" id="support-error" role="alert"></p></form>'
+    + '<p class="muted" style="font-size:14px">Have a private tracking link? Open it directly to check a ticket without signing in.</p>';
+  const error = document.getElementById("support-error");
+  document.getElementById("support-in").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.textContent = "";
+    const email = document.getElementById("support-email").value.trim();
+    if (!/@libertyretail\.com\.au$/i.test(email)) { error.textContent = "Use your @libertyretail.com.au email address."; return; }
+    try {
+      const started = await api("/api/support/start", { method: "POST", body: JSON.stringify({ email }) });
+      document.getElementById("support-status").textContent = started.message || "";
+      document.getElementById("support-code-wrap").hidden = false;
+      document.getElementById("support-verify").hidden = false;
+      document.getElementById("support-code").focus();
+    } catch (err) { error.textContent = err.message; }
+  });
+  document.getElementById("support-verify").addEventListener("click", async () => {
+    error.textContent = "";
+    try {
+      await api("/api/support/verify", { method: "POST", body: JSON.stringify({ email: document.getElementById("support-email").value, code: document.getElementById("support-code").value }) });
+      location.href = "/support";
+    } catch (err) { error.textContent = err.message; }
+  });
 }
 
-const BOARD_QUEUE = { screens: "Screens", signage: "Signage" };
+function header(session, current) {
+  return '<div class="who"><span class="muted">Signed in as ' + esc(session.email) + '</span><button class="ghost" type="button" id="support-out">Sign out</button></div>'
+    + '<nav class="topnav" aria-label="Support"><a href="/support"' + (current === "board" ? ' aria-current="page"' : "") + '>Board</a><a href="/support/list"' + (current === "list" ? ' aria-current="page"' : "") + '>List</a><a href="/support/new"' + (current === "new" ? ' aria-current="page"' : "") + '>Submit ticket</a></nav>';
+}
 
-async function board() {
+function wireHeader() {
+  document.getElementById("support-out")?.addEventListener("click", async () => {
+    await api("/api/support/logout", { method: "POST", body: "{}" }).catch(() => null);
+    location.href = "/support";
+  });
+}
+
+async function board(session) {
   document.body.classList.add("wide");
-  app.innerHTML = topnav("board") + "<h1>Ticket board</h1><p>Loading…</p>";
-  const data = await api("/api/support/board");
-  const queue = new URLSearchParams(location.search).get("queue") || "";
-  const render = (picked) => {
-    const rows = (data.tickets || []).filter((row) => !picked || row.queue === picked);
-    const cols = (data.columns || []).map((col) => {
-      const items = rows.filter((row) => row.column === col.id);
-      return '<section class="card board-col" data-column="' + esc(col.id) + '"><h2>' + esc(col.label) + ' <span class="muted">' + items.length + "</span></h2>"
-        + (items.map((row) => '<div class="board-row"><span><strong>' + esc(row.number) + "</strong> · " + esc(row.site) + " · " + esc(BOARD_QUEUE[row.queue] || row.queue) + "</span><span>" + esc(when(row.updatedAt)) + "</span></div>").join("") || '<p class="muted">None</p>')
-        + (col.id === "done" ? '<p class="muted" style="font-size:13px">Last ' + esc(data.doneDays) + " days</p>" : "")
-        + "</section>";
-    }).join("");
-    app.innerHTML = topnav("board") + '<h1>Ticket board</h1><p class="muted">Ticket number, site, queue and last update only. Use your private tracking link for details.</p>'
-      + '<div class="filters"><label>Queue<select id="board-queue"><option value="">All</option><option value="screens"' + (picked === "screens" ? " selected" : "") + '>Screens</option><option value="signage"' + (picked === "signage" ? " selected" : "") + ">Signage</option></select></label></div>"
-      + '<div class="board">' + cols + "</div>";
-    document.getElementById("board-queue").addEventListener("change", (event) => render(event.target.value));
-  };
-  render(["screens", "signage"].includes(queue) ? queue : "");
+  const data = await api("/api/support/tickets");
+  const cols = (data.columns || []).map((col) => {
+    const items = (data.tickets || []).filter((row) => row.column === col.id);
+    return '<section class="card board-col" data-column="' + esc(col.id) + '"><h2>' + esc(col.label) + ' <span class="muted">' + items.length + "</span></h2>"
+      + (items.map((row) => '<div class="board-row"><a href="/support/tickets/' + esc(row.id) + '"><strong>' + esc(row.number) + "</strong> · " + esc(row.subject) + '<br><span class="muted">' + esc(row.site) + " · " + esc(row.queueLabel) + "</span></a><span>" + esc(when(row.updatedAt)) + "</span></div>").join("") || '<p class="muted">None</p>')
+      + "</section>";
+  }).join("");
+  app.innerHTML = header(session, "board") + '<h1>My tickets</h1><p class="muted">Only tickets you submitted, including ones you emailed in from this address.</p><div class="board">' + cols + "</div>";
+  wireHeader();
 }
 
-async function form() {
+async function list(session) {
+  document.body.classList.remove("wide");
+  const data = await api("/api/support/tickets");
+  const rows = (data.tickets || []).map((row) => '<a class="card ticket" href="/support/tickets/' + esc(row.id) + '"><h2>' + esc(row.number) + " · " + esc(row.subject) + "</h2><p>" + esc(row.site) + " · " + esc(row.queueLabel) + ' · <span class="badge">' + esc(row.columnLabel) + '</span></p><p class="muted">Updated ' + esc(when(row.updatedAt)) + "</p></a>").join("");
+  app.innerHTML = header(session, "list") + "<h1>My tickets</h1>" + (rows || '<div class="card"><p class="muted">No tickets yet. <a href="/support/new">Submit one</a>.</p></div>');
+  wireHeader();
+}
+
+async function form(session) {
+  document.body.classList.remove("wide");
   const meta = await api("/api/support/form");
   const sites = (meta.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + '<option value="other">My site is not listed</option>';
   const priorities = Object.entries(PRIORITY_LABEL).map(([value, label]) => '<option value="' + value + '"' + (value === "normal" ? " selected" : "") + ">" + esc(label) + "</option>").join("");
-  app.innerHTML = topnav("form") + '<h1>Submit a support ticket</h1><p class="muted">Screens and signage requests for Liberty Oil Convenience sites. No sign-in needed.</p>'
+  app.innerHTML = header(session, "new") + '<h1>Submit a support ticket</h1>'
     + '<form class="card" id="support-new" novalidate>'
     + '<label>Full name<input id="support-name" required maxlength="80" autocomplete="name"></label>'
-    + '<label>Work email<input id="support-email" type="email" required maxlength="254" autocomplete="email" placeholder="name@' + esc(meta.domain) + '"><span class="muted">Must be an @' + esc(meta.domain) + ' address.</span></label>'
+    + '<label>Work email<input id="support-email" type="email" value="' + esc(meta.email) + '" readonly aria-readonly="true"><span class="muted">From your sign-in. Sign out to use a different address.</span></label>'
     + '<label>Phone<input id="support-phone" type="tel" required maxlength="30" autocomplete="tel" placeholder="04xx xxx xxx"></label>'
     + '<label>Site<select id="support-site" required><option value="">Choose a site</option>' + sites + '</select></label>'
     + '<label id="support-other-wrap" hidden>Site name and suburb<input id="support-other" maxlength="80"></label>'
@@ -141,12 +183,12 @@ async function form() {
     + '<label>Photos or PDFs <span class="muted">(optional, up to 3)</span><input id="support-files" type="file" accept="image/*,application/pdf" multiple></label>'
     + '<div class="hp" aria-hidden="true"><label>Website<input id="support-website" name="website" tabindex="-1" autocomplete="off"></label></div>'
     + '<button type="submit" id="support-submit">Submit ticket</button><p class="err" id="support-error" role="alert"></p></form>';
+  wireHeader();
   const typeSelect = document.getElementById("support-type");
   for (const radio of document.querySelectorAll('input[name="support-queue"]')) {
     radio.addEventListener("change", () => {
-      const queue = radio.value;
       typeSelect.disabled = false;
-      typeSelect.innerHTML = '<option value="">Choose a request type</option>' + (meta.types?.[queue] || []).map((type) => '<option value="' + esc(type) + '">' + esc(type) + "</option>").join("");
+      typeSelect.innerHTML = '<option value="">Choose a request type</option>' + (meta.types?.[radio.value] || []).map((type) => '<option value="' + esc(type) + '">' + esc(type) + "</option>").join("");
     });
   }
   document.getElementById("support-site").addEventListener("change", (event) => { document.getElementById("support-other-wrap").hidden = event.target.value !== "other"; });
@@ -156,8 +198,6 @@ async function form() {
     const button = document.getElementById("support-submit");
     error.textContent = "";
     const queue = document.querySelector('input[name="support-queue"]:checked')?.value || "";
-    const email = document.getElementById("support-email").value.trim();
-    if (!new RegExp("@" + meta.domain.replace(/\./g, "\\.") + "$", "i").test(email)) { error.textContent = "Use your @" + meta.domain + " email address."; return; }
     if (!queue) { error.textContent = "Choose Screens or Signage."; return; }
     button.disabled = true;
     button.textContent = "Submitting…";
@@ -170,7 +210,6 @@ async function form() {
         formToken: meta.formToken,
         website: document.getElementById("support-website").value,
         name: document.getElementById("support-name").value,
-        email,
         phone: document.getElementById("support-phone").value,
         siteId: document.getElementById("support-site").value,
         siteOther: document.getElementById("support-other").value,
@@ -182,7 +221,7 @@ async function form() {
         description: document.getElementById("support-body").value,
         files,
       }) });
-      confirmation(created);
+      confirmation(session, created);
     } catch (err) {
       error.textContent = err.message;
       button.disabled = false;
@@ -191,54 +230,104 @@ async function form() {
   });
 }
 
-function confirmation(created) {
+function confirmation(session, created) {
   const link = location.origin + created.trackPath;
-  history.replaceState(null, "", "/support");
-  app.innerHTML = '<h1>Ticket ' + esc(created.number) + ' submitted</h1>'
-    + '<div class="card"><p>Your ticket number is <strong>' + esc(created.number) + '</strong>.</p>'
-    + '<div class="notice"><strong>Save this link now.</strong> It is the only way to check this ticket. It is not emailed to you and cannot be shown again. Bookmark it or copy it somewhere safe, and do not share it.</div>'
-    + '<p class="linkbox" id="support-link">' + esc(link) + '</p>'
-    + '<div class="row"><button type="button" id="support-copy">Copy link</button><a class="btn ghost" id="support-open" href="' + esc(created.trackPath) + '">Open tracking page</a></div>'
-    + '<p class="ok" id="support-copied" role="status"></p>'
-    + '<p><a href="/support" id="support-again">Submit another ticket</a></p></div>';
+  history.replaceState(null, "", "/support/new");
+  app.innerHTML = header(session, "new") + '<h1>Ticket ' + esc(created.number) + ' submitted</h1>'
+    + '<div class="card"><p>Your ticket number is <strong>' + esc(created.number) + '</strong>. It is now on your board under Submitted, and you can follow it there whenever you sign in.</p>'
+    + '<div class="row"><a class="btn" id="support-to-board" href="/support">Go to my tickets</a><a class="btn ghost" href="/support/tickets/' + esc(created.id) + '">View this ticket</a></div>'
+    + '<details style="margin-top:12px"><summary>Private tracking link (optional)</summary><p class="muted" style="font-size:14px">Lets you check this ticket without signing in. Keep it private.</p><p class="linkbox" id="support-link">' + esc(link) + '</p><button type="button" class="ghost" id="support-copy">Copy link</button><p class="ok" id="support-copied" role="status"></p></details>'
+    + '<p><a href="/support/new">Submit another ticket</a></p></div>';
+  wireHeader();
   document.getElementById("support-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(link); document.getElementById("support-copied").textContent = "Link copied."; }
     catch { document.getElementById("support-copied").textContent = "Copy the link above by hand."; }
   });
 }
 
+async function downloadFile(ticketId, fileId, name) {
+  const response = await fetch("/api/support/tickets/" + ticketId + "/files/" + fileId, { credentials: "same-origin" });
+  if (!response.ok) throw new Error("That file is not available.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name || "attachment";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function detail(session, id) {
+  document.body.classList.remove("wide");
+  const ticket = (await api("/api/support/tickets/" + id)).ticket;
+  const timeline = (ticket.history || []).map((row) => "<li>" + esc(when(row.at)) + " · " + esc(row.status) + "</li>").join("");
+  const replies = (ticket.replies || []).map((row) => '<div class="msg"><p><strong>' + esc(row.from) + "</strong> · " + esc(when(row.at)) + "</p><p>" + esc(row.text) + "</p></div>").join("");
+  const files = (ticket.files || []).map((file) => '<p><button class="ghost file-dl" type="button" data-file="' + esc(file.id) + '" data-name="' + esc(file.name) + '">' + esc(file.name) + "</button></p>").join("");
+  app.innerHTML = header(session, "") + '<p><a href="/support">Back to my tickets</a></p><h1>' + esc(ticket.number) + " · " + esc(ticket.subject) + "</h1>"
+    + '<div class="card"><p><span class="badge">' + esc(ticket.columnLabel) + "</span></p><p>" + esc(ticket.queueLabel) + " · " + esc(ticket.site) + " · " + esc(ticket.requestType) + " · " + esc(ticket.priorityLabel) + "</p>"
+    + "<p>" + esc(ticket.description) + "</p><h2>Status history</h2><ul class=\"timeline\">" + (timeline || "<li>Submitted</li>") + "</ul>"
+    + "<h2>Replies</h2>" + (replies || '<p class="muted">No replies yet.</p>') + (files ? "<h2>Attachments</h2>" + files : "")
+    + '<form id="support-comment"><label>Add a comment<textarea id="support-text" maxlength="4000"></textarea></label><label>Add a photo or PDF<input id="support-more" type="file" accept="image/*,application/pdf"></label><button type="submit">Add comment</button><p class="err" id="support-error" role="alert"></p></form></div>';
+  wireHeader();
+  for (const button of document.querySelectorAll(".file-dl")) {
+    button.addEventListener("click", () => downloadFile(ticket.id, button.dataset.file, button.dataset.name).catch((err) => { document.getElementById("support-error").textContent = err.message; }));
+  }
+  document.getElementById("support-comment").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("support-error");
+    error.textContent = "";
+    try {
+      const text = document.getElementById("support-text").value.trim();
+      const file = document.getElementById("support-more").files[0];
+      if (!text && !file) throw new Error("Write a comment or choose a file.");
+      if (text) await api("/api/support/tickets/" + id + "/comment", { method: "POST", body: JSON.stringify({ text }) });
+      if (file) await api("/api/support/tickets/" + id + "/file", { method: "POST", body: JSON.stringify(await prepareTicketFile(file)) });
+      location.reload();
+    } catch (err) { error.textContent = err.message; }
+  });
+}
+
 async function track() {
+  document.body.classList.remove("wide");
   const hash = location.hash.replace(/^#/, "");
   const hit = hash.match(/^(\d+)\.([A-Za-z0-9_-]{40,64})$/);
   if (!hit) {
-    app.innerHTML = '<h1>Track a ticket</h1><div class="card"><p>This tracking link is not valid. Use the full link shown when the ticket was submitted.</p><p><a href="/support">Submit a ticket</a></p></div>';
+    app.innerHTML = '<h1>Track a ticket</h1><div class="card"><p>This tracking link is not valid. Use the full link, or <a href="/support">sign in</a> to see your tickets.</p></div>';
     return;
   }
   let ticket;
   try {
     ticket = (await api("/api/support/track", { method: "POST", body: JSON.stringify({ number: Number(hit[1]), token: hit[2] }) })).ticket;
   } catch (err) {
-    app.innerHTML = '<h1>Track a ticket</h1><div class="card"><p>' + esc(err.message) + '</p><p><a href="/support">Submit a ticket</a></p></div>';
+    app.innerHTML = '<h1>Track a ticket</h1><div class="card"><p>' + esc(err.message) + '</p><p><a href="/support">Sign in to see your tickets</a></p></div>';
     return;
   }
   const timeline = (ticket.history || []).map((row) => "<li>" + esc(when(row.at)) + " · " + esc(row.status) + "</li>").join("");
-  const replies = (ticket.replies || []).map((row) => '<div class="msg"><p><strong>' + esc(row.from) + '</strong> · ' + esc(when(row.at)) + "</p><p>" + esc(row.text) + "</p></div>").join("");
-  app.innerHTML = '<h1>Ticket ' + esc(ticket.number) + '</h1><p class="muted">Read only. Bookmark this page to check back.</p>'
+  const replies = (ticket.replies || []).map((row) => '<div class="msg"><p><strong>' + esc(row.from) + "</strong> · " + esc(when(row.at)) + "</p><p>" + esc(row.text) + "</p></div>").join("");
+  app.innerHTML = '<h1>Ticket ' + esc(ticket.number) + '</h1><p class="muted">Read only. <a href="/support">Sign in</a> to comment or see all your tickets.</p>'
     + '<div class="card"><p><span class="badge">' + esc(ticket.status) + '</span></p>'
     + '<h2>' + esc(ticket.subject) + '</h2>'
     + '<p>' + esc(ticket.queue) + " · " + esc(ticket.site) + " · " + esc(ticket.requestType) + " · " + esc(ticket.priority) + '</p>'
     + '<p>' + esc(ticket.description) + '</p>'
-    + '<h2>Status history</h2><ul class="timeline">' + (timeline || "<li>New</li>") + '</ul>'
+    + '<h2>Status history</h2><ul class="timeline">' + (timeline || "<li>Submitted</li>") + '</ul>'
     + '<h2>Replies</h2>' + (replies || '<p class="muted">No replies yet.</p>')
     + '<p class="muted">Last updated ' + esc(when(ticket.updatedAt)) + '</p></div>';
 }
 
 async function boot() {
-  const path = location.pathname.replace(/\/+$/, "");
+  const path = location.pathname.replace(/\/+$/, "") || "/support";
   if (path === "/support/track") return track();
-  if (path === "/support/board") return board();
-  if (path !== "/support") history.replaceState(null, "", "/support");
-  return form();
+  let session = null;
+  try { session = await api("/api/support/session"); } catch { session = null; }
+  if (!session) return signIn();
+  if (path === "/support/new") return form(session);
+  if (path === "/support/list") return list(session);
+  const ticket = path.match(/^\/support\/tickets\/(t[a-f0-9]{16})$/);
+  if (ticket) return detail(session, ticket[1]);
+  if (path !== "/support" && path !== "/support/board") history.replaceState(null, "", "/support");
+  return board(session);
 }
 boot().catch((err) => { app.textContent = err.message; });
 </script>

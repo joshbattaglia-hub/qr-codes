@@ -1,7 +1,16 @@
 import crypto from "node:crypto";
 import { conditionalIncrement, env, otpStore, rateStore } from "./lib.mjs";
 import { OTP_LIMIT, OTP_REJECTED, OTP_UNAVAILABLE, sendOtpCode, setOtpTestHooks, trustedClientKey } from "./otp.mjs";
-import { readSettings, requesterScope } from "./tickets.mjs";
+import { emailOf } from "./tickets.mjs";
+
+export const PORTAL_DOMAIN = "libertyretail.com.au";
+
+/** Requester portal identity: exact @libertyretail.com.au only (case-insensitive). No subdomains, no other lists. */
+export function portalScope(value) {
+  const email = emailOf(value);
+  if (!email || email.split("@")[1] !== PORTAL_DOMAIN) return null;
+  return { email };
+}
 
 const WINDOW_MS = 15 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -147,8 +156,7 @@ export async function startSupportCode(req, email) {
   if (!normalized) return { status: 400, error: "Enter an email address." };
   const gate = await limited(req, "start", normalized);
   if (gate) return gate;
-  const settings = await readSettings();
-  const scope = requesterScope(settings, normalized);
+  const scope = portalScope(normalized);
   if (!scope) return uniform();
   const hash = emailHash(normalized);
   if (!(await acquireLock(hash))) return uniform();
@@ -224,8 +232,7 @@ export async function verifySupportCode(req, email, code) {
   if (!normalized || !/^\d{8}$/.test(digits)) return { status: 401, error: OTP_REJECTED };
   const gate = await limited(req, "verify", normalized);
   if (gate) return gate;
-  const settings = await readSettings();
-  const scope = requesterScope(settings, normalized);
+  const scope = portalScope(normalized);
   if (!scope) return { status: 401, error: OTP_REJECTED };
   const won = await consume(emailHash(normalized), digits);
   if (!won.ok) return { status: 401, error: OTP_REJECTED };
@@ -242,8 +249,7 @@ export async function supportFromRequest(req) {
   if (!sameHex(sign(match[1], match[2]), match[3])) return null;
   const row = await otpStore().get("support/sess/" + match[1], { type: "json" });
   if (!row || row.id !== match[1] || row.exp < now()) return null;
-  const settings = await readSettings();
-  return requesterScope(settings, row.email);
+  return portalScope(row.email);
 }
 
 export async function deleteSupportSession(req) {
