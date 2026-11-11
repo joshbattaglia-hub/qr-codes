@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, sitesStore, ticketStore } from "./lib.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
 import { isSiteRecord } from "./site-import.mjs";
+import { newTicketTracking, writeTrackIndex } from "./ticket-track.mjs";
 
 export const TICKET_ADMIN_EMAIL = "jbattaglia@libertyretail.com.au";
 export const QUEUES = ["screens", "signage"];
@@ -19,6 +20,28 @@ export const DEFAULT_TYPES = {
   screens: ["New screen install", "Content/playlist change", "Fault or repair", "Relocation or removal", "Other"],
   signage: ["New sign or install", "Replacement", "Damage or repair", "Promotional install", "Other"],
 };
+export const BOARD_COLUMNS = [
+  { id: "submitted", label: "Submitted", status: "new" },
+  { id: "needs-info", label: "Needs more info", status: "awaiting" },
+  { id: "in-progress", label: "In progress", status: "in-progress" },
+  { id: "done", label: "Done", status: "done" },
+];
+const COLUMN_OF_STATUS = { new: "submitted", awaiting: "needs-info", "in-progress": "in-progress", scheduled: "in-progress", done: "done", closed: "done" };
+/** Board column for a stored status. Old statuses (Scheduled, Closed) stay readable and map to a column. */
+export function columnFor(status) {
+  return COLUMN_OF_STATUS[status] || "submitted";
+}
+export function columnLabel(id) {
+  return BOARD_COLUMNS.find((row) => row.id === id)?.label || id;
+}
+/** When the ticket last entered Done/Closed, falling back to updatedAt. */
+export function doneAt(ticket) {
+  const rows = Array.isArray(ticket?.statusHistory) ? ticket.statusHistory : [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (columnFor(rows[i]?.to) === "done" && rows[i]?.at) return rows[i].at;
+  }
+  return ticket?.updatedAt || ticket?.createdAt || "";
+}
 const OPEN = new Set(["new", "in-progress", "awaiting", "scheduled"]);
 const FILE_MAX = 1_500_000;
 const TEXT_MAX = 4000;
@@ -183,6 +206,8 @@ export function presentTicket(ticket, { staff = false } = {}) {
     source: staff ? ticket.source || "" : "",
     status: ticket.status,
     statusLabel: STATUS_LABEL[ticket.status] || ticket.status,
+    column: columnFor(ticket.status),
+    columnLabel: columnLabel(columnFor(ticket.status)),
     assignee: ticket.assignee || "",
     overdue: isOverdue(ticket),
     createdAt: ticket.createdAt,
@@ -254,11 +279,13 @@ export async function createTicket(actor, body) {
   const count = await conditionalIncrement(ticketStore(), "counter", 1000000);
   if (!count.ok) return { status: 503, error: "Tickets are temporarily unavailable." };
   const at = new Date(now()).toISOString();
+  const newId = "t" + crypto.randomBytes(8).toString("hex");
   const ticket = {
-    id: "t" + crypto.randomBytes(8).toString("hex"),
+    id: newId,
     number: 1000 + count.n,
     queue, ...site, requestType, priority, neededBy,
     subject, description, requesterEmail,
+    ...newTicketTracking(newId),
     status: "new",
     statusHistory: [{ at, from: "", to: "new", actor: access.email }],
     assignee: "",
@@ -269,12 +296,17 @@ export async function createTicket(actor, body) {
     updatedAt: at,
   };
   await ticketStore().setJSON("ticket/" + ticket.id, ticket);
+  await writeTrackIndex(ticket.number, ticket.id);
   await audit(access.email, "create", ticket.id, queue);
   return { status: 200, body: { ticket: presentTicket(ticket, { staff: true }) } };
 }
 
 function canSee(access, ticket) {
   return access.role === "admin" || access.queues.includes(ticket.queue);
+}
+
+export function allTicketRows() {
+  return allTickets();
 }
 
 async function allTickets() {
@@ -290,11 +322,17 @@ export async function listTickets(actor, query) {
   const status = String(query.get("status") || "");
   const priority = String(query.get("priority") || "");
   const q = String(query.get("q") || "").trim().toLowerCase();
+  const site = String(query.get("site") || "");
+  const type = String(query.get("type") || "");
+  const column = String(query.get("column") || "");
   const from = String(query.get("updatedFrom") || "");
   const to = String(query.get("updatedTo") || "");
   const rows = (await allTickets()).filter((ticket) => canSee(access, ticket));
   const filtered = rows.filter((ticket) => {
-    if (queue && ticket.queue !== queue) return false;
+    if (queue && queue !== "all" && ticket.queue !== queue) return false;
+    if (site && ticket.siteId !== site) return false;
+    if (type && ticket.requestType !== type) return false;
+    if (column && columnFor(ticket.status) !== column) return false;
     if (status && ticket.status !== status) return false;
     if (priority && ticket.priority !== priority) return false;
     const updated = melbourneDay(Date.parse(ticket.updatedAt));
@@ -379,6 +417,30 @@ export function assignTicket(actor, id, body) {
       if (!allowed) return { error: "Assignee is not staff for this queue." };
     }
     return { action: "assign", detail: assignee, patch: { assignee } };
+  });
+}
+
+export function moveTicket(actor, id, body) {
+  const target = BOARD_COLUMNS.find((row) => row.id === body?.column);
+  if (!target) return { status: 400, error: "Choose a column." };
+  const reply = String(body?.reply || "").trim().slice(0, TEXT_MAX);
+  if (target.id === "needs-info" && !reply) return { status: 400, error: "Write a public reply saying what information is needed." };
+  return mutate(actor, id, (ticket, access) => {
+    const fromColumn = columnFor(ticket.status);
+    if (fromColumn === target.id) return { error: "The ticket is already in " + target.label + "." };
+    const at = new Date(now()).toISOString();
+    const messages = reply
+      ? [...(ticket.messages || []), { id: "m" + crypto.randomBytes(6).toString("hex"), at, actor: access.email, kind: "public", text: reply }]
+      : ticket.messages || [];
+    return {
+      action: "move",
+      detail: fromColumn + " -> " + target.id + " (" + ticket.status + " -> " + target.status + ")",
+      patch: {
+        status: target.status,
+        messages,
+        statusHistory: [...(ticket.statusHistory || []), { at, from: ticket.status, to: target.status, fromColumn, toColumn: target.id, actor: access.email, via: "board" }],
+      },
+    };
   });
 }
 
@@ -535,8 +597,10 @@ export async function ingestEmailTicket({ queue, requesterEmail, subject, descri
   const count = await conditionalIncrement(ticketStore(), "counter", 1000000);
   if (!count.ok) return { status: 503, error: "Tickets are temporarily unavailable." };
   const at = new Date(now()).toISOString();
+  const emailId = "t" + crypto.randomBytes(8).toString("hex");
   const ticket = {
-    id: "t" + crypto.randomBytes(8).toString("hex"),
+    id: emailId,
+    ...newTicketTracking(emailId),
     number: 1000 + count.n,
     queue: chosen, ...site, requestType: fallbackType, priority: "normal", neededBy: "",
     subject: title, description: details, requesterEmail: address,
@@ -558,6 +622,7 @@ export async function ingestEmailTicket({ queue, requesterEmail, subject, descri
   }
   ticket.files = savedFiles;
   await ticketStore().setJSON("ticket/" + ticket.id, ticket);
+  await writeTrackIndex(ticket.number, ticket.id);
   await audit(address, "email-create", ticket.id, chosen);
   return { status: 200, body: { ticket: presentTicket(ticket, { staff: true }) } };
 }

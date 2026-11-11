@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import { conditionalIncrement, env, rateStore, ticketStore } from "./lib.mjs";
 import {
-  PRIORITIES, QUEUES, STATUS_LABEL, acceptTicketFile, auditRow, emailOf, listSiteChoices, readSettings, siteChoiceFor,
+  BOARD_COLUMNS, PRIORITIES, QUEUES, acceptTicketFile, allTicketRows, auditRow, columnFor, columnLabel, doneAt, emailOf, listSiteChoices, readSettings, siteChoiceFor,
 } from "./tickets.mjs";
+import { derivedTrackToken, hashTrackToken, trackPath, trackTokenMatches, writeTrackIndex } from "./ticket-track.mjs";
 
 export const REQUESTER_DOMAIN = "libertyretail.com.au";
 export const SUBMIT_MAX_BYTES = 5_000_000;
@@ -79,12 +80,8 @@ export function phoneOk(value) {
   return ok ? raw.replace(/\s+/g, " ") : "";
 }
 
-function hashToken(token) {
-  return crypto.createHash("sha256").update("track\n" + token).digest("hex");
-}
-
-export function makeTrackToken() {
-  return crypto.randomBytes(32).toString("base64url");
+export function makeTrackToken(ticketId) {
+  return derivedTrackToken(ticketId);
 }
 
 export async function publicForm() {
@@ -140,15 +137,16 @@ export async function submitPublicTicket(req, raw) {
   const count = await conditionalIncrement(ticketStore(), "counter", 1000000);
   if (!count.ok) return { status: 503, error: "Tickets are temporarily unavailable." };
   const at = new Date(clock()).toISOString();
-  const token = makeTrackToken();
+  const ticketId = "t" + crypto.randomBytes(8).toString("hex");
+  const token = makeTrackToken(ticketId);
   const ticket = {
-    id: "t" + crypto.randomBytes(8).toString("hex"),
+    id: ticketId,
     number: 1000 + count.n,
     queue, ...site, siteFreeText: site.siteId === "other", requestType, priority, neededBy,
     subject, description,
     requesterEmail: email, requesterName: name, requesterPhone: phone,
     source: "web-form",
-    trackHash: hashToken(token),
+    trackHash: hashTrackToken(token),
     status: "new",
     statusHistory: [{ at, from: "", to: "new", actor: email }],
     assignee: "",
@@ -164,9 +162,9 @@ export async function submitPublicTicket(req, raw) {
     ticket.files.push(saved);
   }
   await ticketStore().setJSON("ticket/" + ticket.id, ticket);
-  await ticketStore().setJSON("track/" + ticket.number, { id: ticket.id });
+  await writeTrackIndex(ticket.number, ticket.id);
   await auditRow(email, "web-request", ticket.id, queue);
-  return { status: 200, body: { ok: true, number: ticket.number, token, trackPath: "/support/track#" + ticket.number + "." + token } };
+  return { status: 200, body: { ok: true, number: ticket.number, token, trackPath: trackPath(ticket.number, token) } };
 }
 
 function presentTracking(ticket) {
@@ -178,10 +176,10 @@ function presentTracking(ticket) {
     priority: PRIORITY_LABEL[ticket.priority] || ticket.priority,
     subject: ticket.subject,
     description: ticket.description,
-    status: STATUS_LABEL[ticket.status] || ticket.status,
+    status: columnLabel(columnFor(ticket.status)),
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
-    history: (ticket.statusHistory || []).map((row) => ({ at: row.at, status: STATUS_LABEL[row.to] || row.to })),
+    history: (ticket.statusHistory || []).map((row) => ({ at: row.at, status: columnLabel(columnFor(row.to)) })),
     replies: (ticket.messages || []).filter((row) => row.kind === "public").map((row) => ({
       at: row.at,
       from: row.actor === ticket.requesterEmail ? "You" : "Express Help",
@@ -204,9 +202,35 @@ export async function readTracking(req, raw) {
   const index = await ticketStore().get("track/" + number, { type: "json" });
   const id = index?.id;
   const ticket = id && /^t[a-f0-9]{16}$/.test(id) ? await ticketStore().get("ticket/" + id, { type: "json" }) : null;
-  const expected = Buffer.from(String(ticket?.trackHash || "0".repeat(64)), "hex");
-  const actual = Buffer.from(hashToken(token), "hex");
-  const match = expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-  if (!ticket || !ticket.trackHash || ticket.number !== number || !match) return NOT_FOUND;
+  const match = trackTokenMatches(ticket, token);
+  if (!ticket || ticket.number !== number || !match) return NOT_FOUND;
   return { status: 200, body: { ticket: presentTracking(ticket) } };
+}
+
+export const PUBLIC_DONE_DAYS = 30;
+const PUBLIC_SITE_MAX = 40;
+
+/** Public board row. Whitelist only: number, site, queue, column, updatedAt. */
+export function publicBoardRow(ticket) {
+  let site = String(ticket.siteLabel || "").replace(/\s+/g, " ").trim();
+  if (ticket.siteId === "other" && site.length > PUBLIC_SITE_MAX) site = site.slice(0, PUBLIC_SITE_MAX - 1).trimEnd() + "…";
+  return {
+    number: Number(ticket.number) || 0,
+    site: site.slice(0, 80),
+    queue: QUEUES.includes(ticket.queue) ? ticket.queue : "",
+    column: columnFor(ticket.status),
+    updatedAt: String(ticket.updatedAt || ""),
+  };
+}
+
+export async function publicBoard(req) {
+  const blocked = await limited(req, "board", 30, 1000);
+  if (blocked) return blocked;
+  const cutoff = clock() - PUBLIC_DONE_DAYS * 86400000;
+  const rows = (await allTicketRows())
+    .filter((ticket) => ticket && ticket.number && QUEUES.includes(ticket.queue))
+    .filter((ticket) => columnFor(ticket.status) !== "done" || Date.parse(doneAt(ticket)) >= cutoff)
+    .map(publicBoardRow)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return { status: 200, body: { columns: BOARD_COLUMNS.map(({ id, label }) => ({ id, label })), doneDays: PUBLIC_DONE_DAYS, tickets: rows } };
 }

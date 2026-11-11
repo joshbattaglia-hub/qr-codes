@@ -9,7 +9,14 @@ const STATUS_LABEL = {
   closed: "Closed",
 };
 const PRIORITY_LABEL = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
-const QUEUE_LABEL = { screens: "Screens", signage: "Signage" };
+const QUEUE_LABEL = { screens: "Screens", signage: "Signage", all: "All" };
+const COLUMNS = [
+  { id: "submitted", label: "Submitted" },
+  { id: "needs-info", label: "Needs more info" },
+  { id: "in-progress", label: "In progress" },
+  { id: "done", label: "Done" },
+];
+const COLUMN_LABEL = Object.fromEntries(COLUMNS.map((row) => [row.id, row.label]));
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => "&#" + ch.charCodeAt(0) + ";");
 
@@ -38,8 +45,9 @@ function denied() {
   return '<h2>Support tickets are restricted</h2><p data-testid="ticket-denied">Ticket staff access is not granted for this session. Sign in with a verified email code listed as ticket staff. The shared Head office password and POS roles are not ticket staff access.</p>';
 }
 
-function queueTabs(queue, queues) {
-  const available = queues && queues.length ? queues : ["screens", "signage"];
+function queueTabs(queue, queues, withAll = false) {
+  const base = queues && queues.length ? queues : ["screens", "signage"];
+  const available = withAll && base.length > 1 ? [...base, "all"] : base;
   return '<div class="tabs">' + available.map((id) =>
     '<button type="button" data-act="ticket-queue" data-queue="' + esc(id) + '" class="' + (queue === id ? "on" : "") + '">' + esc(QUEUE_LABEL[id] || id) + "</button>"
   ).join("") + "</div>";
@@ -68,21 +76,165 @@ export async function paintTickets(id, state) {
   if (id === "audit") return paintAudit(box, access);
   if (id === "new") return paintSubmit(box, access, state);
   if (id) return paintTicket(box, id, access, state);
-  return paintList(box, access, state);
+  return state.ticketView === "list" ? paintList(box, access, state) : paintBoard(box, access, state);
+}
+
+function ageText(iso) {
+  const ms = Date.now() - Date.parse(iso || "");
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const hours = Math.floor(ms / 3600000);
+  if (hours < 1) return "<1h";
+  if (hours < 48) return hours + "h";
+  return Math.floor(hours / 24) + "d";
+}
+
+function boardQueue(access, state) {
+  if (state.ticketQueue === "all" && access.queues.length > 1) return "all";
+  return access.queues.includes(state.ticketQueue) ? state.ticketQueue : (access.queues[0] || "screens");
+}
+
+function viewToggle(view) {
+  return '<div class="tabs ticket-view-toggle" role="group" aria-label="View">'
+    + '<button type="button" data-act="ticket-view" data-view="board" class="' + (view === "board" ? "on" : "") + '" aria-pressed="' + (view === "board") + '">Board</button>'
+    + '<button type="button" data-act="ticket-view" data-view="list" class="' + (view === "list" ? "on" : "") + '" aria-pressed="' + (view === "list") + '">List</button></div>';
+}
+
+function typeOptionsFor(access, queue, selected) {
+  const queues = queue === "all" ? access.queues : [queue];
+  const all = [...new Set(queues.flatMap((id) => access.types?.[id] || []))];
+  return '<option value="">Any</option>' + all.map((type) => '<option value="' + esc(type) + '"' + (type === selected ? " selected" : "") + ">" + esc(type) + "</option>").join("");
+}
+
+function siteFilterOptions(sites, selected) {
+  return '<option value="">Any</option>' + sites.map((site) => '<option value="' + esc(site.id) + '"' + (site.id === selected ? " selected" : "") + ">" + esc(site.name) + "</option>").join("")
+    + '<option value="other"' + (selected === "other" ? " selected" : "") + ">Free-text sites</option>";
+}
+
+function sharedFilters(access, state, sites, queue) {
+  return '<label class="field"><span>Search</span><input id="ticket-q" value="' + esc(state.ticketQuery || "") + '" placeholder="Number, subject, site, submitter"></label>'
+    + '<label class="field"><span>Priority</span><select id="ticket-priority">' + options(PRIORITY_LABEL, state.ticketPriority || "", true) + "</select></label>"
+    + '<label class="field"><span>Site</span><select id="ticket-site-filter">' + siteFilterOptions(sites, state.ticketSite || "") + "</select></label>"
+    + '<label class="field"><span>Request type</span><select id="ticket-type-filter">' + typeOptionsFor(access, queue, state.ticketType || "") + "</select></label>";
+}
+
+function filterParams(state, queue) {
+  const params = new URLSearchParams({ queue });
+  if (state.ticketPriority) params.set("priority", state.ticketPriority);
+  if (state.ticketQuery) params.set("q", state.ticketQuery);
+  if (state.ticketSite) params.set("site", state.ticketSite);
+  if (state.ticketType) params.set("type", state.ticketType);
+  return params;
+}
+
+function boardCard(ticket) {
+  const submitter = ticket.requesterName || ticket.requesterEmail || "";
+  const moves = '<option value="">Move to…</option>' + COLUMNS.filter((col) => col.id !== ticket.column).map((col) => '<option value="' + col.id + '">' + esc(col.label) + "</option>").join("");
+  return '<article class="ticket-card" draggable="true" data-testid="ticket-card" data-id="' + esc(ticket.id) + '" data-column="' + esc(ticket.column) + '" aria-label="Ticket ' + esc(ticket.number) + '">'
+    + '<button class="text-btn ticket-card-open" type="button" data-go="tickets/' + esc(ticket.id) + '"><strong>' + esc(ticket.number) + "</strong> · " + esc(ticket.subject) + "</button>"
+    + '<p class="small">' + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge muted">Free-text site</span>' : "") + "</p>"
+    + '<p class="small"><span class="badge ' + (ticket.priority === "urgent" || ticket.priority === "high" ? "" : "muted") + '">' + esc(PRIORITY_LABEL[ticket.priority] || ticket.priority) + "</span> "
+    + (ticket.queue ? '<span class="badge muted">' + esc(QUEUE_LABEL[ticket.queue] || ticket.queue) + "</span> " : "")
+    + (ticket.overdue ? '<span class="badge">Overdue</span> ' : "")
+    + '<span class="muted">' + esc(submitter) + " · " + esc(ageText(ticket.createdAt)) + "</span></p>"
+    + '<div class="ticket-move"><label class="sr-only" for="move-' + esc(ticket.id) + '">Move ticket ' + esc(ticket.number) + '</label><select id="move-' + esc(ticket.id) + '" data-testid="ticket-move-select">' + moves + '</select>'
+    + '<button class="btn ghost" type="button" data-act="ticket-move" data-id="' + esc(ticket.id) + '">Move</button></div>'
+    + "</article>";
+}
+
+const BOARD_STYLE = '<style>.ticket-board{display:grid;grid-template-columns:repeat(4,minmax(200px,1fr));gap:12px;margin-top:12px;overflow-x:auto}'
+  + '.ticket-col{background:#f6f7fb;border:1px solid var(--line,#e6e8ee);border-radius:12px;padding:8px;min-height:160px}'
+  + '.ticket-col.drop{outline:2px dashed var(--blue,#1f4bdb)}.ticket-col h3{font-size:14px;margin:4px 4px 8px;display:flex;justify-content:space-between}'
+  + '.ticket-card{background:#fff;border:1px solid var(--line,#e6e8ee);border-radius:10px;padding:10px;margin-bottom:8px;cursor:grab}'
+  + '.ticket-card p{margin:6px 0 0}.ticket-card-open{text-align:left;font-size:14px}.ticket-move{display:flex;gap:6px;margin-top:8px}.ticket-move select{flex:1;min-width:0}'
+  + '.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}'
+  + '.ticket-dialog{border:1px solid var(--line,#e6e8ee);border-radius:12px;max-width:440px;width:92vw}.ticket-dialog textarea{width:100%;min-height:110px}'
+  + '@media (max-width:760px){.ticket-board{grid-template-columns:1fr}.ticket-card{cursor:default}}</style>';
+
+async function paintBoard(box, access, state) {
+  const queue = boardQueue(access, state);
+  state.ticketQueue = queue;
+  const sites = await loadSites(state);
+  const listed = await api("/api/tickets?" + filterParams(state, queue).toString());
+  const tickets = listed.tickets || [];
+  const columns = COLUMNS.map((col) => {
+    const cards = tickets.filter((ticket) => ticket.column === col.id);
+    return '<section class="ticket-col" data-testid="ticket-column" data-column="' + col.id + '" aria-label="' + esc(col.label) + '"><h3>' + esc(col.label) + ' <span class="muted">' + cards.length + "</span></h3>"
+      + (cards.map(boardCard).join("") || '<p class="muted small">No tickets.</p>') + "</section>";
+  }).join("");
+  box.innerHTML = BOARD_STYLE + viewToggle("board") + queueTabs(queue, access.queues, true)
+    + '<div class="asset-dims">' + sharedFilters(access, state, sites, queue) + "</div>"
+    + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="ticket-filter">Apply filters</button><button class="btn" type="button" data-go="tickets/new">Submit ticket</button>'
+    + (access.role === "admin" ? '<button class="btn ghost" type="button" data-go="tickets/settings">Settings</button><button class="btn ghost" type="button" data-go="tickets/audit">Audit log</button>' : "") + "</div>"
+    + '<p class="muted small">Drag a card to another column, or use its Move menu. Moving to Needs more info asks for a public reply.</p>'
+    + '<div class="ticket-board" data-testid="ticket-board">' + columns + "</div>" + note("ticket-note-msg");
+  wireDrag(box, state);
+}
+
+function wireDrag(box, state) {
+  for (const card of box.querySelectorAll(".ticket-card")) {
+    card.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", card.dataset.id);
+      event.dataTransfer.effectAllowed = "move";
+    });
+  }
+  for (const col of box.querySelectorAll(".ticket-col")) {
+    col.addEventListener("dragover", (event) => { event.preventDefault(); col.classList.add("drop"); });
+    col.addEventListener("dragleave", () => col.classList.remove("drop"));
+    col.addEventListener("drop", (event) => {
+      event.preventDefault();
+      col.classList.remove("drop");
+      const id = event.dataTransfer.getData("text/plain");
+      const card = box.querySelector('.ticket-card[data-id="' + CSS.escape(id) + '"]');
+      if (!id || !card || card.dataset.column === col.dataset.column) return;
+      moveFlow(id, col.dataset.column).then((moved) => { if (moved) return paintTickets("", state); }).catch((err) => setNote(err.message));
+    });
+  }
+}
+
+function askReply() {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "ticket-dialog";
+    dialog.setAttribute("data-testid", "ticket-needs-info-dialog");
+    dialog.innerHTML = '<form method="dialog"><h3>What information is needed?</h3><p class="muted small">This is sent as a public reply the submitter can see on their tracking page. It is required.</p>'
+      + '<label class="field"><span>Public reply</span><textarea id="ticket-needs-info-text" required maxlength="4000"></textarea></label>'
+      + '<p class="small" id="ticket-needs-info-err" role="alert"></p>'
+      + '<div class="asset-actions"><button class="btn ghost" type="button" value="cancel" id="ticket-needs-info-cancel">Cancel</button><button class="btn" type="submit" value="ok">Move to Needs more info</button></div></form>';
+    document.body.appendChild(dialog);
+    const finish = (value) => { dialog.close(); dialog.remove(); resolve(value); };
+    dialog.querySelector("#ticket-needs-info-cancel").addEventListener("click", () => finish(null));
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(null); });
+    dialog.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = dialog.querySelector("#ticket-needs-info-text").value.trim();
+      if (!text) { dialog.querySelector("#ticket-needs-info-err").textContent = "Write what information is needed."; return; }
+      finish(text);
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    dialog.querySelector("#ticket-needs-info-text").focus();
+  });
+}
+
+async function moveFlow(id, column) {
+  if (!column) throw new Error("Choose a column to move to.");
+  let reply = "";
+  if (column === "needs-info") {
+    reply = await askReply();
+    if (reply === null) return false;
+  }
+  await api("/api/tickets/" + encodeURIComponent(id) + "/move", { method: "POST", body: JSON.stringify({ column, reply }) });
+  return true;
 }
 
 async function paintList(box, access, state) {
-  const queue = access.queues.includes(state.ticketQueue) ? state.ticketQueue : (access.queues[0] || "screens");
+  const queue = boardQueue(access, state);
   state.ticketQueue = queue;
-  const params = new URLSearchParams({ queue });
+  const sites = await loadSites(state);
+  const params = filterParams(state, queue);
   const status = state.ticketStatus || "";
-  const priority = state.ticketPriority || "";
-  const q = state.ticketQuery || "";
   const from = state.ticketUpdatedFrom || "";
   const to = state.ticketUpdatedTo || "";
   if (status) params.set("status", status);
-  if (priority) params.set("priority", priority);
-  if (q) params.set("q", q);
   if (from) params.set("updatedFrom", from);
   if (to) params.set("updatedTo", to);
   const [summary, listed] = await Promise.all([
@@ -93,10 +245,11 @@ async function paintList(box, access, state) {
     '<tr data-testid="ticket-row"><td><button class="text-btn" type="button" data-go="tickets/' + esc(ticket.id) + '">' + esc(ticket.number) + "</button></td>"
     + "<td>" + esc(ticket.subject) + "</td><td>" + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge" data-testid="ticket-site-free-text">Free-text site</span>' : "") + "</td>"
     + "<td>" + esc(PRIORITY_LABEL[ticket.priority] || ticket.priority) + "</td>"
-    + "<td>" + esc(ticket.statusLabel) + (ticket.overdue ? ' <span class="badge" data-testid="ticket-overdue">Overdue</span>' : "") + "</td>"
+    + "<td>" + esc(ticket.columnLabel || ticket.statusLabel) + (ticket.columnLabel && ticket.statusLabel !== ticket.columnLabel ? ' <span class="muted small">(' + esc(ticket.statusLabel) + ")</span>" : "") + (ticket.overdue ? ' <span class="badge" data-testid="ticket-overdue">Overdue</span>' : "") + "</td>"
+    + "<td>" + esc(ticket.requesterName || ticket.requesterEmail || "") + "</td>"
     + "<td>" + esc((ticket.updatedAt || "").slice(0, 10)) + "</td></tr>"
   ).join("");
-  box.innerHTML = queueTabs(queue, access.queues)
+  box.innerHTML = viewToggle("list") + queueTabs(queue, access.queues, true)
     + '<div class="metrics ticket-metrics" data-testid="ticket-counts">'
     + '<div><div class="metric-label">Open</div><div class="metric-value">' + summary.open + "</div></div>"
     + '<div><div class="metric-label">Awaiting response</div><div class="metric-value">' + summary.awaiting + "</div></div>"
@@ -105,9 +258,8 @@ async function paintList(box, access, state) {
     + (summary.overdue ? '<div><div class="metric-label">Overdue</div><div class="metric-value">' + summary.overdue + "</div></div>" : "")
     + "</div>"
     + '<div class="asset-dims">'
-    + '<label class="field"><span>Search</span><input id="ticket-q" value="' + esc(q) + '" placeholder="Number, subject, site, requester"></label>'
+    + sharedFilters(access, state, sites, queue)
     + '<label class="field"><span>Status</span><select id="ticket-status">' + options(STATUS_LABEL, status, true) + "</select></label>"
-    + '<label class="field"><span>Priority</span><select id="ticket-priority">' + options(PRIORITY_LABEL, priority, true) + "</select></label>"
     + '<label class="field"><span>Updated from</span><input id="ticket-updated-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>Updated to</span><input id="ticket-updated-to" type="date" value="' + esc(to) + '"></label>'
     + "</div>"
@@ -116,8 +268,8 @@ async function paintList(box, access, state) {
     + '<button class="btn" type="button" data-go="tickets/new">Submit ticket</button>'
     + (access.role === "admin" ? '<button class="btn ghost" type="button" data-go="tickets/settings">Settings</button><button class="btn ghost" type="button" data-go="tickets/audit">Audit log</button>' : "")
     + "</div>"
-    + '<div class="table-wrap"><table><thead><tr><th>Number</th><th>Subject</th><th>Site</th><th>Priority</th><th>Status</th><th>Updated</th></tr></thead><tbody>'
-    + (rows || '<tr><td colspan="6">No tickets.</td></tr>') + "</tbody></table></div>";
+    + '<div class="table-wrap"><table><thead><tr><th>Number</th><th>Subject</th><th>Site</th><th>Priority</th><th>Column</th><th>Submitter</th><th>Updated</th></tr></thead><tbody>'
+    + (rows || '<tr><td colspan="7">No tickets.</td></tr>') + "</tbody></table></div>";
 }
 
 async function loadSites(state) {
@@ -178,7 +330,9 @@ async function paintTicket(box, id, access, state) {
     + (notes || "")
     + (ticket.closeOut ? "<p>Close-out: " + esc(ticket.closeOut.notes) + (ticket.closeOut.photoId ? " · photo attached" : "") + "</p>" : "")
     + (files ? "<h3>Attachments</h3><ul>" + files + "</ul>" : "")
-    + '<label class="field"><span>Status</span><select id="ticket-next-status">' + options(STATUS_LABEL, ticket.status) + "</select></label>"
+    + '<p>Board column: <strong data-testid="ticket-column-label">' + esc(ticket.columnLabel || "") + "</strong></p>"
+    + '<div class="ticket-move"><label class="field"><span>Move to column</span><select id="move-' + esc(ticket.id) + '">' + COLUMNS.filter((col) => col.id !== ticket.column).map((col) => '<option value="' + col.id + '">' + esc(col.label) + "</option>").join("") + '</select></label><button class="btn" type="button" data-act="ticket-move" data-id="' + esc(ticket.id) + '">Move</button></div>'
+    + '<label class="field"><span>Detailed status</span><select id="ticket-next-status">' + options(STATUS_LABEL, ticket.status) + "</select></label>"
     + '<button class="btn" type="button" data-act="ticket-status" data-id="' + esc(ticket.id) + '">Update status</button>'
     + '<label class="field"><span>Assignee</span><input id="ticket-assignee" value="' + esc(ticket.assignee) + '" placeholder="Staff email"></label>'
     + '<button class="btn ghost" type="button" data-act="ticket-assign" data-id="' + esc(ticket.id) + '">Assign</button>'
@@ -305,16 +459,29 @@ async function downloadFile(ticketId, fileId) {
 
 export async function ticketAction(button, state, go) {
   const act = button.dataset.act;
+  if (act === "ticket-view") {
+    state.ticketView = button.dataset.view === "list" ? "list" : "board";
+    go("tickets");
+    return;
+  }
+  if (act === "ticket-move") {
+    const select = document.getElementById("move-" + button.dataset.id);
+    const moved = await moveFlow(button.dataset.id, select?.value || "");
+    if (moved) go(location.hash.includes("tickets/" + button.dataset.id) ? "tickets/" + button.dataset.id : "tickets");
+    return;
+  }
   if (act === "ticket-queue") {
-    state.ticketQueue = button.dataset.queue === "signage" ? "signage" : "screens";
+    state.ticketQueue = ["signage", "all"].includes(button.dataset.queue) ? button.dataset.queue : "screens";
     if (location.hash.includes("/new")) go("tickets/new");
     else go("tickets");
     return;
   }
   if (act === "ticket-filter") {
     state.ticketQuery = document.getElementById("ticket-q")?.value || "";
-    state.ticketStatus = document.getElementById("ticket-status")?.value || "";
+    if (document.getElementById("ticket-status")) state.ticketStatus = document.getElementById("ticket-status").value || "";
     state.ticketPriority = document.getElementById("ticket-priority")?.value || "";
+    state.ticketSite = document.getElementById("ticket-site-filter")?.value || "";
+    state.ticketType = document.getElementById("ticket-type-filter")?.value || "";
     state.ticketUpdatedFrom = document.getElementById("ticket-updated-from")?.value || "";
     state.ticketUpdatedTo = document.getElementById("ticket-updated-to")?.value || "";
     go("tickets");
