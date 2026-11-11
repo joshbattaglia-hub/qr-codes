@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { conditionalIncrement, env, rateStore, ticketStore } from "./lib.mjs";
 import {
-  BOARD_COLUMNS, PRIORITIES, QUEUES, acceptTicketFile, allTicketRows, auditRow, columnFor, columnLabel, doneAt, emailOf, listSiteChoices, readSettings, siteChoiceFor,
+  BOARD_COLUMNS, PRIORITIES, QUEUES, acceptTicketFile, allTicketRows, auditRow, columnFor, columnLabel, emailOf, listSiteChoices, readSettings, siteChoiceFor,
 } from "./tickets.mjs";
 import { derivedTrackToken, hashTrackToken, trackPath, trackTokenMatches, writeTrackIndex } from "./ticket-track.mjs";
 
@@ -84,13 +84,15 @@ export function makeTrackToken(ticketId) {
   return derivedTrackToken(ticketId);
 }
 
-export async function publicForm() {
+export async function requesterForm(scope) {
   const settings = await readSettings();
   const sites = (await listSiteChoices()).map((site) => ({ id: site.id, name: site.name }));
-  return { status: 200, body: { types: settings.types, sites, formToken: issueFormToken(), domain: REQUESTER_DOMAIN } };
+  return { status: 200, body: { email: scope.email, types: settings.types, sites, formToken: issueFormToken(), domain: REQUESTER_DOMAIN } };
 }
 
-export async function submitPublicTicket(req, raw) {
+/** Signed-in submit. The requester email always comes from the verified session; any body email is ignored. */
+export async function submitRequesterTicket(req, raw, scope) {
+  if (!scope?.email || !requesterEmailOk(scope.email)) return { status: 401, error: "Sign in to submit a ticket." };
   if (raw.length > SUBMIT_MAX_BYTES) return { status: 413, error: "The request is too large. Use fewer or smaller files." };
   let body;
   try { body = JSON.parse(raw); } catch { return { status: 400, error: "The request was not accepted." }; }
@@ -104,8 +106,7 @@ export async function submitPublicTicket(req, raw) {
 
   const name = String(body.name || "").replace(/\s+/g, " ").trim();
   if (name.length < 2 || name.length > 80) return { status: 400, error: "Enter your full name." };
-  const email = requesterEmailOk(body.email);
-  if (!email) return { status: 400, error: "Use your @" + REQUESTER_DOMAIN + " email address." };
+  const email = requesterEmailOk(scope.email);
   const phone = phoneOk(body.phone);
   if (!phone) return { status: 400, error: "Enter a valid Australian phone number." };
   const queue = QUEUES.includes(body.queue) ? body.queue : "";
@@ -164,7 +165,7 @@ export async function submitPublicTicket(req, raw) {
   await ticketStore().setJSON("ticket/" + ticket.id, ticket);
   await writeTrackIndex(ticket.number, ticket.id);
   await auditRow(email, "web-request", ticket.id, queue);
-  return { status: 200, body: { ok: true, number: ticket.number, token, trackPath: trackPath(ticket.number, token) } };
+  return { status: 200, body: { ok: true, id: ticket.id, number: ticket.number, token, trackPath: trackPath(ticket.number, token) } };
 }
 
 function presentTracking(ticket) {
@@ -207,32 +208,108 @@ export async function readTracking(req, raw) {
   return { status: 200, body: { ticket: presentTracking(ticket) } };
 }
 
-export const PUBLIC_DONE_DAYS = 30;
+// ---- Signed-in requester views: only tickets whose requester email matches the verified session email. ----
 
-/** Public board row. Whitelist only: number, site, queue, column, updatedAt. */
-export const PUBLIC_OTHER_SITE = "Other site";
+function ownTicket(ticket, scope) {
+  return Boolean(ticket && scope?.email && emailOf(ticket.requesterEmail) === scope.email);
+}
 
-/** Public board row. Whitelist only: number, site, queue, column, updatedAt. Typed-in sites never leave the server. */
-export function publicBoardRow(ticket) {
-  const freeText = ticket.siteId === "other" || ticket.siteFreeText === true || !/^s[a-f0-9]{8}$/.test(String(ticket.siteId || ""));
-  const site = freeText ? PUBLIC_OTHER_SITE : String(ticket.siteLabel || "").replace(/\s+/g, " ").trim().slice(0, 80) || PUBLIC_OTHER_SITE;
+function presentOwn(ticket) {
   return {
-    number: Number(ticket.number) || 0,
-    site,
-    queue: QUEUES.includes(ticket.queue) ? ticket.queue : "",
+    id: ticket.id,
+    number: ticket.number,
+    queue: ticket.queue,
+    queueLabel: QUEUE_LABEL[ticket.queue] || ticket.queue,
+    site: ticket.siteLabel,
+    requestType: ticket.requestType,
+    priority: ticket.priority,
+    priorityLabel: PRIORITY_LABEL[ticket.priority] || ticket.priority,
+    neededBy: ticket.neededBy || "",
+    subject: ticket.subject,
+    description: ticket.description,
     column: columnFor(ticket.status),
-    updatedAt: String(ticket.updatedAt || ""),
+    columnLabel: columnLabel(columnFor(ticket.status)),
+    createdAt: ticket.createdAt,
+    updatedAt: ticket.updatedAt,
+    history: (ticket.statusHistory || []).map((row) => ({ at: row.at, status: columnLabel(columnFor(row.to)) })),
+    replies: (ticket.messages || []).filter((row) => row.kind === "public").map((row) => ({
+      at: row.at,
+      from: emailOf(row.actor) === emailOf(ticket.requesterEmail) ? "You" : "Express Help",
+      text: row.text,
+    })),
+    files: (ticket.files || []).filter((file) => file.id && file.name !== "close-out.jpg").map((file) => ({ id: file.id, name: file.name, contentType: file.contentType })),
   };
 }
 
-export async function publicBoard(req) {
-  const blocked = await limited(req, "board", 30, 1000);
-  if (blocked) return blocked;
-  const cutoff = clock() - PUBLIC_DONE_DAYS * 86400000;
-  const rows = (await allTicketRows())
-    .filter((ticket) => ticket && ticket.number && QUEUES.includes(ticket.queue))
-    .filter((ticket) => columnFor(ticket.status) !== "done" || Date.parse(doneAt(ticket)) >= cutoff)
-    .map(publicBoardRow)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return { status: 200, body: { columns: BOARD_COLUMNS.map(({ id, label }) => ({ id, label })), doneDays: PUBLIC_DONE_DAYS, tickets: rows } };
+function listRow(ticket) {
+  const full = presentOwn(ticket);
+  return { id: full.id, number: full.number, queue: full.queue, queueLabel: full.queueLabel, site: full.site, subject: full.subject, priority: full.priority, priorityLabel: full.priorityLabel, column: full.column, columnLabel: full.columnLabel, createdAt: full.createdAt, updatedAt: full.updatedAt };
+}
+
+export async function listOwnTickets(scope) {
+  if (!scope?.email) return { status: 401, error: "Sign in to see your tickets." };
+  const rows = (await allTicketRows()).filter((ticket) => ownTicket(ticket, scope))
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return { status: 200, body: { columns: BOARD_COLUMNS.map(({ id, label }) => ({ id, label })), tickets: rows.map(listRow) } };
+}
+
+async function loadOwn(scope, id) {
+  if (!scope?.email || !/^t[a-f0-9]{16}$/.test(id || "")) return null;
+  const ticket = await ticketStore().get("ticket/" + id, { type: "json" });
+  return ownTicket(ticket, scope) ? ticket : null;
+}
+
+export async function readOwnTicket(scope, id) {
+  const ticket = await loadOwn(scope, id);
+  if (!ticket) return { status: 404, error: "That ticket is not available." };
+  return { status: 200, body: { ticket: presentOwn(ticket) } };
+}
+
+export async function readOwnFile(scope, ticketId, fileId) {
+  const ticket = await loadOwn(scope, ticketId);
+  if (!ticket || !(ticket.files || []).some((file) => file.id === fileId && file.name !== "close-out.jpg")) return { status: 404, error: "That file is not available." };
+  const stored = await ticketStore().get("file/" + fileId, { type: "json" });
+  if (!stored || stored.ticketId !== ticketId) return { status: 404, error: "That file is not available." };
+  return { status: 200, body: Buffer.from(stored.bytes, "base64"), contentType: stored.contentType, name: stored.name };
+}
+
+async function mutateOwn(scope, id, change) {
+  if (!scope?.email || !/^t[a-f0-9]{16}$/.test(id || "")) return { status: 404, error: "That ticket is not available." };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const meta = await ticketStore().getWithMetadata("ticket/" + id, { type: "json", consistency: "strong" });
+    if (!meta?.etag || !ownTicket(meta.data, scope)) return { status: 404, error: "That ticket is not available." };
+    const result = await change(meta.data);
+    if (result.error) return { status: 400, error: result.error };
+    const next = { ...meta.data, ...result.patch, updatedAt: new Date(clock()).toISOString() };
+    const write = await ticketStore().setJSON("ticket/" + id, next, { onlyIfMatch: meta.etag });
+    if (write?.modified === true) {
+      await auditRow(scope.email, result.action, id, result.detail || "");
+      return { status: 200, body: { ticket: presentOwn(next) } };
+    }
+    if (write?.modified !== false) return { status: 503, error: "Tickets are temporarily unavailable." };
+  }
+  return { status: 409, error: "That ticket changed. Try again." };
+}
+
+export function commentOwnTicket(scope, id, body) {
+  const text = String(body?.text || "").trim().slice(0, TEXT_MAX);
+  if (!text) return { status: 400, error: "Write a comment first." };
+  return mutateOwn(scope, id, (ticket) => ({
+    action: "comment",
+    patch: { messages: [...(ticket.messages || []), { id: "m" + crypto.randomBytes(6).toString("hex"), at: new Date(clock()).toISOString(), actor: scope.email, kind: "public", text }] },
+  }));
+}
+
+export function addOwnFile(scope, id, body) {
+  let bytes;
+  try { bytes = Buffer.from(String(body?.data || ""), "base64"); }
+  catch { return { status: 400, error: "The file was not accepted." }; }
+  return mutateOwn(scope, id, async (ticket) => {
+    if ((ticket.files || []).length >= 8) return { error: "This ticket already has 8 files." };
+    const file = await acceptTicketFile(bytes, body?.name);
+    if (file.error) return { error: file.error };
+    const saved = { id: "f" + crypto.randomBytes(8).toString("hex"), name: file.name, contentType: file.contentType };
+    await ticketStore().setJSON("file/" + saved.id, { ...saved, ticketId: ticket.id, bytes: file.bytes });
+    return { action: "file", detail: saved.id, patch: { files: [...(ticket.files || []), saved] } };
+  });
 }
