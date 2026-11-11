@@ -231,7 +231,7 @@ test("the tracking link shows read-only status and public replies only", async (
   assert.equal(view.headers.get("referrer-policy"), "no-referrer");
   assert.match(view.headers.get("x-robots-tag"), /noindex/);
   const payload = JSON.stringify(view.body);
-  assert.equal(view.body.ticket.status, "Scheduled");
+  assert.equal(view.body.ticket.status, "In progress");
   assert.equal(view.body.ticket.replies.length, 1);
   assert.deepEqual(view.body.ticket.replies.map((row) => row.from), ["Express Help"]);
   for (const hidden of ["Hidden supplier note", "internal", JOSHUA, "assignee", "trackHash", "requesterPhone", "requesterEmail", "closeOut", index.id]) {

@@ -14,6 +14,12 @@
   html, body { margin:0; overflow-x:clip; }
   body { font:16px/1.45 "Segoe UI", system-ui, sans-serif; background:#f3f4f8; color:var(--ink); }
   .shell { width:min(390px,100%); margin:0 auto; padding:0 0 48px; }
+  body.wide .shell { width:min(1100px,100%); }
+  body.wide .board { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  body.wide .board-row { flex-direction:column; gap:2px; }
+  body.wide .board-row span:last-child { text-align:left; font-size:13px; }
+  body.wide .filters { max-width:280px; }
+  @media (max-width:760px) { body.wide .board { display:block; } body.wide .board-row { flex-direction:row; } body.wide .filters { max-width:none; } }
   header { display:flex; gap:10px; align-items:center; padding:16px 16px 12px; }
   header strong { display:block; font-size:15px; }
   header small { color:var(--muted); font-size:13px; }
@@ -46,6 +52,15 @@
   legend { font-weight:600; margin-bottom:6px; }
   .choice { flex-direction:row; align-items:center; gap:8px; font-weight:400; margin:6px 0; }
   .choice input { width:auto; }
+  .topnav { display:flex; gap:6px; margin:0 0 12px; }
+  .topnav a { flex:1; text-align:center; padding:8px; border-radius:8px; border:1px solid var(--line); background:#fff; text-decoration:none; color:var(--navy); font-weight:600; font-size:14px; }
+  .topnav a[aria-current="page"] { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .board-col h2 { font-size:16px; margin:0 0 6px; display:flex; justify-content:space-between; }
+  .board-row { display:flex; justify-content:space-between; gap:8px; border-top:1px solid var(--line); padding:8px 0; font-size:14px; }
+  .board-row:first-of-type { border-top:0; }
+  .board-row span:last-child { color:var(--muted); text-align:right; white-space:nowrap; }
+  .filters { display:flex; gap:8px; }
+  .filters > * { flex:1; }
 </style>
 </head>
 <body>
@@ -78,11 +93,39 @@ async function api(path, opts = {}) {
   return body;
 }
 
+function topnav(current) {
+  return '<nav class="topnav" aria-label="Support"><a href="/support"' + (current === "form" ? ' aria-current="page"' : "") + '>Submit a ticket</a><a href="/support/board"' + (current === "board" ? ' aria-current="page"' : "") + '>Ticket board</a></nav>';
+}
+
+const BOARD_QUEUE = { screens: "Screens", signage: "Signage" };
+
+async function board() {
+  document.body.classList.add("wide");
+  app.innerHTML = topnav("board") + "<h1>Ticket board</h1><p>Loading…</p>";
+  const data = await api("/api/support/board");
+  const queue = new URLSearchParams(location.search).get("queue") || "";
+  const render = (picked) => {
+    const rows = (data.tickets || []).filter((row) => !picked || row.queue === picked);
+    const cols = (data.columns || []).map((col) => {
+      const items = rows.filter((row) => row.column === col.id);
+      return '<section class="card board-col" data-column="' + esc(col.id) + '"><h2>' + esc(col.label) + ' <span class="muted">' + items.length + "</span></h2>"
+        + (items.map((row) => '<div class="board-row"><span><strong>' + esc(row.number) + "</strong> · " + esc(row.site) + " · " + esc(BOARD_QUEUE[row.queue] || row.queue) + "</span><span>" + esc(when(row.updatedAt)) + "</span></div>").join("") || '<p class="muted">None</p>')
+        + (col.id === "done" ? '<p class="muted" style="font-size:13px">Last ' + esc(data.doneDays) + " days</p>" : "")
+        + "</section>";
+    }).join("");
+    app.innerHTML = topnav("board") + '<h1>Ticket board</h1><p class="muted">Ticket number, site, queue and last update only. Use your private tracking link for details.</p>'
+      + '<div class="filters"><label>Queue<select id="board-queue"><option value="">All</option><option value="screens"' + (picked === "screens" ? " selected" : "") + '>Screens</option><option value="signage"' + (picked === "signage" ? " selected" : "") + ">Signage</option></select></label></div>"
+      + '<div class="board">' + cols + "</div>";
+    document.getElementById("board-queue").addEventListener("change", (event) => render(event.target.value));
+  };
+  render(["screens", "signage"].includes(queue) ? queue : "");
+}
+
 async function form() {
   const meta = await api("/api/support/form");
   const sites = (meta.sites || []).map((site) => '<option value="' + esc(site.id) + '">' + esc(site.name) + "</option>").join("") + '<option value="other">My site is not listed</option>';
   const priorities = Object.entries(PRIORITY_LABEL).map(([value, label]) => '<option value="' + value + '"' + (value === "normal" ? " selected" : "") + ">" + esc(label) + "</option>").join("");
-  app.innerHTML = '<h1>Submit a support ticket</h1><p class="muted">Screens and signage requests for Liberty Oil Convenience sites. No sign-in needed.</p>'
+  app.innerHTML = topnav("form") + '<h1>Submit a support ticket</h1><p class="muted">Screens and signage requests for Liberty Oil Convenience sites. No sign-in needed.</p>'
     + '<form class="card" id="support-new" novalidate>'
     + '<label>Full name<input id="support-name" required maxlength="80" autocomplete="name"></label>'
     + '<label>Work email<input id="support-email" type="email" required maxlength="254" autocomplete="email" placeholder="name@' + esc(meta.domain) + '"><span class="muted">Must be an @' + esc(meta.domain) + ' address.</span></label>'
@@ -193,6 +236,7 @@ async function track() {
 async function boot() {
   const path = location.pathname.replace(/\/+$/, "");
   if (path === "/support/track") return track();
+  if (path === "/support/board") return board();
   if (path !== "/support") history.replaceState(null, "", "/support");
   return form();
 }

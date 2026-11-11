@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, jsonCookies, originBlocked } from "../lib/access.mjs";
 import { clearSupportCookie, deleteSupportSession } from "../lib/support-auth.mjs";
 import { receiveInbound } from "../lib/ticket-mail.mjs";
-import { SUBMIT_MAX_BYTES, publicForm, readTracking, submitPublicTicket } from "../lib/support-public.mjs";
+import { SUBMIT_MAX_BYTES, publicBoard, publicForm, readTracking, submitPublicTicket } from "../lib/support-public.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-robots-tag": "noindex, nofollow" };
 
@@ -27,6 +27,10 @@ export default async (req) => {
     const result = await publicForm();
     return json(result.status, result.body, PRIVATE);
   }
+  if (path === "/api/support/board" && req.method === "GET") {
+    const result = await publicBoard(req);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
   if (path === "/api/support/submit" && req.method === "POST") {
     const raw = await boundedText(req, SUBMIT_MAX_BYTES);
     if (raw === null) return json(413, { error: "The request is too large. Use fewer or smaller files." }, PRIVATE);
@@ -48,4 +52,4 @@ export default async (req) => {
   return json(404, { error: "Not found" }, PRIVATE);
 };
 
-export const config = { path: ["/api/support/form", "/api/support/submit", "/api/support/track", "/api/support/start", "/api/support/verify", "/api/support/logout", "/api/support/session", "/api/support/tickets", "/api/support/tickets/*", "/api/support/inbound/postmark", "/api/support/inbound/resend"] };
+export const config = { path: ["/api/support/form", "/api/support/board", "/api/support/submit", "/api/support/track", "/api/support/start", "/api/support/verify", "/api/support/logout", "/api/support/session", "/api/support/tickets", "/api/support/tickets/*", "/api/support/inbound/postmark", "/api/support/inbound/resend"] };

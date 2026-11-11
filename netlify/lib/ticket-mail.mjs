@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { env, ticketStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
+import { ensureTrackingPath } from "./ticket-track.mjs";
 import {
   acceptTicketFile, domainAllowed, emailOf, findTicketByNumber, ingestEmailReply, ingestEmailTicket,
   readSettings, requesterScope, ticketAccess,
@@ -46,10 +47,15 @@ export async function notifyTicket(ticket, event, text = "") {
   if (!outboundAllowed(settings, ticket.queue)) return { status: env("TICKET_MAIL") === "off" ? "killed" : "off" };
   const number = ticket.number;
   const subject = `[T-${number}] ${ticket.subject}`;
-  const statusLine = ticket.statusLabel || ticket.status;
+  const statusLine = ticket.columnLabel || ticket.statusLabel || ticket.status;
+  const path = await ensureTrackingPath(ticket.id);
+  const trackLine = path
+    ? `\n\nTrack this ticket (private link, do not share):\n${publicUrl()}${path}`
+    : "";
+  const extra = String(text || "").trim().slice(0, 4000);
   const body = event === "status"
-    ? `Your Express Help ticket T-${number} is now ${statusLine}.\n\nReply to this email or keep [T-${number}] in the subject.`
-    : `A public reply was added to your Express Help ticket T-${number}:\n\n${String(text || "").slice(0, 4000)}\n\nReply to this email or keep [T-${number}] in the subject.`;
+    ? `Your Express Help ticket T-${number} is now ${statusLine}.` + (extra ? `\n\nMessage from Express Help:\n${extra}` : "") + trackLine + `\n\nReply to this email or keep [T-${number}] in the subject.`
+    : `A public reply was added to your Express Help ticket T-${number}:\n\n${extra}` + trackLine + `\n\nReply to this email or keep [T-${number}] in the subject.`;
   const inbound = settings.inbound?.addresses?.[ticket.queue] || "";
   let replyTo = "";
   if (inbound.includes("@")) {

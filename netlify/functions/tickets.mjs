@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
-  addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, listAudit, listSiteChoices, listTickets, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
+  addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, listAudit, listSiteChoices, listTickets, moveTicket, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
 } from "../lib/tickets.mjs";
 import { approveQuarantine, discardQuarantine, listQuarantine, notifyTicket } from "../lib/ticket-mail.mjs";
 
@@ -83,9 +83,11 @@ export default async (req) => {
     : action === "reply" ? await addPublicReply(actor, one[1], body)
     : action === "file" ? await addFile(actor, one[1], body)
     : action === "close" ? await closeTicket(actor, one[1], body)
+    : action === "move" ? await moveTicket(actor, one[1], body)
     : { status: 404, error: "Not found" };
-  if (result.status === 200 && (action === "status" || action === "reply" || action === "close")) {
-    await notifyTicket(result.body.ticket, action === "reply" ? "reply" : "status", body?.text).catch(() => ({ status: "unknown" }));
+  if (result.status === 200 && (action === "status" || action === "reply" || action === "close" || action === "move")) {
+    const text = action === "move" ? body?.reply : action === "reply" ? body?.text : "";
+    await notifyTicket(result.body.ticket, action === "reply" ? "reply" : "status", text).catch(() => ({ status: "unknown" }));
   }
   return json(result.status, result.body || { error: result.error }, PRIVATE);
 };
