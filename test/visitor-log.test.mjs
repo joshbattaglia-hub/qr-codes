@@ -231,7 +231,7 @@ test("sign-in, sign-out, sheet row, and Joshua-only access", async () => {
   assert.equal(photo.body.includes(Buffer.from("GPSLatitude")), false);
   const other = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: neil, body: { enabled: true, events: "both", email: "someone@example.com" } })));
   assert.equal(other.status, 403);
-  const badRecipient = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "both", email: NEIL } })));
+  const badRecipient = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "both", email: "someone@example.com" } })));
   assert.equal(badRecipient.status, 400);
   const saved = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "both" } })));
   assert.equal(saved.body.recipient, JOSHUA);

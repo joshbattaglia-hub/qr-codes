@@ -271,3 +271,57 @@ test("notification email adds the spreadsheet link from the configured ID and st
   await signIn("Synthetic Quiet");
   assert.equal(mail.length, off);
 });
+
+test("notification recipient: defaults to Joshua, exact @libertyretail.com.au only, audited old > new, used for sending", async () => {
+  await clearStore();
+  grid = [[...sheetLib.SHEET_HEADERS]];
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { body: { recipient: "maint.one@libertyretail.com.au" } })))).status, 401);
+  const neil = await otpCookie(NEIL);
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: neil, body: { recipient: "maint.one@libertyretail.com.au" } })))).status, 403);
+  const headLogin = await authFn(req("POST", "/api/auth", { body: { password: "test-pass" } }));
+  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/settings", { cookie: cookieNamed(headLogin, "qr_admin") })))).status, 403);
+  const joshua = await otpCookie(JOSHUA);
+  const start = await read(await adminFn(req("GET", "/api/visitor-log/settings", { cookie: joshua })));
+  assert.deepEqual(start.body, { enabled: false, events: "both", recipient: JOSHUA, domain: "libertyretail.com.au" });
+  for (const bad of ["someone@example.com", "x@sub.libertyretail.com.au", "x@libertyretail.com.au.evil.com", "x@libertyretail.com", "a,b@libertyretail.com.au", "a@b@libertyretail.com.au", "two words@libertyretail.com.au", ".dot@libertyretail.com.au", "a..b@libertyretail.com.au"]) {
+    const res = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, recipient: bad } })));
+    assert.equal(res.status, 400, bad);
+    assert.equal(res.body.error, "Use one exact @libertyretail.com.au email address.");
+  }
+  assert.equal(visitLib.notifyRecipientOk(" Maint.One@LibertyRetail.com.au "), "maint.one@libertyretail.com.au");
+  // Saving without a recipient keeps the current one and records no change.
+  const kept = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, events: "both" } })));
+  assert.equal(kept.body.recipient, JOSHUA);
+  const auditRows = async () => {
+    const { blobs } = await lib.visitorStore().list({ prefix: "audit/" });
+    return (await Promise.all(blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).filter((row) => row?.action === "notify-recipient").sort((a, b) => a.at.localeCompare(b.at) || 0);
+  };
+  assert.equal((await auditRows()).length, 0);
+  const changed = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "in", recipient: "Maint.One@libertyretail.com.au" } })));
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.equal(changed.body.recipient, "maint.one@libertyretail.com.au");
+  let rows = await auditRows();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail, JOSHUA + " > maint.one@libertyretail.com.au");
+  assert.match(rows[0].actorId, /^otp:[a-f0-9]{16}$/);
+  const before = mail.length;
+  await signIn("Synthetic Recipient Visitor");
+  const sent = mail.slice(before);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "maint.one@libertyretail.com.au");
+  assert.equal(sent[0].text.includes("Synthetic Recipient Visitor"), false);
+  // Change back to Joshua; audited again; notifications off again.
+  clock += 1000;
+  const back = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, recipient: JOSHUA } })));
+  assert.equal(back.body.recipient, JOSHUA);
+  rows = await auditRows();
+  assert.equal(rows.length, 2);
+  assert.ok(rows.some((row) => row.detail === "maint.one@libertyretail.com.au > " + JOSHUA));
+  // A tampered stored recipient falls back to Joshua.
+  await lib.visitorStore().setJSON("notify/settings", { enabled: true, events: "both", recipient: "attacker@example.com" });
+  const fallback = mail.length;
+  await signIn("Synthetic Tamper");
+  assert.equal(mail.slice(fallback)[0].to, JOSHUA);
+  await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipient: JOSHUA });
+  clock = Date.parse("2026-11-12T01:00:00.000Z");
+});
