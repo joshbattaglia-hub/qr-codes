@@ -67,3 +67,11 @@ test("admin sign-in: Express Help, email code and password first, other ways bel
   }
   assert.match(states, /if \(card\) card\.hidden = true;/);
 });
+
+test("admin sign-in is centred on the page (card contents stay left-aligned)", () => {
+  const css = fs.readFileSync(path.join(root, "admin/styles.css"), "utf8");
+  assert.match(css, /\.signin\{[^}]*margin:0 auto[^}]*text-align:left/);
+  assert.match(css, /\.signin-brand\{[^}]*justify-content:center/);
+  assert.match(css, /\.signin-other h2\{[^}]*text-align:center/);
+  assert.doesNotMatch(css, /7vw/);
+});
