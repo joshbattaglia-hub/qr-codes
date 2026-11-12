@@ -182,6 +182,24 @@ async function entraLoginState() {
     box.textContent = "Use your Liberty Microsoft work account.";
   } catch { if (card) card.hidden = true; link.hidden = true; }
 }
+const BRAND = "Express Help";
+const EMAIL_SIGNIN_BUTTON = '<button class="btn" type="button" data-act="email-signin" data-testid="email-signin">Sign in with email</button>';
+function resetOtpForm() {
+  const wrap = $("#otp-code-wrap"); if (wrap) wrap.hidden = true;
+  const verify = $("#otp-verify"); if (verify) verify.hidden = true;
+  for (const id of ["otp-code", "pw"]) { const input = document.getElementById(id); if (input) input.value = ""; }
+  for (const id of ["otp-status", "otp-error"]) { const box = document.getElementById(id); if (box) box.textContent = ""; }
+}
+/** Switch to email-code sign-in: end the current session (password, staff, identity or email code), then show the sign-in with the email field focused. The current page stays in the address so email-code sign-in returns to it. */
+async function switchToEmailSignin() {
+  await fetch("/api/auth", { method: "DELETE", credentials: "same-origin" }).catch(() => null);
+  state.actor = { authenticated: false };
+  state.codes = [];
+  state.detail = null;
+  setSidebar(false);
+  resetOtpForm();
+  showLogin("", true);
+}
 function showLogin(message, focusEmail) {
   $("#boot").classList.add("hidden");
   $("#shell").classList.add("hidden");
@@ -192,11 +210,12 @@ function showLogin(message, focusEmail) {
   Promise.resolve(otpLoginState()).then(() => {
     if (!focusEmail) return;
     document.getElementById("otp-card")?.scrollIntoView({ block: "center" });
-    document.getElementById("otp-email")?.focus();
+    const email = document.getElementById("otp-email");
+    if (email) { email.disabled = false; email.focus(); }
   });
 }
 function paintAvatar() {
-  const name = String(state.actor?.name || state.settings?.workspaceName || "Liberty").trim();
+  const name = String(state.actor?.name || BRAND).trim();
   const letter = (name.match(/[A-Za-z0-9]/) || ["L"])[0].toUpperCase();
   const avatar = document.querySelector(".avatar");
   if (avatar) avatar.textContent = letter;
@@ -574,7 +593,7 @@ function homeHtml() {
     '<div><div class="metric-label">QR Code scans</div><div class="metric-value">' + num(scans) + ' <span class="delta ' + dScan.cls + '">' + dScan.text + "</span></div></div>" +
     '<div><div class="metric-label">Page clicks</div><div class="metric-value" data-testid="page-clicks">' + num(pageNow) + ' <span class="delta ' + dPage.cls + '">' + dPage.text + "</span></div></div></div>" +
     '<div class="row end" style="margin-top:12px"><button class="btn ghost" type="button" data-go="analytics">Explore Analytics →</button></div></div>' +
-    '<div class="card" style="margin-top:16px"><div class="card-head"><h2>Do more with Liberty</h2><div class="ring-wrap">' + pct + "%" + ring(pct) + "</div></div>" +
+    '<div class="card" style="margin-top:16px"><div class="card-head"><h2>Do more with Express Help</h2><div class="ring-wrap">' + pct + "%" + ring(pct) + "</div></div>" +
     items.map((item) => '<div class="check-item"><div class="dot' + (item.done ? " on" : "") + '">' + (item.done ? "✓" : "") + '</div><div><strong>' + esc(item.title) + '</strong><div class="muted small">' + esc(item.body) + "</div></div></div>").join("") +
     "</div>";
 }
@@ -821,7 +840,7 @@ function domainsPage() {
 }
 function settingsPage() {
   const s = state.settings;
-  return '<div class="page-head"><h1>Settings</h1></div><form class="card" data-act="save-settings"><label class="field"><span>Workspace name</span><input name="workspaceName" type="text" maxlength="40" value="' + esc(s.workspaceName) + '"></label>' +
+  return '<div class="page-head"><h1>Settings</h1></div><form class="card" data-act="save-settings">' +
     '<div class="split"><label class="field"><span>Default QR foreground</span><span class="color-row"><input name="defaultFg" type="color" value="' + esc(s.defaultFg) + '"><input name="defaultFgText" type="text" value="' + esc(s.defaultFg) + '"></span></label>' +
     '<label class="field"><span>Default QR background</span><span class="color-row"><input name="defaultBg" type="color" value="' + esc(s.defaultBg) + '"><input name="defaultBgText" type="text" value="' + esc(s.defaultBg) + '"></span></label></div>' +
     '<label class="field"><span>Public URL</span><input type="text" readonly value="' + esc(s.publicUrl) + '"></label>' +
@@ -1676,7 +1695,7 @@ function assetPage() {
     + '<div class="card"><h2>Preview</h2><div id="asset-preview" class="asset-preview"></div><p id="asset-notes" class="asset-note small"></p></div></form></div>';
 }
 function visitorDenied() {
-  return '<h2>Visitor records are restricted</h2><p data-testid="visitor-denied">Visitor records are restricted. Sign in with your authorised email account to view them.</p><p><button class="btn" type="button" data-act="visitor-email-signin" data-testid="visitor-email-signin">Sign in with email</button></p>';
+  return '<h2>Visitor records are restricted</h2><p data-testid="visitor-denied">Visitor records are restricted. Sign in with your authorised email account to view them.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>';
 }
 function visitorPage() {
   return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
@@ -1817,7 +1836,7 @@ async function paintUsers() {
   if (!box) return;
   const response = await fetch("/api/users", { credentials: "same-origin" });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p>'; return; }
+  if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p><p class="muted">Users is managed with your email code sign-in.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>'; return; }
   state.usersData = data;
   const mig = data.migration;
   const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
@@ -2335,9 +2354,7 @@ async function onSettings(form) {
   const fg = hexOk(data.defaultFgText) ? data.defaultFgText : data.defaultFg;
   const bg = hexOk(data.defaultBgText) ? data.defaultBgText : data.defaultBg;
   try {
-    state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ workspaceName: data.workspaceName, defaultFg: fg, defaultBg: bg }) });
-    $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
-    $("#account-label").innerHTML = "<strong>" + esc(state.settings.workspaceName) + "</strong><div class='muted small'>Admin session</div>";
+    state.settings = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ defaultFg: fg, defaultBg: bg }) });
     paintAvatar();
     toast("Saved");
     render({ refetch: false, keepScroll: true });
@@ -2444,12 +2461,8 @@ async function handleAction(el) {
     link.remove();
     return;
   }
-  if (act === "visitor-email-signin") {
-    await api("/api/auth", { method: "DELETE" });
-    state.actor = { authenticated: false };
-    state.codes = [];
-    state.detail = null;
-    showLogin("", true);
+  if (act === "email-signin" || act === "visitor-email-signin") {
+    await switchToEmailSignin();
     return;
   }
   if (act === "logout") {
@@ -2672,6 +2685,11 @@ document.body.addEventListener("click", (e) => {
     go(goEl.dataset.go);
     return;
   }
+  if (actEl && (actEl.dataset.act === "email-signin" || actEl.dataset.act === "visitor-email-signin")) {
+    e.preventDefault();
+    switchToEmailSignin().catch((err) => toast(err.message));
+    return;
+  }
   if (actEl && actEl.closest("#ticket-page")) {
     Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) note.textContent = err.message; else toast(err.message); });
     return;
@@ -2884,7 +2902,7 @@ async function enter() {
     $("#boot").classList.add("hidden");
     $("#login").classList.add("hidden");
     $("#shell").classList.remove("hidden");
-    $("#brand-name").textContent = "Liberty";
+    $("#brand-name").textContent = BRAND;
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
     const allowed = limitedRoutes();
     document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (!allowed.includes(btn.dataset.go)) btn.hidden = true; });
@@ -2926,11 +2944,12 @@ async function enter() {
   $("#boot").classList.add("hidden");
   $("#login").classList.add("hidden");
   $("#shell").classList.remove("hidden");
-  $("#brand-name").textContent = state.settings.workspaceName || "Liberty";
+  $("#brand-name").textContent = BRAND;
   const roleLabel = state.actor?.kind === "verified-identity" ? (state.actor.role === "approver" ? "Approver" : state.actor.role === "preparer" ? "Preparer" : "No access") + (state.actor.provider === "otp" ? " · email code" : "") : state.actor?.role === "manager" ? "Site manager" : "Head office";
-  $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
+  $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || BRAND) + "</strong><div class='muted small'>" + roleLabel + "</div>";
   paintAvatar();
   ensureRanges();
+  document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = false; });
   const usersNav = document.querySelector('#nav [data-go="users"]');
   if (usersNav) usersNav.hidden = !state.actor?.owner;
   if (!location.hash || location.hash === "#") location.replace("#/home");
