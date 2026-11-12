@@ -431,11 +431,11 @@ test("admin Visitor Log has Logs and Settings tabs; settings live only on the Se
   const settings = app.slice(app.indexOf("async function paintVisitorSettings("), app.indexOf("async function paintVisitorRecord("));
   assert.match(app, /tab\("logs", "Logs", "visitors"\) \+ tab\("settings", "Settings", "visitors\/settings"\)/);
   for (const header of ["Time in", "Time out", "Site", "Name", "Company", "Status", "Card returned", "ID photo"]) assert.ok(logs.includes("<th>" + header + "</th>"), header);
-  for (const id of ["visitor-recipient", "bm-email", "visitor-maintenance-", "visitor-sheet-check", "visitor-photo-backfill", "visitor-save"]) {
+  for (const id of ["visitor-recipient", "visitor-users-pointer", "visitor-maintenance-", "visitor-sheet-check", "visitor-photo-backfill", "visitor-save"]) {
     assert.equal(logs.includes(id), false, id);
     assert.ok(settings.includes(id), id);
   }
   assert.equal(logs.includes("/api/visitor-log/settings"), false);
   assert.match(app, /function visitorTabs\(active, viewOnly\) \{\n  if \(viewOnly\) return "";/);
-  assert.match(logs, /tabId === "settings" && viewOnly\) \{ window\.location\.replace\("#\/visitors"\)/);
+  assert.match(logs, /tabId === "settings" && !canSettings\) \{ window\.location\.replace\("#\/visitors"\)/);
 });

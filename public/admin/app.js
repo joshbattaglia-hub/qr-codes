@@ -1692,8 +1692,11 @@ async function paintVisitor() {
     box.innerHTML = visitorDenied();
     return;
   }
-  const viewOnly = readiness.role === "maintenance";
-  if (tabId === "settings" && viewOnly) { window.location.replace("#/visitors"); return; }
+  const vrole = readiness.role;
+  const canSettings = vrole === "admin" || vrole === "settings";
+  const noPhotos = vrole === "viewer";
+  const viewOnly = vrole !== "admin";
+  if (tabId === "settings" && !canSettings) { window.location.replace("#/visitors"); return; }
   if (tabId === "settings") return paintVisitorSettings(box, readiness);
   const params = new URLSearchParams();
   const status = document.getElementById("visitor-status")?.value || "all";
@@ -1708,7 +1711,7 @@ async function paintVisitor() {
   const rows = (listed.visits || []).map((visit) => {
     const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
     const state = visit.signedOutAt ? "Signed out" : "On site";
-    const photo = visit.photoStatus === "stored"
+    const photo = visit.photoStatus === "stored" && noPhotos ? '<span class="muted">Stored</span>' : visit.photoStatus === "stored"
       ? '<button class="btn ghost btn-xs" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">ID photo</button>'
       : '<span class="muted">' + esc(visit.photoStatus === "purged" ? "Deleted" : "None") + '</span>';
     return '<tr data-testid="visitor-row"' + (notes ? ' title="' + esc(notes) + '"' : "") + '>'
@@ -1721,8 +1724,9 @@ async function paintVisitor() {
       + '<td>' + (visit.cardReturned ? "Yes" : "No") + '</td>'
       + '<td>' + photo + (visit.onSite && !viewOnly ? ' <button class="btn ghost btn-xs" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Receipt</button>' : "") + '</td></tr>';
   }).join("");
-  box.innerHTML = visitorTabs("logs", viewOnly)
-    + (viewOnly ? '<p class="muted" data-testid="visitor-view-only">Building maintenance: view-only. You can open visits and ID photos. Every ID photo view is logged.</p>' : "")
+  box.innerHTML = visitorTabs("logs", !canSettings)
+    + (vrole === "maintenance" ? '<p class="muted" data-testid="visitor-view-only">View-only. You can open visits and ID photos. Every ID photo view is logged.</p>' : "")
+    + (noPhotos ? '<p class="muted" data-testid="visitor-view-only">View-only, without ID photos.</p>' : "")
     + '<div class="asset-dims visitor-filters"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
     + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
@@ -1736,8 +1740,6 @@ async function paintVisitor() {
 async function paintVisitorSettings(box, readiness) {
   const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
   const maintenance = await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
-  const bmUsers = await fetch("/api/visitor-log/building-maintenance", { credentials: "same-origin" }).then((res) => res.json()).then((body) => body.users || []).catch(() => []);
-  const bmRows = bmUsers.map((email) => '<li data-testid="bm-user">' + esc(email) + ' <button class="btn ghost" type="button" data-act="bm-remove" data-email="' + esc(email) + '">Remove</button></li>').join("");
   const maintenanceFields = [0, 1, 2, 3].map((i) => '<label class="field"><span>Maintenance line ' + (i + 1) + '</span><input id="visitor-maintenance-' + i + '" type="tel" inputmode="tel" maxlength="24" placeholder="Blank to hide" value="' + esc((maintenance.numbers || [])[i] || "") + '" data-testid="visitor-maintenance-input"></label>').join("");
   box.innerHTML = visitorTabs("settings", false)
     + '<h2>Status</h2><p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open.") + '</p>'
@@ -1749,10 +1751,7 @@ async function paintVisitorSettings(box, readiness) {
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
     + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
-    + '<h2>Building maintenance access</h2><p class="muted">People you add here can sign in with an email code and only view the visitor list, visit records and ID photos. They cannot export, delete, change settings, or open Support Tickets, POS, vouchers, QR codes or any other admin area. Exact @libertyretail.com.au addresses only. Every add, removal and ID photo view is recorded in the visitor log history.</p>'
-    + '<ul data-testid="bm-users">' + (bmRows || '<li class="muted">No building maintenance users.</li>') + '</ul>'
-    + '<label class="field"><span>Add building maintenance user</span><input id="bm-email" type="email" maxlength="254" autocomplete="off" placeholder="name@libertyretail.com.au" data-testid="bm-email"></label>'
-    + '<button class="btn" type="button" data-act="bm-add">Add user</button><p id="bm-note" class="small"></p>'
+    + (readiness.role === "admin" ? '<h2>Who can see the Visitor Log</h2><p class="muted" data-testid="visitor-users-pointer">Visitor Log access (view, view with ID photos, or settings) is set per person in <button class="text-btn" type="button" data-go="users">Users</button>. Every change and every ID photo view is logged.</p>' : "")
     + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
     + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
@@ -1763,6 +1762,79 @@ async function paintVisitorSettings(box, readiness) {
     + '<button class="btn ghost" type="button" data-act="visitor-photo-backfill">Fill ID photo column</button><p id="visitor-photo-backfill-note" class="small" data-testid="visitor-photo-backfill-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
+}
+function usersPage() {
+  return '<div id="users-page" data-testid="users-page"><div class="page-head"><div><h1>Users</h1><p class="muted">Email-code sign-ins and what each person can use. Only you (the owner) can see this page. Every change is logged. The head-office password is separate and unchanged.</p></div></div><div id="users-body" class="card">Loading…</div></div>';
+}
+const VISITOR_LEVEL_LABELS = { none: "No access", view: "View (no ID photos)", photos: "View with ID photos", settings: "View, ID photos and settings" };
+function posLabel(u) {
+  const parts = [];
+  if (u.approverKey) parts.push("Approver");
+  if (u.preparerClass) parts.push("Preparer (" + u.preparerClass + ")");
+  return parts.join(" + ") || "None";
+}
+function posOptions(email, options) {
+  const e = String(email || "").toLowerCase();
+  const approver = (options.approvers || []).find((a) => a.email === e);
+  const classes = (options.preparerClasses || []).filter((c) => {
+    if (approver && approver.key === "neil") return false;
+    if (c === "joshua") return e === options.owner;
+    return e !== options.owner;
+  });
+  const out = [{ value: "", label: "None" }];
+  for (const c of classes) out.push({ value: "|" + c, label: "Preparer (" + c + ")" });
+  if (approver) {
+    out.push({ value: approver.key + "|", label: "Approver (" + approver.name + ")" });
+    for (const c of classes) out.push({ value: approver.key + "|" + c, label: "Approver + preparer (" + c + ")" });
+  }
+  return out;
+}
+function userForm(data) {
+  const editing = state.userEdit && state.userEdit !== "new" ? data.users.find((u) => u.email === state.userEdit) : null;
+  const u = editing || { email: "", approverKey: "", preparerClass: "", siteIds: [], visitor: "none", tickets: [] };
+  const owner = !!editing?.owner;
+  const opts = data.options;
+  const posValue = (u.approverKey || "") + "|" + (u.preparerClass || "");
+  const pos = posOptions(u.email, opts).map((o) => '<option value="' + esc(o.value) + '"' + ((o.value || "|") === posValue ? " selected" : "") + '>' + esc(o.label) + '</option>').join("");
+  const have = new Set(u.siteIds || []);
+  const sites = (data.sites || []).map((site) => '<label class="check user-site" data-name="' + esc(site.name.toLowerCase()) + '"><input type="checkbox" name="user-site" value="' + esc(site.id) + '"' + (have.has(site.id) ? " checked" : "") + '> ' + esc(site.name) + '</label>').join("");
+  const visitor = owner ? '<p class="muted">Owner: full Visitor Log access (cannot be changed).</p>' : (opts.visitorLevels || []).map((level) => '<label class="check"><input type="radio" name="user-visitor" value="' + level + '"' + (u.visitor === level ? " checked" : "") + '> ' + esc(VISITOR_LEVEL_LABELS[level] || level) + '</label>').join("");
+  const tickets = owner ? '<p class="muted">Owner: Support Tickets admin for all areas.</p>' : (opts.queues || []).map((q) => '<label class="check"><input type="checkbox" name="user-ticket" value="' + q + '"' + ((u.tickets || []).includes(q) ? " checked" : "") + '> ' + esc(q === "screens" ? "Screens" : q === "signage" ? "Signage" : q) + '</label>').join("");
+  return '<div class="card user-form" data-testid="user-form"><h2>' + (editing ? "Edit " + esc(u.email) : "Add user") + '</h2>'
+    + (editing ? '<input type="hidden" id="user-email" value="' + esc(u.email) + '">' : '<label class="field"><span>Email (exact @' + esc(opts.domain) + ')</span><input id="user-email" type="email" maxlength="254" autocomplete="off" placeholder="name@' + esc(opts.domain) + '" data-testid="user-email"></label>')
+    + '<h3>POS setup</h3>' + (owner ? '<p class="muted">Owner roles: ' + esc(posLabel(u)) + ' (cannot be changed here).</p><input type="hidden" id="user-pos" value="' + esc(posValue) + '">' : '<label class="field"><span>POS role</span><select id="user-pos" data-testid="user-pos">' + pos + '</select></label><p class="muted small">Approver roles are tied to their own address. Choose None for people who only use the Visitor Log or Support.</p>')
+    + '<h3>Sites</h3><p class="muted small">Sites this person can see in POS setup and Sites. Only used with a POS role.</p><label class="field"><span>Filter sites</span><input id="user-site-filter" autocomplete="off" placeholder="Type to filter"></label><div class="user-sites" data-testid="user-sites">' + sites + '</div>'
+    + '<h3>Visitor Log</h3>' + visitor
+    + '<h3>Support Tickets</h3><p class="muted small">Areas (queues) this person works on as ticket staff.</p>' + tickets
+    + '<div class="asset-actions"><button class="btn" type="button" data-act="user-save" data-mode="' + (editing ? "edit" : "add") + '" data-testid="user-save">Save</button><button class="btn ghost" type="button" data-act="user-cancel">Cancel</button></div><p id="user-note" class="small err"></p></div>';
+}
+async function paintUsers() {
+  const box = document.getElementById("users-body");
+  if (!box) return;
+  const response = await fetch("/api/users", { credentials: "same-origin" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p>'; return; }
+  state.usersData = data;
+  const mig = data.migration;
+  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
+  const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
+  box.innerHTML = (mig ? '<p class="muted small" data-testid="users-migration">Moved from the previous sign-in list on ' + esc(new Date(mig.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + ': ' + esc(String(mig.users)) + ' users, effective access ' + (mig.same ? "identical" : "NOT identical") + ' (' + esc(String(mig.checked)) + ' addresses checked).</p>' : "")
+    + '<div class="asset-actions"><button class="btn" type="button" data-act="user-add-open" data-testid="user-add-open">Add user</button></div>'
+    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + (state.userEdit ? userForm(data) : "")
+    + '<h2>History</h2><ul class="user-history" data-testid="users-history">' + (history || '<li class="muted">No changes yet.</li>') + '</ul>'
+    + '<p class="muted small">Not managed here: the head-office password (QR codes, links, pages, competitions, vouchers, templates, domains and workspace settings) and site-manager password logins.</p>';
+  const filter = document.getElementById("user-site-filter");
+  if (filter) filter.addEventListener("input", () => {
+    const q = filter.value.trim().toLowerCase();
+    document.querySelectorAll(".user-site").forEach((el) => { el.hidden = !!q && !el.dataset.name.includes(q); });
+  });
+  const emailInput = document.getElementById("user-email");
+  if (emailInput && state.userEdit === "new") emailInput.addEventListener("change", () => {
+    const select = document.getElementById("user-pos");
+    if (select) select.innerHTML = posOptions(emailInput.value, data.options).map((o) => '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>').join("");
+  });
+  if (state.userEdit) document.querySelector(".user-form")?.scrollIntoView({ block: "start" });
 }
 async function paintVisitorRecord(id) {
   const box = document.getElementById("visitor-body");
@@ -1788,7 +1860,7 @@ async function paintVisitorRecord(id) {
     + (visit.issues ? '<p data-testid="visitor-issues-in">Sign-in: ' + esc(visit.issues) + '</p>' : '')
     + (visit.signOutIssues ? '<p data-testid="visitor-issues-out">Sign-out: ' + esc(visit.signOutIssues) + '</p>' : '')
     + (visit.review ? '<p data-testid="visitor-review">Flagged for review: ' + esc(visit.review) + '</p>' : '')
-    + (visit.photoStatus === "stored" ? '<button class="btn" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID photo</button>' : '')
+    + (visit.photoStatus === "stored" && readiness.role !== "viewer" ? '<button class="btn" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID photo</button>' : '')
     + (readiness.role === "admin" ? '<p class="err">Deleting removes the written record and the ID photo. This cannot be undone in Express Help.</p>'
     + '<label class="check"><input id="visitor-delete-confirm" type="checkbox"> I understand this permanently deletes the record.</label>'
     + '<button class="btn danger" type="button" data-act="visitor-delete" data-id="' + esc(visit.id) + '">Delete record</button>' : '<p class="muted small">View-only. ID photo views are logged.</p>')
@@ -1868,6 +1940,39 @@ async function visitorAction(button) {
     if (note) note.textContent = body.changed ? (act === "nr-add" ? "Added " : "Removed ") + email : "No change";
     return;
   }
+  if (act === "user-add-open" || act === "user-edit") {
+    state.userEdit = act === "user-add-open" ? "new" : button.dataset.email;
+    return paintUsers();
+  }
+  if (act === "user-cancel") { state.userEdit = ""; return paintUsers(); }
+  if (act === "user-save") {
+    const [approverKey, preparerClass] = String(document.getElementById("user-pos")?.value || "|").split("|");
+    const payload = {
+      mode: button.dataset.mode,
+      email: document.getElementById("user-email")?.value || "",
+      approverKey: approverKey || "",
+      preparerClass: preparerClass || "",
+      siteIds: [...document.querySelectorAll('input[name="user-site"]:checked')].map((el) => el.value),
+      visitor: document.querySelector('input[name="user-visitor"]:checked')?.value || "none",
+      tickets: [...document.querySelectorAll('input[name="user-ticket"]:checked')].map((el) => el.value),
+    };
+    const response = await fetch("/api/users/save", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { const note = document.getElementById("user-note"); if (note) note.textContent = body.error || "Not saved"; return; }
+    state.userEdit = "";
+    toast("User saved");
+    return paintUsers();
+  }
+  if (act === "user-remove") {
+    const email = button.dataset.email || "";
+    if (!confirm("Remove " + email + "? Their access ends now, including any open session.")) return;
+    const response = await fetch("/api/users/remove", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) { toast(body.error || "Not removed"); return; }
+    state.userEdit = "";
+    toast("Removed " + email);
+    return paintUsers();
+  }
   if (act === "bm-add" || act === "bm-remove") {
     const email = act === "bm-add" ? (document.getElementById("bm-email")?.value || "") : (button.dataset.email || "");
     if (act === "bm-remove" && !confirm("Remove building maintenance access for " + email + "?")) return;
@@ -1932,6 +2037,7 @@ function pageFor(r) {
   if (r.name === "pos") return posList();
   if (r.name === "assets") return assetPage();
   if (r.name === "visitors") return visitorPage();
+  if (r.name === "users") return usersPage();
   if (r.name === "tickets") return ticketShell();
   if (r.name === "domains") return domainsPage();
   if (r.name === "settings") return settingsPage();
@@ -2043,7 +2149,8 @@ async function render(opts = {}) {
   const gen = ++renderGen;
   ensureRanges();
   const r = route();
-  if (isBuildingMaintenance() && r.name !== "visitors") { location.replace("#/visitors"); return; }
+  if (isBuildingMaintenance() && !limitedRoutes().includes(r.name)) { location.replace("#/" + (limitedRoutes()[0] || "visitors")); return; }
+  if (r.name === "users" && !state.actor?.owner) { location.replace("#/home"); return; }
   const key = r.name + "/" + r.id;
   const keep = opts.keepScroll || (opts.refetch === false && key === lastRouteKey);
   const y = keep ? window.scrollY : 0;
@@ -2131,6 +2238,7 @@ async function render(opts = {}) {
     view.innerHTML = pageFor(r);
     if (r.name === "assets") paintAsset();
     if (r.name === "visitors") paintVisitor();
+    if (r.name === "users") paintUsers();
     if (r.name === "tickets") paintTickets(r.id, state).catch((err) => { const box = document.getElementById("ticket-body"); if (box) box.textContent = err.message; });
   }
   if (state.focus) {
@@ -2564,6 +2672,10 @@ document.body.addEventListener("click", (e) => {
     Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) note.textContent = err.message; else toast(err.message); });
     return;
   }
+  if (actEl && actEl.closest("#users-page")) {
+    Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("user-note"); if (note) note.textContent = err.message; else toast(err.message); });
+    return;
+  }
   if (actEl && actEl.closest("#visitor-page")) {
     Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("visitor-note"); if (note) note.textContent = err.message; });
     return;
@@ -2750,8 +2862,15 @@ async function saveCollection(form) {
   toast("Collection saved");
   render();
 }
+/** Email-code user without a POS role: only the tools Users gave them (Visitor Log and/or Support). */
 function isBuildingMaintenance() {
   return state.actor?.role === "building-maintenance";
+}
+function limitedRoutes() {
+  const out = [];
+  if (state.actor?.visitor && state.actor.visitor !== "none") out.push("visitors");
+  if (state.limitedTickets) out.push("tickets");
+  return out;
 }
 async function enter() {
   if (isBuildingMaintenance()) {
@@ -2762,11 +2881,15 @@ async function enter() {
     $("#login").classList.add("hidden");
     $("#shell").classList.remove("hidden");
     $("#brand-name").textContent = "Liberty";
-    document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (btn.dataset.go !== "visitors") btn.hidden = true; });
-    $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Building maintenance") + "</strong><div class='muted small'>Building maintenance · email code</div>";
+    state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
+    const allowed = limitedRoutes();
+    document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (!allowed.includes(btn.dataset.go)) btn.hidden = true; });
+    const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : "Support";
+    $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Email code user") + "</strong><div class='muted small'>" + esc(label) + " · email code</div>";
     paintAvatar();
     ensureRanges();
-    if (!location.hash.startsWith("#/visitors")) location.replace("#/visitors");
+    const first = allowed[0] || "visitors";
+    if (!allowed.some((name) => location.hash.startsWith("#/" + name))) location.replace("#/" + first);
     else render();
     return;
   }
@@ -2804,6 +2927,8 @@ async function enter() {
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || state.settings.workspaceName || "Liberty") + "</strong><div class='muted small'>" + roleLabel + "</div>";
   paintAvatar();
   ensureRanges();
+  const usersNav = document.querySelector('#nav [data-go="users"]');
+  if (usersNav) usersNav.hidden = !state.actor?.owner;
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
 }

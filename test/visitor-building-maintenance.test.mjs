@@ -201,8 +201,9 @@ test("removing a user revokes access immediately and is logged; Neil keeps his o
   const rows = await auditRows("maintenance-user-remove");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].detail, MAINT);
-  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: maint })))).status, 403);
-  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visitId + "/photo", { cookie: maint })))).status, 403);
+  // Removal deletes their email-code sessions, so the old cookie is simply signed out.
+  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/visits", { cookie: maint })))).status, 401);
+  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/visits/" + visitId + "/photo", { cookie: maint })))).status, 401);
   const session = await read(await identityFn(req("GET", "/api/identity/session", { cookie: maint })));
   assert.equal(session.body.authenticated, false);
   otpNow += 16 * 60 * 1000; // past the per-email start window
@@ -222,9 +223,10 @@ test("removing a user revokes access immediately and is logged; Neil keeps his o
 
 test("privacy wording names view-only building maintenance access and photo-view logging", async () => {
   const status = await read(await publicFn(req("GET", "/api/visit/status")));
-  assert.match(status.body.notice, /building maintenance users Joshua has added/);
-  assert.match(status.body.notice, /can only view the list, the records and the ID photos/);
+  assert.match(status.body.notice, /people Joshua has given Visitor Log access in Users \(for example building maintenance\)/);
+  assert.match(status.body.notice, /whether they can see the ID photo and whether they can change visitor log settings/);
+  assert.match(status.body.notice, /Only Joshua can export or delete records or decide who has access/);
   assert.match(status.body.notice, /Every ID photo view is logged/);
   assert.equal(status.body.notice.includes("only Joshua's explicit visitor-log access can open these records"), false);
-  assert.match(status.body.viewer, /view-only building maintenance users/);
+  assert.match(status.body.viewer, /view, view with ID photos, or settings/);
 });

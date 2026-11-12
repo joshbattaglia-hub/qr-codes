@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
-import { BUILDING_MAINTENANCE_MAX, BUILDING_MAINTENANCE_ROLE, buildingMaintenanceEmailOk, isBuildingMaintenance, readBuildingMaintenance, writeBuildingMaintenance } from "./building-maintenance.mjs";
+import { buildingMaintenanceEmailOk } from "./building-maintenance.mjs";
+import { readUsers, setVisitorLevel } from "./users.mjs";
 import { backfillIdPhotoColumn, recordUrl, runSheetConnectionProbe, sheetConfigured, sheetUrl, syncVisitRow } from "./visitor-sheet.mjs";
 
 export const JOSHUA_EMAIL = "jbattaglia@libertyretail.com.au";
@@ -12,7 +13,7 @@ export const VISITOR_NOTICE = [
   "A clear photo of your ID is required when you sign in. The photo is stored privately in Express Help, not on a public link.",
   "If you sign out, that ID photo is deleted 90 days after sign-out. If you never sign out, the ID photo is deleted 90 days after sign-in and the written visit stays open, flagged for review. A later sign-out does not restore a photo that has expired or already been deleted.",
   "The written record is kept until Joshua deletes it. There is no scheduled deletion of the text.",
-  "Inside Express Help, only Joshua's explicit visitor-log access, and building maintenance users Joshua has added, can open these records or the ID photo. Building maintenance users can only view the list, the records and the ID photos. Only Joshua can export, delete, or change visitor log settings. Every ID photo view is logged with who viewed it and when. A head-office password or a POS role does not grant access.",
+  "Inside Express Help, only Joshua's explicit visitor-log access, and people Joshua has given Visitor Log access in Users (for example building maintenance), can open these records. For each person Joshua chooses whether they can see the ID photo and whether they can change visitor log settings (notifications, maintenance numbers and the spreadsheet connection). Only Joshua can export or delete records or decide who has access. Every ID photo view is logged with who viewed it and when. A head-office password or a POS role does not grant access.",
   "Visitor log email notifications are off unless Joshua turns them on. When on, they go only to the @libertyretail.com.au addresses Joshua lists and say only that a visitor signed in or out, the location and time, with links that still need an authorised sign-in. They contain no visitor name, phone, company, notes or ID photo.",
   "When a private spreadsheet is configured, the written record is copied there for Joshua and the server identity that updates the sheet. The sheet cell for the photo is only the authenticated admin link for that record. It is not the stored photo and it is not a bearer token. Clearing a row does not erase Google Sheets version history or Google backups.",
 ].join(" ");
@@ -81,7 +82,7 @@ export function visitorReadiness() {
     collection: visitorCollectionOpen() ? "open" : "closed",
     sheetConfigured: sheetConfigured(),
     sheetSharing: "none",
-    viewer: "Joshua's explicit visitor-log access, and view-only building maintenance users Joshua has added",
+    viewer: "Joshua's explicit visitor-log access, and the people Joshua has given Visitor Log access in Users (view, view with ID photos, or settings)",
   };
 }
 
@@ -514,26 +515,43 @@ export async function signOut(req, body) {
 }
 
 /**
- * "admin" = Joshua's visitor-log access (everything). "maintenance" = view-only (list, records, ID photos)
- * for an email-code user on Joshua's building maintenance list. Otherwise "none".
+ * Visitor Log level for this actor: "admin" (Joshua's explicit visitor-log access), or the level set in
+ * Admin > Users for an email-code user: "settings" (view, ID photos and settings), "maintenance" (view
+ * with ID photos) or "viewer" (view without ID photos). Otherwise "none".
  */
 export async function visitorRole(actor) {
   if (visitorCapability(actor)) return "admin";
   if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp" || !actor.email) return "none";
   if (parseVisitorAccess().error) return "none";
-  return (await isBuildingMaintenance(actor.email)) ? "maintenance" : "none";
+  const level = actor.visitor;
+  if (level === "settings") return "settings";
+  if (level === "photos") return "maintenance";
+  if (level === "view") return "viewer";
+  return "none";
 }
 
 export async function visitorViewCapability(actor) {
   return (await visitorRole(actor)) !== "none";
 }
 
-export async function listBuildingMaintenance(actor) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
-  return { status: 200, body: { users: (await readBuildingMaintenance()).emails } };
+export async function visitorPhotoCapability(actor) {
+  const role = await visitorRole(actor);
+  return role === "admin" || role === "settings" || role === "maintenance";
 }
 
-/** Joshua adds or removes a building maintenance user. Every change is audited with the address. */
+export async function visitorSettingsCapability(actor) {
+  const role = await visitorRole(actor);
+  return role === "admin" || role === "settings";
+}
+
+/** Compatibility for the old "Building maintenance access" list: users with Visitor Log view and ID photos and no other role. */
+export async function listBuildingMaintenance(actor) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const { users } = await readUsers();
+  return { status: 200, body: { users: users.filter((row) => !row.owner && row.visitor === "photos").map((row) => row.email).sort() } };
+}
+
+/** Joshua adds or removes Visitor Log view-with-photos for one address (stored in Users; audited there). */
 export async function changeBuildingMaintenance(actor, body) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const action = body?.action === "add" || body?.action === "remove" ? body.action : "";
@@ -541,19 +559,13 @@ export async function changeBuildingMaintenance(actor, body) {
   const email = buildingMaintenanceEmailOk(body?.email);
   if (!email) return { status: 400, error: "Use one exact @libertyretail.com.au email address." };
   if (action === "add" && email === JOSHUA_EMAIL) return { status: 400, error: "Joshua already has full visitor log access." };
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const current = await readBuildingMaintenance();
-    const has = current.emails.includes(email);
-    if (action === "add" && has) return { status: 200, body: { users: current.emails, changed: false } };
-    if (action === "remove" && !has) return { status: 200, body: { users: current.emails, changed: false } };
-    if (action === "add" && current.emails.length >= BUILDING_MAINTENANCE_MAX) return { status: 400, error: "Too many building maintenance users." };
-    const next = action === "add" ? [...current.emails, email] : current.emails.filter((row) => row !== email);
-    if (await writeBuildingMaintenance(next, current.etag)) {
-      await audit(action === "add" ? "maintenance-user-add" : "maintenance-user-remove", actor.id || "", "", email);
-      return { status: 200, body: { users: [...new Set(next)].sort(), changed: true } };
-    }
-  }
-  return { status: 409, error: "The list changed. Try again." };
+  const before = (await readUsers()).users.find((row) => row.email === email);
+  if (action === "add" && before?.visitor === "photos") return { status: 200, body: { users: (await listBuildingMaintenance(actor)).body.users, changed: false } };
+  if (action === "remove" && (!before || before.visitor === "none")) return { status: 200, body: { users: (await listBuildingMaintenance(actor)).body.users, changed: false } };
+  const result = await setVisitorLevel(actor, email, action === "add" ? "photos" : "none");
+  if (result.status !== 200) return result;
+  await audit(action === "add" ? "maintenance-user-add" : "maintenance-user-remove", actor.id || "", "", email);
+  return { status: 200, body: { users: (await listBuildingMaintenance(actor)).body.users, changed: true } };
 }
 
 export async function listVisits(actor, query) {
@@ -587,13 +599,14 @@ export async function readVisit(actor, id) {
 export async function readPhoto(actor, id) {
   const role = await visitorRole(actor);
   if (role === "none") return { status: 403, error: "Visitor log access is not granted." };
+  if (role === "viewer") return { status: 403, error: "ID photo access is not granted." };
   if (!/^v[a-f0-9]{32}$/.test(id)) return { status: 404, error: "Not found" };
   const visit = await visitorStore().get("visit/" + id, { type: "json" });
   if (!visit) return { status: 404, error: "Not found" };
   if (!photoReadable(visit)) return { status: 404, error: "Not found" };
   const photo = await visitorStore().get("photo/" + id, { type: "json" });
   if (!photo?.bytes) return { status: 404, error: "Not found" };
-  await audit("photo-view", actor.id || "", id, (role === "maintenance" ? "building maintenance " : "") + String(actor.email || "").toLowerCase());
+  await audit("photo-view", actor.id || "", id, (role === "maintenance" ? "building maintenance " : role === "settings" ? "visitor settings " : "") + String(actor.email || "").toLowerCase());
   return { status: 200, contentType: photo.contentType === "image/png" ? "image/png" : "image/jpeg", bytes: Buffer.from(photo.bytes, "base64") };
 }
 
@@ -642,13 +655,13 @@ export async function exportVisits(actor) {
 }
 
 export async function notificationSettings(actor) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const stored = await visitorStore().get("notify/settings", { type: "json" });
   return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipients: effectiveRecipients(stored), max: NOTIFY_RECIPIENTS_MAX, domain: NOTIFY_DOMAIN } };
 }
 
 export async function sheetConnectionCheck(actor) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const result = await runSheetConnectionProbe();
   const stage = result.stage;
   await audit("sheet-probe", actor.id || "", "");
@@ -662,7 +675,7 @@ export async function sheetConnectionCheck(actor) {
 }
 
 export async function saveNotificationSettings(actor, body) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const asked = body?.recipient !== undefined ? body.recipient : body?.email;
   if (asked !== undefined && asked !== null && String(asked).trim() !== "") {
     if (!notifyRecipientOk(asked)) return { status: 400, error: "Use one exact @" + NOTIFY_DOMAIN + " email address." };
@@ -684,7 +697,7 @@ export async function saveNotificationSettings(actor, body) {
 
 /** Joshua adds or removes one notification recipient. The list keeps at least one address. Audited with the address. */
 export async function changeNotificationRecipients(actor, body) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const action = body?.action === "add" || body?.action === "remove" ? body.action : "";
   if (!action) return { status: 400, error: "Choose add or remove." };
   const email = typeof body?.email === "string" ? notifyRecipientOk(body.email) : "";
@@ -746,12 +759,12 @@ export async function publicMaintenanceContacts() {
 }
 
 export async function maintenanceSettings(actor) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   return { status: 200, body: { numbers: await readMaintenanceNumbers() } };
 }
 
 export async function saveMaintenanceSettings(actor, body) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const incoming = Array.isArray(body?.numbers) ? body.numbers : null;
   if (!incoming || incoming.length > MAINTENANCE_SLOTS) return { status: 400, error: "Send up to " + MAINTENANCE_SLOTS + " maintenance numbers." };
   const numbers = [];
@@ -874,7 +887,7 @@ export async function runIdPhotoBackfill({ force = false, actorId = "cleanup" } 
 }
 
 export async function idPhotoBackfill(actor, body) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   if (body?.confirm !== "BACKFILL") return { status: 400, error: "Confirm the ID photo column fill." };
   const result = await runIdPhotoBackfill({ force: true, actorId: actor.id || "" });
   return { status: 200, body: { status: result.status, header: result.header || "", written: result.written || 0, rows: result.rows || [] } };

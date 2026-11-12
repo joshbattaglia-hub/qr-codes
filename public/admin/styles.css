@@ -237,3 +237,8 @@ tr.clickable:hover{background:#f8fafc}
 .visitor-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .visitor-filters .field{margin:0}
 @media (max-width:640px){.visitor-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.user-sites{max-height:240px;overflow:auto;border:1px solid #eaecf0;border-radius:8px;padding:6px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 12px}
+.user-sites .check{margin:0;font-size:13px}
+.user-history{list-style:none;padding:0;margin:0}.user-history li{padding:6px 0;border-bottom:1px solid #eaecf0}
+.user-form{margin-top:14px;background:#fcfcfd}
