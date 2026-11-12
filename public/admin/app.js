@@ -164,19 +164,23 @@ function togglePop(id) {
 async function entraLoginState() {
   const box = $("#entra-setup");
   const link = $("#entra-signin");
+  const card = $("#entra-card");
   if (!box || !link) return;
   try {
     const status = await fetch("/api/identity/entra/status", { credentials: "same-origin" }).then((res) => res.json());
     const ret = "/admin" + (location.hash && /^#\/pos\/p[a-f0-9]{8}$/.test(location.hash) ? location.hash : "");
     link.href = "/api/identity/entra/start?returnTo=" + encodeURIComponent(ret);
+    // Only shown when Microsoft sign-in is configured.
     if (!status.configured) {
       link.hidden = true;
-      box.textContent = "Microsoft sign-in is not operational. Add the single-tenant Entra tenant id, client id, client secret, session secret, and verified object-id role map. No account is granted from an email address.";
+      if (card) card.hidden = true;
+      box.textContent = "";
       return;
     }
     link.hidden = false;
-    box.textContent = status.testIssuer ? "Local test issuer only. This is not the workplace tenant." : "Work account sign-in is configured. Access still depends on a verified object id.";
-  } catch { box.textContent = "Microsoft sign-in is not operational."; }
+    if (card) card.hidden = false;
+    box.textContent = "Use your Liberty Microsoft work account.";
+  } catch { if (card) card.hidden = true; link.hidden = true; }
 }
 function showLogin(message, focusEmail) {
   $("#boot").classList.add("hidden");
@@ -206,13 +210,13 @@ async function otpLoginState() {
     const status = await fetch("/api/identity/otp/status", { credentials: "same-origin" }).then((res) => res.json());
     if (!status.operational) {
       form.hidden = true;
-      box.textContent = status.setup || "Email codes are not operational. No code is sent.";
+      box.textContent = "Email codes are unavailable right now. Use a password below.";
       return;
     }
     form.hidden = false;
     if (mock) mock.hidden = !status.mock;
-    box.textContent = "A code works only for an address on the explicit allowlist. The email domain does not grant access.";
-  } catch { box.textContent = "Email codes are not operational."; }
+    box.textContent = "We'll email you a one-time code.";
+  } catch { box.textContent = "Email codes are unavailable right now. Use a password below."; }
 }
 async function submitOtp(event) {
   event.preventDefault();
@@ -229,7 +233,7 @@ async function submitOtp(event) {
   const payload = await response.json().catch(() => ({}));
   if (!verifying) {
     if (!response.ok) {
-      if (error) error.textContent = payload.error || "Email codes are not operational.";
+      if (error) error.textContent = response.status === 403 ? "Email codes are unavailable right now." : payload.error || "Email codes are unavailable right now.";
       return;
     }
     if (status) status.textContent = payload.message || "";
