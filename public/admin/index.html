@@ -4,48 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Liberty</title>
+<title>Express Help</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1b4d'/%3E%3Cpath fill='%23e7c98a' d='M9.5 8h13v3.2h-9.2V24H9.5z'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/admin/styles.css">
 </head>
 <body>
 <div id="boot" class="boot">Loading…</div>
 <div id="login" class="login hidden">
-  <form id="login-form" class="login-card">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0e1b4d"/><path fill="#e7c98a" d="M9.5 8h13v3.2h-9.2V24H9.5z"/></svg>
-    <h1>Liberty</h1>
-    <p class="muted">Sign in to manage short links and QR codes.</p>
-    <label class="field"><span>Staff email</span><input id="staff-email" type="email" autocomplete="username" placeholder="Leave blank for head office"></label>
-    <label class="field"><span>Password</span><input id="pw" type="password" autocomplete="current-password" required autofocus></label>
-    <button class="btn" type="submit">Log in</button>
-    <p class="err" id="login-error"></p>
-  </form>
-  <div id="entra-card" class="login-card" style="margin-top:16px">
-    <h2>Work account</h2>
-    <p class="muted small" id="entra-setup" data-testid="entra-setup">Checking Microsoft sign-in…</p>
-    <a class="btn" id="entra-signin" data-testid="entra-signin" hidden href="/api/identity/entra/start?returnTo=%2Fadmin">Sign in with Microsoft</a>
-  </div>
-  <div id="otp-card" class="login-card" style="margin-top:16px">
-    <h2>Email code</h2>
-    <p class="muted small" id="otp-setup" data-testid="otp-setup">Checking email codes…</p>
-    <form id="otp-form" hidden>
-      <p class="muted small" id="otp-mock" data-testid="otp-mock" hidden>Local mock mail. No message leaves this process.</p>
-      <label class="field"><span>Approved email</span><input id="otp-email" type="email" autocomplete="username" maxlength="254" data-testid="otp-email"></label>
-      <button class="btn" type="submit" id="otp-send">Email me a code</button>
-      <label class="field" id="otp-code-wrap" hidden><span>8-digit code</span><input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" data-testid="otp-code"></label>
-      <button class="btn" type="button" id="otp-verify" hidden>Verify code</button>
-      <p class="small" id="otp-status" data-testid="otp-status"></p>
-      <p class="err" id="otp-error" data-testid="otp-error"></p>
-    </form>
-  </div>
-  <form id="identity-form" class="login-card" style="margin-top:16px">
-    <h2>Verified identity</h2>
-    <p class="muted small">Local fixture identities only. An email address does not grant access, and this form cannot appoint Neil or Joshua.</p>
-    <label class="field"><span>Fixture identity id</span><input id="ident-login" autocomplete="username"></label>
-    <label class="field"><span>Password</span><input id="ident-pw" type="password" autocomplete="current-password"></label>
-    <button class="btn" type="submit">Sign in as identity</button>
-    <p class="err" id="ident-error"></p>
-  </form>
+  <main class="signin" aria-labelledby="signin-title">
+    <div class="signin-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0e1b4d"/><path fill="#e7c98a" d="M9.5 8h13v3.2h-9.2V24H9.5z"/></svg>
+      <h1 id="signin-title">Express Help</h1>
+    </div>
+    <div class="login-card signin-card">
+      <section id="otp-card" class="signin-section" aria-labelledby="otp-title">
+        <h2 id="otp-title">Sign in with an email code</h2>
+        <p class="muted small" id="otp-setup" data-testid="otp-setup">Loading…</p>
+        <form id="otp-form" hidden>
+          <label class="field"><span>Email address</span><input id="otp-email" type="email" autocomplete="username" maxlength="254" data-testid="otp-email" autofocus></label>
+          <button class="btn" type="submit" id="otp-send">Email me a code</button>
+          <label class="field" id="otp-code-wrap" hidden><span>8-digit code</span><input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" data-testid="otp-code"></label>
+          <button class="btn" type="button" id="otp-verify" hidden>Verify code</button>
+          <p class="small" id="otp-status" data-testid="otp-status" role="status"></p>
+          <p class="err" id="otp-error" data-testid="otp-error" role="alert"></p>
+        </form>
+      </section>
+      <div class="signin-or" aria-hidden="true"><span>or</span></div>
+      <section class="signin-section" aria-labelledby="pw-title">
+        <h2 id="pw-title">Sign in with a password</h2>
+        <form id="login-form">
+          <label class="field"><span>Staff email</span><input id="staff-email" type="email" autocomplete="username" placeholder="Leave blank for head office"></label>
+          <label class="field"><span>Password</span><input id="pw" type="password" autocomplete="current-password" required></label>
+          <button class="btn" type="submit">Log in</button>
+          <p class="err" id="login-error" role="alert"></p>
+        </form>
+      </section>
+    </div>
+    <section class="signin-other" aria-labelledby="other-title">
+      <h2 id="other-title">Other ways to sign in</h2>
+      <div id="entra-card" class="signin-option" hidden>
+        <h3>Work account</h3>
+        <p class="muted small" id="entra-setup" data-testid="entra-setup"></p>
+        <a class="btn ghost" id="entra-signin" data-testid="entra-signin" hidden href="/api/identity/entra/start?returnTo=%2Fadmin">Sign in with Microsoft</a>
+      </div>
+      <details class="signin-option">
+        <summary>Verified identity</summary>
+        <form id="identity-form">
+          <label class="field"><span>Identity ID</span><input id="ident-login" autocomplete="username"></label>
+          <label class="field"><span>Password</span><input id="ident-pw" type="password" autocomplete="current-password"></label>
+          <button class="btn ghost" type="submit">Sign in</button>
+          <p class="err" id="ident-error" role="alert"></p>
+        </form>
+      </details>
+    </section>
+  </main>
 </div>
 <div id="shell" class="shell hidden">
   <aside id="sidebar" class="sidebar">
@@ -108,5 +120,6 @@
 <div id="toast" class="toast hidden" role="status"></div>
 <script src="/admin/qrcode.js"></script>
 <script type="module" src="/admin/app.js"></script>
+<script src="/footer.js" defer></script>
 </body>
 </html>

@@ -1,9 +1,10 @@
+import { footerHtml } from "../lib/footer.mjs";
 import {
   codes, stats, parseUA, readGeo, recordHit, resolveDestination, channelFor, dayKey, visitorHash, validUrl, normalizeCode,
 } from "../lib/lib.mjs";
 
 const inactive = () => new Response(
-  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link inactive</title><body style="font-family:system-ui;display:grid;place-items:center;min-height:90vh;color:#243;text-align:center;background:#f4f5f7"><div><h1 style="font-weight:650">Link inactive</h1><p>This Liberty link is not currently active.</p></div>`,
+  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link inactive</title><body style="font-family:system-ui;display:grid;place-items:center;min-height:90vh;color:#243;text-align:center;background:#f4f5f7"><div><h1 style="font-weight:650">Link inactive</h1><p>This Liberty link is not currently active.</p></div>${footerHtml()}`,
   { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
 );
 

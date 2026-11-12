@@ -1,3 +1,4 @@
+import { footerHtml } from "../lib/footer.mjs";
 import { json, posReviews } from "../lib/lib.mjs";
 import { forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
@@ -63,6 +64,7 @@ function reviewHtml(token, found) {
 <p>${esc(view.start)} through ${esc(view.end)}. Sites: ${esc((view.sites || []).map((site) => site.name).join(", ") || "Unassigned")}.</p>
 <form method="post" action="${esc(action)}"><input type="hidden" name="decision" value="approve"><input type="hidden" name="etag" value="${esc(view.etag)}"><button type="submit">Approve this revision</button></form>
 <form method="post" action="${esc(action)}"><input type="hidden" name="decision" value="reject"><input type="hidden" name="etag" value="${esc(view.etag)}"><button type="submit">Reject this revision</button></form>
+${footerHtml()}
 </body></html>`;
 }
 
@@ -93,7 +95,7 @@ export default async (req) => {
     });
     const payload = result.body || { error: result.error };
     if ((req.headers.get("accept") || "").includes("text/html")) {
-      return new Response("<!doctype html><title>POS review</title><p>" + esc(payload.error || "Decision recorded. Nothing was published.") + "</p>", { status: result.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      return new Response("<!doctype html><title>POS review</title><p>" + esc(payload.error || "Decision recorded. Nothing was published.") + "</p>" + footerHtml(), { status: result.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     }
     return json(result.status, payload);
   }
