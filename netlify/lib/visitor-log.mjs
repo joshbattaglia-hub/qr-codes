@@ -164,7 +164,7 @@ export function publicVisit(visit) {
   };
 }
 
-async function audit(action, actorId, visitId) {
+async function audit(action, actorId, visitId, detail = "") {
   const row = {
     id: "a" + crypto.randomBytes(8).toString("hex"),
     at: new Date(now()).toISOString(),
@@ -172,6 +172,7 @@ async function audit(action, actorId, visitId) {
     actorId: String(actorId || "").slice(0, 80),
     visitId: String(visitId || ""),
   };
+  if (detail) row.detail = String(detail).slice(0, 600);
   await visitorStore().setJSON("audit/" + row.id, row);
   return row;
 }
@@ -199,6 +200,22 @@ async function syncVisit(visit) {
   const result = await syncVisitRow(fresh, melbourne);
   await rememberSheet(fresh, result);
   return result;
+}
+
+export const NOTIFY_DOMAIN = "libertyretail.com.au";
+/** Notification recipient: one exact @libertyretail.com.au address (no subdomains, lookalikes or lists). */
+export function notifyRecipientOk(value) {
+  const email = String(value ?? "").trim().toLowerCase();
+  if (!email || email.length > 254) return "";
+  const at = email.lastIndexOf("@");
+  if (at < 1 || email.indexOf("@") !== at) return "";
+  if (email.slice(at + 1) !== NOTIFY_DOMAIN) return "";
+  if (!/^[a-z0-9._%+-]+$/.test(email.slice(0, at)) || email.startsWith(".") || email.includes("..")) return "";
+  return email;
+}
+/** Saved recipient, or Joshua's address when none (or an invalid one) is stored. */
+function effectiveRecipient(settings) {
+  return notifyRecipientOk(settings?.recipient) || JOSHUA_EMAIL;
 }
 
 async function notify(visit, event) {
@@ -232,7 +249,7 @@ async function notify(visit, event) {
   }
   const location = String(again.location || "").replace(/[\r\n]+/g, " ").slice(0, 120);
   const result = await deliver({
-    to: JOSHUA_EMAIL,
+    to: effectiveRecipient(settings),
     subject: event === "out" ? "Visitor log sign-out" : "Visitor log sign-in",
     idempotencyKey: "visitor-" + visit.id + "-" + event,
     text: [
@@ -514,7 +531,7 @@ export async function exportVisits(actor) {
 export async function notificationSettings(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const stored = await visitorStore().get("notify/settings", { type: "json" });
-  return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipient: stored?.enabled ? JOSHUA_EMAIL : "" } };
+  return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipient: effectiveRecipient(stored), domain: NOTIFY_DOMAIN } };
 }
 
 export async function sheetConnectionCheck(actor) {
@@ -533,13 +550,21 @@ export async function sheetConnectionCheck(actor) {
 
 export async function saveNotificationSettings(actor, body) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
-  if (body?.email && String(body.email).trim().toLowerCase() !== JOSHUA_EMAIL) return { status: 400, error: "That recipient is not authorised for the visitor log." };
+  const stored = await visitorStore().get("notify/settings", { type: "json" });
+  const current = effectiveRecipient(stored);
+  const asked = body?.recipient !== undefined ? body.recipient : body?.email;
+  let recipient = current;
+  if (asked !== undefined && asked !== null && String(asked).trim() !== "") {
+    recipient = notifyRecipientOk(asked);
+    if (!recipient) return { status: 400, error: "Use one exact @" + NOTIFY_DOMAIN + " email address." };
+  }
   const events = body?.events === "in" || body?.events === "out" || body?.events === "both" ? body.events : "";
   if (body?.enabled === true && !events) return { status: 400, error: "Choose sign-in, sign-out, or both." };
-  const next = { enabled: body?.enabled === true, events: events || "both", updatedAt: new Date(now()).toISOString() };
+  const next = { enabled: body?.enabled === true, events: events || "both", recipient, updatedAt: new Date(now()).toISOString() };
   await visitorStore().setJSON("notify/settings", next);
   await audit("notify-settings", actor.id || "", "");
-  return { status: 200, body: { enabled: next.enabled, events: next.events, recipient: next.enabled ? JOSHUA_EMAIL : "" } };
+  if (recipient !== current) await audit("notify-recipient", actor.id || "", "", current + " > " + recipient);
+  return { status: 200, body: { enabled: next.enabled, events: next.events, recipient } };
 }
 
 export const MAINTENANCE_SLOTS = 4;

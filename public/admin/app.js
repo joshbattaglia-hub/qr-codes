@@ -1712,7 +1712,8 @@ async function paintVisitor() {
     + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button><button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button></div>'
     + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>'
-    + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. The only eligible recipient is Joshua\'s existing visitor-log access. Saving this does not grant access to anyone else.</p>'
+    + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. Emails go to the one recipient below, which must be an exact @libertyretail.com.au address. They contain only the location, time, the admin record link and the spreadsheet link: no visitor name, phone, company, notes or ID photo. Opening the record still needs Joshua\'s visitor-log sign-in; changing the recipient does not grant access to anyone. Each recipient change is recorded in the visitor log history.</p>'
+    + '<label class="field"><span>Recipient email</span><input id="visitor-recipient" type="email" maxlength="254" autocomplete="off" value="' + esc(settings.recipient || "") + '" placeholder="name@libertyretail.com.au" data-testid="visitor-recipient"></label>'
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
     + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
@@ -1840,11 +1841,11 @@ async function visitorAction(button) {
   if (act === "visitor-save") {
     const response = await fetch("/api/visitor-log/settings", {
       method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: document.getElementById("visitor-enabled").checked, events: document.getElementById("visitor-events").value }),
+      body: JSON.stringify({ enabled: document.getElementById("visitor-enabled").checked, events: document.getElementById("visitor-events").value, recipient: document.getElementById("visitor-recipient")?.value || "" }),
     });
     const body = await response.json().catch(() => ({}));
     const note = document.getElementById("visitor-note");
-    if (note) note.textContent = response.ok ? (body.enabled ? "Notifications enabled for " + body.recipient : "Notifications are off.") : (body.error || "Settings were not saved");
+    if (note) note.textContent = response.ok ? (body.enabled ? "Notifications enabled for " + body.recipient : "Notifications are off. Recipient saved: " + body.recipient) : (body.error || "Settings were not saved");
   }
 }
 function placeholder(title, body) {
