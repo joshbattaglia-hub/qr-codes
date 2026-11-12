@@ -222,3 +222,18 @@ tr.clickable:hover{background:#f8fafc}
 .metrics.ticket-metrics{grid-template-columns:repeat(2,1fr)}
 @media (min-width:720px){.metrics.ticket-metrics{grid-template-columns:repeat(4,1fr)}}
 #ticket-page .field-card{margin-top:10px}
+
+.visitor-tabs{display:flex;gap:4px;border-bottom:1px solid #d0d5dd;margin:0 0 14px}
+.visitor-tab{background:none;border:0;border-bottom:3px solid transparent;padding:8px 14px;font:inherit;font-weight:600;color:#475467;cursor:pointer}
+.visitor-tab.on{color:#101828;border-bottom-color:#1d4ed8}
+.visitor-sheet-wrap{-webkit-overflow-scrolling:touch}
+.visitor-sheet{border-collapse:collapse;font-size:13px;min-width:760px;width:100%}
+.visitor-sheet th,.visitor-sheet td{padding:4px 8px;border-bottom:1px solid #eaecf0;white-space:nowrap;text-align:left;vertical-align:middle}
+.visitor-sheet thead th{position:sticky;top:0;background:#f9fafb;font-weight:600}
+.visitor-sheet tbody tr:nth-child(even){background:#fcfcfd}
+.visitor-sheet .text-btn{padding:0;font-size:13px}
+.visitor-state{font-weight:600}.visitor-state.in{color:#067647}.visitor-state.out{color:#475467}
+.btn.btn-xs{padding:2px 8px;min-height:0;font-size:12px}
+.visitor-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.visitor-filters .field{margin:0}
+@media (max-width:640px){.visitor-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}

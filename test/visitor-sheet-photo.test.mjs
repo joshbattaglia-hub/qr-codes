@@ -423,3 +423,19 @@ test("public forms disable the button with a Submitting... spinner and send an i
     assert.equal(/fetch\("\/api\/visit\/sign-(in|out)"/.test(html), false, page);
   }
 });
+
+test("admin Visitor Log has Logs and Settings tabs; settings live only on the Settings tab; maintenance users get no Settings tab", async () => {
+  const fs = await import("node:fs");
+  const app = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
+  const logs = app.slice(app.indexOf("async function paintVisitor() {"), app.indexOf("async function paintVisitorSettings("));
+  const settings = app.slice(app.indexOf("async function paintVisitorSettings("), app.indexOf("async function paintVisitorRecord("));
+  assert.match(app, /tab\("logs", "Logs", "visitors"\) \+ tab\("settings", "Settings", "visitors\/settings"\)/);
+  for (const header of ["Time in", "Time out", "Site", "Name", "Company", "Status", "Card returned", "ID photo"]) assert.ok(logs.includes("<th>" + header + "</th>"), header);
+  for (const id of ["visitor-recipient", "bm-email", "visitor-maintenance-", "visitor-sheet-check", "visitor-photo-backfill", "visitor-save"]) {
+    assert.equal(logs.includes(id), false, id);
+    assert.ok(settings.includes(id), id);
+  }
+  assert.equal(logs.includes("/api/visitor-log/settings"), false);
+  assert.match(app, /function visitorTabs\(active, viewOnly\) \{\n  if \(viewOnly\) return "";/);
+  assert.match(logs, /tabId === "settings" && viewOnly\) \{ window\.location\.replace\("#\/visitors"\)/);
+});
