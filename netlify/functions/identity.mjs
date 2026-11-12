@@ -13,6 +13,7 @@ export default async (req) => {
   if (path === "/api/identity/status" && req.method === "GET") {
     const actor = await actorFromRequest(req);
     if (!actor) return unauthorised();
+    if (actor.role === "building-maintenance") return forbidden();
     const status = await identityStatus();
     return json(200, { ...status, mailConfigured: mailConfigured(), mailMode: mailMode(), mailSetup: mailMode() === "disabled" ? mailSetupMessage() : mailMode() === "mock" ? "Local test mail only. No message leaves this process." : "", actor: { role: actor.role, kind: actor.kind || "", approverKey: actor.approverKey || "", preparerClass: actor.preparerClass || "" } });
   }

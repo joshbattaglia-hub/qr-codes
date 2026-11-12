@@ -80,6 +80,7 @@ export default async (req) => {
     if (originBlocked(req)) return forbidden();
     const actor = await actorFromRequest(req);
     if (!actor) return unauthorised();
+    if (actor.role === "building-maintenance") return forbidden();
     const found = await openReview(decision[1]);
     if (found.status) return json(found.status, { error: found.status === 410 ? "This review link has expired" : "Not found" });
     const body = await readBody(req);

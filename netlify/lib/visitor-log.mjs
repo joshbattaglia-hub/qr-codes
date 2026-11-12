@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
+import { BUILDING_MAINTENANCE_MAX, BUILDING_MAINTENANCE_ROLE, buildingMaintenanceEmailOk, isBuildingMaintenance, readBuildingMaintenance, writeBuildingMaintenance } from "./building-maintenance.mjs";
 import { backfillIdPhotoColumn, recordUrl, runSheetConnectionProbe, sheetConfigured, sheetUrl, syncVisitRow } from "./visitor-sheet.mjs";
 
 export const JOSHUA_EMAIL = "jbattaglia@libertyretail.com.au";
@@ -11,7 +12,7 @@ export const VISITOR_NOTICE = [
   "A clear photo of your ID is required when you sign in. The photo is stored privately in Express Help, not on a public link.",
   "If you sign out, that ID photo is deleted 90 days after sign-out. If you never sign out, the ID photo is deleted 90 days after sign-in and the written visit stays open, flagged for review. A later sign-out does not restore a photo that has expired or already been deleted.",
   "The written record is kept until Joshua deletes it. There is no scheduled deletion of the text.",
-  "Inside Express Help, only Joshua's explicit visitor-log access can open these records, the ID photo, the list, the history, an export, or a deletion. A head-office password or a POS role does not.",
+  "Inside Express Help, only Joshua's explicit visitor-log access, and building maintenance users Joshua has added, can open these records or the ID photo. Building maintenance users can only view the list, the records and the ID photos. Only Joshua can export, delete, or change visitor log settings. Every ID photo view is logged with who viewed it and when. A head-office password or a POS role does not grant access.",
   "When a private spreadsheet is configured, the written record is copied there for Joshua and the server identity that updates the sheet. The sheet cell for the photo is only the authenticated admin link for that record. It is not the stored photo and it is not a bearer token. Clearing a row does not erase Google Sheets version history or Google backups.",
 ].join(" ");
 
@@ -78,7 +79,7 @@ export function visitorReadiness() {
     collection: visitorCollectionOpen() ? "open" : "closed",
     sheetConfigured: sheetConfigured(),
     sheetSharing: "none",
-    viewer: "Joshua's explicit visitor-log access only",
+    viewer: "Joshua's explicit visitor-log access, and view-only building maintenance users Joshua has added",
   };
 }
 
@@ -444,8 +445,51 @@ export async function signOut(req, body) {
   return { status: 409, error: "Sign-out could not be saved. Try the receipt again." };
 }
 
-export async function listVisits(actor, query) {
+/**
+ * "admin" = Joshua's visitor-log access (everything). "maintenance" = view-only (list, records, ID photos)
+ * for an email-code user on Joshua's building maintenance list. Otherwise "none".
+ */
+export async function visitorRole(actor) {
+  if (visitorCapability(actor)) return "admin";
+  if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp" || !actor.email) return "none";
+  if (parseVisitorAccess().error) return "none";
+  return (await isBuildingMaintenance(actor.email)) ? "maintenance" : "none";
+}
+
+export async function visitorViewCapability(actor) {
+  return (await visitorRole(actor)) !== "none";
+}
+
+export async function listBuildingMaintenance(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  return { status: 200, body: { users: (await readBuildingMaintenance()).emails } };
+}
+
+/** Joshua adds or removes a building maintenance user. Every change is audited with the address. */
+export async function changeBuildingMaintenance(actor, body) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const action = body?.action === "add" || body?.action === "remove" ? body.action : "";
+  if (!action) return { status: 400, error: "Choose add or remove." };
+  const email = buildingMaintenanceEmailOk(body?.email);
+  if (!email) return { status: 400, error: "Use one exact @libertyretail.com.au email address." };
+  if (action === "add" && email === JOSHUA_EMAIL) return { status: 400, error: "Joshua already has full visitor log access." };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await readBuildingMaintenance();
+    const has = current.emails.includes(email);
+    if (action === "add" && has) return { status: 200, body: { users: current.emails, changed: false } };
+    if (action === "remove" && !has) return { status: 200, body: { users: current.emails, changed: false } };
+    if (action === "add" && current.emails.length >= BUILDING_MAINTENANCE_MAX) return { status: 400, error: "Too many building maintenance users." };
+    const next = action === "add" ? [...current.emails, email] : current.emails.filter((row) => row !== email);
+    if (await writeBuildingMaintenance(next, current.etag)) {
+      await audit(action === "add" ? "maintenance-user-add" : "maintenance-user-remove", actor.id || "", "", email);
+      return { status: 200, body: { users: [...new Set(next)].sort(), changed: true } };
+    }
+  }
+  return { status: 409, error: "The list changed. Try again." };
+}
+
+export async function listVisits(actor, query) {
+  if (!(await visitorViewCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const { blobs } = await visitorStore().list({ prefix: "visit/" });
   const rows = (await Promise.all(blobs.map((blob) => visitorStore().get(blob.key, { type: "json" })))).filter((row) => row && row.id && !row.deleted);
   const from = String(query.get("from") || "");
@@ -465,7 +509,7 @@ export async function listVisits(actor, query) {
 }
 
 export async function readVisit(actor, id) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (!(await visitorViewCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   if (!/^v[a-f0-9]{32}$/.test(id)) return { status: 404, error: "Not found" };
   const visit = await visitorStore().get("visit/" + id, { type: "json" });
   if (!visit || visit.deleted) return { status: 404, error: "Not found" };
@@ -473,14 +517,15 @@ export async function readVisit(actor, id) {
 }
 
 export async function readPhoto(actor, id) {
-  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const role = await visitorRole(actor);
+  if (role === "none") return { status: 403, error: "Visitor log access is not granted." };
   if (!/^v[a-f0-9]{32}$/.test(id)) return { status: 404, error: "Not found" };
   const visit = await visitorStore().get("visit/" + id, { type: "json" });
   if (!visit) return { status: 404, error: "Not found" };
   if (!photoReadable(visit)) return { status: 404, error: "Not found" };
   const photo = await visitorStore().get("photo/" + id, { type: "json" });
   if (!photo?.bytes) return { status: 404, error: "Not found" };
-  await audit("photo-view", actor.id || "", id);
+  await audit("photo-view", actor.id || "", id, (role === "maintenance" ? "building maintenance " : "") + String(actor.email || "").toLowerCase());
   return { status: 200, contentType: photo.contentType === "image/png" ? "image/png" : "image/jpeg", bytes: Buffer.from(photo.bytes, "base64") };
 }
 

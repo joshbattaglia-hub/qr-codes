@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, otpStore, rateStore } from "./lib.mjs";
 import { deliver, mailMode } from "./mail.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
+import { BUILDING_MAINTENANCE_ROLE, isBuildingMaintenance } from "./building-maintenance.mjs";
 
 const EMAIL = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -237,7 +238,7 @@ export async function startOtp(req, email) {
   if (!normalized) return { status: 400, error: "Enter an email address." };
   const gate = await limited(req, "start", normalized);
   if (gate) return gate;
-  const entry = allowlist().get(normalized);
+  const entry = allowlist().get(normalized) || (await isBuildingMaintenance(normalized) ? { email: normalized } : null);
   if (!entry) return uniform();
   const hash = emailHash(normalized);
   if (!(await acquireLock(hash))) return uniform();
@@ -347,6 +348,31 @@ export function actorFromOtp(email) {
   };
 }
 
+/** Visitor Log read-only actor for a building maintenance user who is not on the env allowlist. No sites, no POS role. */
+function maintenanceActor(email) {
+  return {
+    id: "otp:" + emailHash(email).slice(0, 16),
+    kind: "verified-identity",
+    provider: "otp",
+    email,
+    name: "Building maintenance",
+    role: BUILDING_MAINTENANCE_ROLE,
+    approverKey: "",
+    preparerClass: "",
+    siteIds: [],
+    allSites: false,
+    unassigned: false,
+  };
+}
+
+/** Env allowlist first (unchanged behaviour); otherwise a current building maintenance user. */
+export async function actorForEmail(email) {
+  const known = actorFromOtp(email);
+  if (known) return known;
+  if (await isBuildingMaintenance(email)) return maintenanceActor(email);
+  return null;
+}
+
 async function readSession(req) {
   if (secret().length < 32) return null;
   const match = (req.headers.get("cookie") || "").match(/(?:^|;\s*)qr_otp=(o[a-f0-9]{32})\.(\d+)\.([a-f0-9]+)/);
@@ -361,7 +387,7 @@ async function readSession(req) {
 export async function otpFromRequest(req) {
   const row = await readSession(req);
   if (!row) return null;
-  return actorFromOtp(row.email) || {
+  return (await actorForEmail(row.email)) || {
     id: "otp:revoked",
     kind: "verified-identity",
     provider: "otp",
@@ -379,7 +405,7 @@ export async function otpFromRequest(req) {
 export async function otpSessionView(req) {
   const row = await readSession(req);
   if (!row) return { actor: null, cookie: "" };
-  const actor = actorFromOtp(row.email);
+  const actor = await actorForEmail(row.email);
   if (!actor) {
     await otpStore().delete("sess/" + row.id);
     return { actor: null, cookie: clearOtpCookie(req) };
@@ -405,12 +431,12 @@ export async function verifyOtp(req, email, code) {
   if (!normalized || !/^\d{8}$/.test(digits)) return { status: 401, error: OTP_REJECTED };
   const gate = await limited(req, "verify", normalized);
   if (gate) return gate;
-  const entry = allowlist().get(normalized);
+  const entry = allowlist().get(normalized) || (await isBuildingMaintenance(normalized) ? { email: normalized } : null);
   if (!entry) return { status: 401, error: OTP_REJECTED };
   const won = await consume(emailHash(normalized), digits);
   if (!won.ok) return { status: 401, error: OTP_REJECTED };
   const session = await createSession(normalized);
-  const actor = actorFromOtp(normalized);
+  const actor = await actorForEmail(normalized);
   if (!actor) return { status: 401, error: OTP_REJECTED };
   return { status: 200, actor, cookie: otpCookie(req, session.id, session.exp) };
 }

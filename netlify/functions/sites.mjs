@@ -17,6 +17,8 @@ export default async (req) => {
   if (originBlocked(req)) return forbidden();
   const actor = await actorFromRequest(req);
   if (!actor) return unauthorised();
+  // Building maintenance users are Visitor Log view-only.
+  if (actor.role === "building-maintenance") return forbidden();
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const store = sitesStore();
   if (path === "/api/sites" && req.method === "GET") {
