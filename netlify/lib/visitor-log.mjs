@@ -13,6 +13,7 @@ export const VISITOR_NOTICE = [
   "If you sign out, that ID photo is deleted 90 days after sign-out. If you never sign out, the ID photo is deleted 90 days after sign-in and the written visit stays open, flagged for review. A later sign-out does not restore a photo that has expired or already been deleted.",
   "The written record is kept until Joshua deletes it. There is no scheduled deletion of the text.",
   "Inside Express Help, only Joshua's explicit visitor-log access, and building maintenance users Joshua has added, can open these records or the ID photo. Building maintenance users can only view the list, the records and the ID photos. Only Joshua can export, delete, or change visitor log settings. Every ID photo view is logged with who viewed it and when. A head-office password or a POS role does not grant access.",
+  "Visitor log email notifications are off unless Joshua turns them on. When on, they go only to the @libertyretail.com.au addresses Joshua lists and say only that a visitor signed in or out, the location and time, with links that still need an authorised sign-in. They contain no visitor name, phone, company, notes or ID photo.",
   "When a private spreadsheet is configured, the written record is copied there for Joshua and the server identity that updates the sheet. The sheet cell for the photo is only the authenticated admin link for that record. It is not the stored photo and it is not a bearer token. Clearing a row does not erase Google Sheets version history or Google backups.",
 ].join(" ");
 
@@ -214,9 +215,22 @@ export function notifyRecipientOk(value) {
   if (!/^[a-z0-9._%+-]+$/.test(email.slice(0, at)) || email.startsWith(".") || email.includes("..")) return "";
   return email;
 }
-/** Saved recipient, or Joshua's address when none (or an invalid one) is stored. */
-function effectiveRecipient(settings) {
-  return notifyRecipientOk(settings?.recipient) || JOSHUA_EMAIL;
+export const NOTIFY_RECIPIENTS_MAX = 10;
+/**
+ * Saved recipient list (exact @libertyretail.com.au, de-duplicated case-insensitively, capped).
+ * A legacy single `recipient` is migrated into the list. Joshua's address when nothing valid is stored.
+ */
+export function effectiveRecipients(settings) {
+  const raw = Array.isArray(settings?.recipients) ? settings.recipients : [settings?.recipient];
+  const list = [];
+  for (const value of raw) {
+    const email = notifyRecipientOk(value);
+    if (email && !list.includes(email) && list.length < NOTIFY_RECIPIENTS_MAX) list.push(email);
+  }
+  return list.length ? list : [JOSHUA_EMAIL];
+}
+function recipientKey(email) {
+  return crypto.createHash("sha256").update(email).digest("hex").slice(0, 12);
 }
 
 async function notify(visit, event) {
@@ -249,20 +263,28 @@ async function notify(visit, event) {
     return { status: "suppressed" };
   }
   const location = String(again.location || "").replace(/[\r\n]+/g, " ").slice(0, 120);
-  const result = await deliver({
-    to: effectiveRecipient(settings),
-    subject: event === "out" ? "Visitor log sign-out" : "Visitor log sign-in",
-    idempotencyKey: "visitor-" + visit.id + "-" + event,
-    text: [
+  const text = [
       event === "out" ? "A visitor signed out." : "A visitor signed in.",
       "Location: " + location,
       "When: " + melbourne(event === "out" ? again.signedOutAt : again.signedInAt),
       "Record: " + publicBase() + "/admin#/visitors/" + visit.id,
       ...(sheetUrl() ? ["View visitor log spreadsheet: " + sheetUrl()] : []),
       "This message has no visitor name, phone, company, notes, or ID photo.",
-    ].join("\n"),
-  });
-  const status = result.status === "sent" ? "sent" : result.status === "unknown" ? "unknown" : result.status === "not-configured" ? "not-configured" : "failed";
+    ].join("\n");
+  // One message per recipient, so no recipient sees the others' addresses.
+  const statuses = [];
+  for (const to of effectiveRecipients(settings)) {
+    const result = await deliver({
+      to,
+      subject: event === "out" ? "Visitor log sign-out" : "Visitor log sign-in",
+      idempotencyKey: "visitor-" + visit.id + "-" + event + "-" + recipientKey(to),
+      text,
+    });
+    statuses.push(result.status === "sent" ? "sent" : result.status === "unknown" ? "unknown" : result.status === "not-configured" ? "not-configured" : "failed");
+  }
+  const status = statuses.every((one) => one === "sent") ? "sent"
+    : statuses.includes("unknown") ? "unknown"
+    : statuses.every((one) => one === "not-configured") ? "not-configured" : "failed";
   const owned = await visitorStore().getWithMetadata(key, { type: "json", consistency: "strong" });
   if (owned?.etag && owned.data.status === "sending") {
     await visitorStore().setJSON(key, { status, at: new Date(now()).toISOString() }, { onlyIfMatch: owned.etag });
@@ -576,7 +598,7 @@ export async function exportVisits(actor) {
 export async function notificationSettings(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const stored = await visitorStore().get("notify/settings", { type: "json" });
-  return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipient: effectiveRecipient(stored), domain: NOTIFY_DOMAIN } };
+  return { status: 200, body: { enabled: stored?.enabled === true, events: stored?.events || "both", recipients: effectiveRecipients(stored), max: NOTIFY_RECIPIENTS_MAX, domain: NOTIFY_DOMAIN } };
 }
 
 export async function sheetConnectionCheck(actor) {
@@ -595,21 +617,48 @@ export async function sheetConnectionCheck(actor) {
 
 export async function saveNotificationSettings(actor, body) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
-  const stored = await visitorStore().get("notify/settings", { type: "json" });
-  const current = effectiveRecipient(stored);
   const asked = body?.recipient !== undefined ? body.recipient : body?.email;
-  let recipient = current;
   if (asked !== undefined && asked !== null && String(asked).trim() !== "") {
-    recipient = notifyRecipientOk(asked);
-    if (!recipient) return { status: 400, error: "Use one exact @" + NOTIFY_DOMAIN + " email address." };
+    if (!notifyRecipientOk(asked)) return { status: 400, error: "Use one exact @" + NOTIFY_DOMAIN + " email address." };
+    return { status: 400, error: "Add or remove recipients in the recipient list." };
   }
   const events = body?.events === "in" || body?.events === "out" || body?.events === "both" ? body.events : "";
   if (body?.enabled === true && !events) return { status: 400, error: "Choose sign-in, sign-out, or both." };
-  const next = { enabled: body?.enabled === true, events: events || "both", recipient, updatedAt: new Date(now()).toISOString() };
-  await visitorStore().setJSON("notify/settings", next);
-  await audit("notify-settings", actor.id || "", "");
-  if (recipient !== current) await audit("notify-recipient", actor.id || "", "", current + " > " + recipient);
-  return { status: 200, body: { enabled: next.enabled, events: next.events, recipient } };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const stored = await visitorStore().getWithMetadata("notify/settings", { type: "json", consistency: "strong" });
+    const recipients = effectiveRecipients(stored?.data);
+    const next = { enabled: body?.enabled === true, events: events || "both", recipients, updatedAt: new Date(now()).toISOString() };
+    const write = await visitorStore().setJSON("notify/settings", next, stored?.etag ? { onlyIfMatch: stored.etag } : { onlyIfNew: true });
+    if (write?.modified !== true) continue;
+    await audit("notify-settings", actor.id || "", "");
+    return { status: 200, body: { enabled: next.enabled, events: next.events, recipients } };
+  }
+  return { status: 409, error: "Settings changed. Try again." };
+}
+
+/** Joshua adds or removes one notification recipient. The list keeps at least one address. Audited with the address. */
+export async function changeNotificationRecipients(actor, body) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const action = body?.action === "add" || body?.action === "remove" ? body.action : "";
+  if (!action) return { status: 400, error: "Choose add or remove." };
+  const email = typeof body?.email === "string" ? notifyRecipientOk(body.email) : "";
+  if (!email) return { status: 400, error: "Use one exact @" + NOTIFY_DOMAIN + " email address." };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const stored = await visitorStore().getWithMetadata("notify/settings", { type: "json", consistency: "strong" });
+    const data = stored?.data || {};
+    const current = effectiveRecipients(data);
+    const has = current.includes(email);
+    if ((action === "add" && has) || (action === "remove" && !has)) return { status: 200, body: { recipients: current, changed: false } };
+    if (action === "add" && current.length >= NOTIFY_RECIPIENTS_MAX) return { status: 400, error: "Up to " + NOTIFY_RECIPIENTS_MAX + " recipients." };
+    if (action === "remove" && current.length <= 1) return { status: 400, error: "Keep at least one recipient." };
+    const recipients = action === "add" ? [...current, email] : current.filter((row) => row !== email);
+    const next = { enabled: data.enabled === true, events: data.events === "in" || data.events === "out" ? data.events : "both", recipients, updatedAt: new Date(now()).toISOString() };
+    const write = await visitorStore().setJSON("notify/settings", next, stored?.etag ? { onlyIfMatch: stored.etag } : { onlyIfNew: true });
+    if (write?.modified !== true) continue;
+    await audit(action === "add" ? "notify-recipient-add" : "notify-recipient-remove", actor.id || "", "", email);
+    return { status: 200, body: { recipients, changed: true } };
+  }
+  return { status: 409, error: "The list changed. Try again." };
 }
 
 export const MAINTENANCE_SLOTS = 4;

@@ -234,7 +234,7 @@ test("sign-in, sign-out, sheet row, and Joshua-only access", async () => {
   const badRecipient = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "both", email: "someone@example.com" } })));
   assert.equal(badRecipient.status, 400);
   const saved = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "both" } })));
-  assert.equal(saved.body.recipient, JOSHUA);
+  assert.deepEqual(saved.body.recipients, [JOSHUA]);
   assert.equal(visitLib.visitorCapability({ kind: "verified-identity", provider: "otp", email: NEIL }), false);
   const signed = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: { receipt: created.body.receipt, cardReturned: true }, ip: "203.0.113.23" })));
   assert.equal(signed.status, 200);
