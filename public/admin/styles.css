@@ -243,9 +243,9 @@ tr.clickable:hover{background:#f8fafc}
 .user-history{list-style:none;padding:0;margin:0}.user-history li{padding:6px 0;border-bottom:1px solid #eaecf0}
 .user-form{margin-top:14px;background:#fcfcfd}
 /* Sign-in: single clean card, left-aligned on the page */
-.login{display:block;place-items:initial;min-height:auto;padding:48px 24px 24px 7vw}
-.signin{width:min(380px,100%);text-align:left}
-.signin-brand{display:flex;align-items:center;gap:10px;margin:0 0 18px}
+.login{display:block;place-items:initial;min-height:auto;padding:56px 24px 24px}
+.signin{width:min(380px,100%);margin:0 auto;text-align:left}
+.signin-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin:0 0 18px}
 .signin-brand .mark{width:36px;height:36px}
 .signin-brand h1{margin:0;font-size:24px;font-weight:700;letter-spacing:-.01em}
 .signin-card{width:100%;padding:24px;border-radius:6px;box-shadow:0 1px 3px rgba(16,24,40,.08)}
@@ -256,7 +256,7 @@ tr.clickable:hover{background:#f8fafc}
 .signin-or{display:flex;align-items:center;gap:10px;margin:20px 0 16px;color:var(--muted);font-size:13px}
 .signin-or::before,.signin-or::after{content:"";flex:1;height:1px;background:var(--line)}
 .signin-other{margin-top:22px;font-size:13.5px}
-.signin-other h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px;text-transform:none}
+.signin-other h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px;text-transform:none;text-align:center}
 .signin-option{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 14px;margin:0 0 8px}
 .signin-option h3{font-size:14px;margin:0 0 4px}
 .signin-option summary{cursor:pointer;font-weight:600}
