@@ -183,6 +183,22 @@ export function normaliseSettings(raw) {
   };
 }
 
+/** Users tab: set which ticket queues (areas) one email is staff on. Other settings are untouched. */
+export async function setTicketStaffQueues(email, queues) {
+  const address = emailOf(email);
+  if (!address) return null;
+  const want = new Set((Array.isArray(queues) ? queues : []).filter((queue) => QUEUES.includes(queue)));
+  const current = normaliseSettings((await ticketStore().get("settings", { type: "json" })) || {});
+  let changed = false;
+  for (const queue of QUEUES) {
+    const has = current.staff[queue].includes(address);
+    if (want.has(queue) && !has) { current.staff[queue].push(address); changed = true; }
+    if (!want.has(queue) && has && address !== TICKET_ADMIN_EMAIL) { current.staff[queue] = current.staff[queue].filter((row) => row !== address); changed = true; }
+  }
+  if (changed) await ticketStore().setJSON("settings", current);
+  return current.staff;
+}
+
 export async function readSettings() {
   const stored = await ticketStore().get("settings", { type: "json" });
   return normaliseSettings(stored || {});
@@ -199,7 +215,9 @@ export async function saveSettings(actor, body) {
 }
 
 export async function ticketAccess(actor, settings = null) {
-  if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp" || actor.role === "building-maintenance") return { role: "none", email: "", queues: [] };
+  // Email-code users only. Queue membership (the ticket staff lists, edited in Users or Support settings) decides access.
+  if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp") return { role: "none", email: "", queues: [] };
+  if (actor.role === "building-maintenance" && actor.ticketsEnabled !== true) return { role: "none", email: "", queues: [] };
   const email = emailOf(actor.email);
   if (!email) return { role: "none", email: "", queues: [] };
   if (email === TICKET_ADMIN_EMAIL) return { role: "admin", email, queues: [...QUEUES] };

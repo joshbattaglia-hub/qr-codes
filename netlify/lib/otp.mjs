@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, otpStore, rateStore } from "./lib.mjs";
 import { deliver, mailMode } from "./mail.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
-import { BUILDING_MAINTENANCE_ROLE, isBuildingMaintenance } from "./building-maintenance.mjs";
+import { userActorFields, userFor } from "./users.mjs";
 
 const EMAIL = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -238,7 +238,7 @@ export async function startOtp(req, email) {
   if (!normalized) return { status: 400, error: "Enter an email address." };
   const gate = await limited(req, "start", normalized);
   if (gate) return gate;
-  const entry = allowlist().get(normalized) || (await isBuildingMaintenance(normalized) ? { email: normalized } : null);
+  const entry = await userFor(normalized);
   if (!entry) return uniform();
   const hash = emailHash(normalized);
   if (!(await acquireLock(hash))) return uniform();
@@ -348,29 +348,22 @@ export function actorFromOtp(email) {
   };
 }
 
-/** Visitor Log read-only actor for a building maintenance user who is not on the env allowlist. No sites, no POS role. */
-function maintenanceActor(email) {
+/** The signed-in email-code actor comes from the Users list on every request, so a removal or change applies at once. */
+export async function actorForEmail(email) {
+  const user = await userFor(email);
+  if (!user) return null;
+  const fields = userActorFields(user);
+  const fact = fields.approverKey ? APPROVER_FACTS[fields.approverKey] : null;
   return {
-    id: "otp:" + emailHash(email).slice(0, 16),
+    id: "otp:" + emailHash(user.email).slice(0, 16),
     kind: "verified-identity",
     provider: "otp",
-    email,
-    name: "Building maintenance",
-    role: BUILDING_MAINTENANCE_ROLE,
-    approverKey: "",
-    preparerClass: "",
-    siteIds: [],
+    email: user.email,
+    name: fact?.name || (fields.preparerClass ? "Preparer" : "Email code user"),
+    ...fields,
     allSites: false,
     unassigned: false,
   };
-}
-
-/** Env allowlist first (unchanged behaviour); otherwise a current building maintenance user. */
-export async function actorForEmail(email) {
-  const known = actorFromOtp(email);
-  if (known) return known;
-  if (await isBuildingMaintenance(email)) return maintenanceActor(email);
-  return null;
 }
 
 async function readSession(req) {
@@ -431,7 +424,7 @@ export async function verifyOtp(req, email, code) {
   if (!normalized || !/^\d{8}$/.test(digits)) return { status: 401, error: OTP_REJECTED };
   const gate = await limited(req, "verify", normalized);
   if (gate) return gate;
-  const entry = allowlist().get(normalized) || (await isBuildingMaintenance(normalized) ? { email: normalized } : null);
+  const entry = await userFor(normalized);
   if (!entry) return { status: 401, error: OTP_REJECTED };
   const won = await consume(emailHash(normalized), digits);
   if (!won.ok) return { status: 401, error: OTP_REJECTED };
