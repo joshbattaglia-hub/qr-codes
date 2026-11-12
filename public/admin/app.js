@@ -1697,6 +1697,8 @@ async function paintVisitor() {
   if (location) params.set("location", location);
   const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
   const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
+  const maintenance = await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
+  const maintenanceFields = [0, 1, 2, 3].map((i) => '<label class="field"><span>Maintenance line ' + (i + 1) + '</span><input id="visitor-maintenance-' + i + '" type="tel" inputmode="tel" maxlength="24" placeholder="Blank to hide" value="' + esc((maintenance.numbers || [])[i] || "") + '" data-testid="visitor-maintenance-input"></label>').join("");
   const rows = (listed.visits || []).map((visit) => {
     const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
     const brief = notes.length > 80 ? notes.slice(0, 77) + "…" : notes;
@@ -1714,6 +1716,9 @@ async function paintVisitor() {
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
     + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
+    + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
+    + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
+    + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
     + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
     + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
     + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>';
@@ -1806,6 +1811,18 @@ async function visitorAction(button) {
     const note = document.getElementById("visitor-sheet-note");
     const stage = typeof body.stage === "string" && /^[a-z-]+$/.test(body.stage) ? body.stage : "";
     if (note) note.textContent = response.ok ? (body.ok ? "verified" : stage || "The check did not finish") : (body.error || "The check did not run");
+    return;
+  }
+  if (act === "visitor-maintenance-save") {
+    const numbers = [0, 1, 2, 3].map((i) => document.getElementById("visitor-maintenance-" + i)?.value || "");
+    const response = await fetch("/api/visitor-log/maintenance", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ numbers }),
+    });
+    const body = await response.json().catch(() => ({}));
+    const note = document.getElementById("visitor-maintenance-note");
+    const shown = (body.numbers || []).filter(Boolean).length;
+    if (note) note.textContent = response.ok ? (shown ? "Saved. " + shown + " number" + (shown === 1 ? "" : "s") + " shown to visitors." : "Saved. The block is hidden.") : (body.error || "Numbers were not saved");
     return;
   }
   if (act === "visitor-save") {

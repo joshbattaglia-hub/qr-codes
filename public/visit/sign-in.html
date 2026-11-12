@@ -33,6 +33,11 @@
   a { color:var(--blue); }
   .tick { width:48px; height:48px; border-radius:50%; background:#067647; color:#fff; display:grid; place-items:center; font-size:28px; margin:0 0 8px; }
   .done h2 { margin-top:8px; }
+  .maintenance { margin-top:16px; padding-top:12px; border-top:1px solid var(--line); }
+  .maintenance h3 { font-size:16px; margin:0 0 8px; }
+  .maintenance ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .maintenance a { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:4px 12px; min-height:44px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; text-decoration:none; font-weight:700; overflow-wrap:anywhere; }
+  .maintenance a span { color:var(--muted); font-weight:600; }
   .err { color:#d92d20; min-height:1.2em; }
   .ok { color:#067647; }
   .muted { color:var(--muted); font-weight:400; }
@@ -81,9 +86,14 @@
     <p class="tick" aria-hidden="true">✓</p>
     <h2>Thanks for signing in</h2>
     <p>When leaving, don’t forget to scan the Sign Out QR Code to close out your visitation.</p>
+    <div class="maintenance" id="maintenance-contacts" hidden data-testid="visit-maintenance">
+      <h3>Need the locker access code? Call maintenance:</h3>
+      <ul id="maintenance-list"></ul>
+    </div>
   </section>
 </main>
 <script type="module" src="/visit/photo.js"></script>
+<script src="/visit/maintenance.js" defer></script>
 <script>
 const intro = document.getElementById("intro");
 const closed = document.getElementById("closed");

@@ -541,6 +541,66 @@ export async function saveNotificationSettings(actor, body) {
   return { status: 200, body: { enabled: next.enabled, events: next.events, recipient: next.enabled ? JOSHUA_EMAIL : "" } };
 }
 
+export const MAINTENANCE_SLOTS = 4;
+const MAINTENANCE_KEY = "maintenance/contacts";
+
+/**
+ * One maintenance phone number. Blank is allowed (slot unused). Display text keeps the readable
+ * spacing; the tel: href is digits with an optional leading +.
+ */
+export function maintenancePhone(value) {
+  const display = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!display) return { blank: true, display: "", href: "" };
+  if (display.length > 24) return { error: "too-long" };
+  if (!/^\+?[0-9 ()\-.]+$/.test(display)) return { error: "invalid" };
+  const digits = display.replace(/\D/g, "");
+  if (digits.length < 6 || digits.length > 15) return { error: "invalid" };
+  return { display, href: "tel:" + (display.startsWith("+") ? "+" : "") + digits };
+}
+
+async function readMaintenanceNumbers() {
+  const stored = await visitorStore().get(MAINTENANCE_KEY, { type: "json" });
+  const numbers = Array.isArray(stored?.numbers) ? stored.numbers : [];
+  return Array.from({ length: MAINTENANCE_SLOTS }, (_, i) => {
+    const phone = maintenancePhone(numbers[i]);
+    return phone.error || phone.blank ? "" : phone.display;
+  });
+}
+
+/** Public: only labels, display text and tel: links for the slots that are set. Same for every site and form. */
+export async function publicMaintenanceContacts() {
+  const numbers = await readMaintenanceNumbers();
+  const contacts = [];
+  numbers.forEach((value, i) => {
+    if (!value) return;
+    const phone = maintenancePhone(value);
+    contacts.push({ label: "Maintenance line " + (i + 1), display: phone.display, href: phone.href });
+  });
+  return { contacts };
+}
+
+export async function maintenanceSettings(actor) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  return { status: 200, body: { numbers: await readMaintenanceNumbers() } };
+}
+
+export async function saveMaintenanceSettings(actor, body) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  const incoming = Array.isArray(body?.numbers) ? body.numbers : null;
+  if (!incoming || incoming.length > MAINTENANCE_SLOTS) return { status: 400, error: "Send up to " + MAINTENANCE_SLOTS + " maintenance numbers." };
+  const numbers = [];
+  for (let i = 0; i < MAINTENANCE_SLOTS; i++) {
+    const raw = incoming[i];
+    if (raw !== undefined && raw !== null && typeof raw !== "string") return { status: 400, error: "Maintenance line " + (i + 1) + " is not a phone number." };
+    const phone = maintenancePhone(raw);
+    if (phone.error) return { status: 400, error: "Maintenance line " + (i + 1) + " is not a valid phone number." };
+    numbers.push(phone.display);
+  }
+  await visitorStore().setJSON(MAINTENANCE_KEY, { numbers, updatedAt: new Date(now()).toISOString() });
+  await audit("maintenance-numbers", actor.id || "", "");
+  return { status: 200, body: { numbers } };
+}
+
 async function purgePhoto(visit) {
   try {
     if (faults.failPhotoDelete > 0) {
