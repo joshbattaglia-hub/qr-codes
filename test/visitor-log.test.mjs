@@ -785,9 +785,9 @@ test("sign-in and sign-out are separate public pages and /visit still has both",
   assert.equal(both.includes('data-testid="visit-out-issues"'), true);
   const admin = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
   assert.equal(admin.includes("Visitor records are restricted. Sign in with your authorised email account to view them."), true);
-  assert.equal(admin.includes('data-testid="visitor-email-signin">Sign in with email'), true);
+  assert.match(admin, /function visitorDenied\(\)[\s\S]{0,300}EMAIL_SIGNIN_BUTTON/);
   assert.equal(admin.includes("limited to Joshua's explicit visitor-log access"), false);
-  assert.match(admin, /act === "visitor-email-signin"[\s\S]{0,400}method: "DELETE"[\s\S]{0,200}showLogin\("", true\)/);
+  assert.match(admin, /async function switchToEmailSignin\(\)[\s\S]{0,200}"\/api\/auth", \{ method: "DELETE"[\s\S]{0,300}showLogin\("", true\)/);
   assert.match(admin, /function paintAvatar\(\)[\s\S]{0,400}querySelector\("\.avatar"\)/);
   const detailLines = [
     "<summary>Details</summary>",

@@ -43,7 +43,7 @@ export function ticketShell() {
 }
 
 function denied() {
-  return '<h2>Support tickets are restricted</h2><p data-testid="ticket-denied">Ticket staff access is not granted for this session. Sign in with a verified email code listed as ticket staff. The shared Head office password and POS roles are not ticket staff access.</p>';
+  return '<h2>Support tickets are restricted</h2><p data-testid="ticket-denied">Ticket staff access is not granted for this session. Sign in with a verified email code listed as ticket staff. The shared Head office password and POS roles are not ticket staff access.</p><p><button class="btn" type="button" data-act="email-signin" data-testid="email-signin">Sign in with email</button></p>';
 }
 
 function queueTabs(queue, queues, withAll = false) {

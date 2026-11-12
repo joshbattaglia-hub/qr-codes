@@ -75,3 +75,30 @@ test("admin sign-in is centred on the page (card contents stay left-aligned)", (
   assert.match(css, /\.signin-other h2\{[^}]*text-align:center/);
   assert.doesNotMatch(css, /7vw/);
 });
+
+test("every 'Sign in with email' button ends the session and opens the email-code sign-in", () => {
+  const app = fs.readFileSync(path.join(root, "admin/app.js"), "utf8");
+  const tickets = fs.readFileSync(path.join(root, "admin/tickets-ui.mjs"), "utf8");
+  // Shared button used by Visitor log, Users and Support restricted cards.
+  assert.match(app, /const EMAIL_SIGNIN_BUTTON = '<button[^']*data-act="email-signin"/);
+  assert.match(app, /function visitorDenied\(\)[\s\S]{0,300}EMAIL_SIGNIN_BUTTON/);
+  assert.match(app, /data-testid="users-denied"[\s\S]{0,200}EMAIL_SIGNIN_BUTTON/);
+  assert.match(tickets, /function denied\(\)[\s\S]{0,500}data-act="email-signin"/);
+  // The body click handler handles it before the per-page dispatchers (which swallowed it before).
+  const click = app.slice(app.indexOf('document.body.addEventListener("click"'));
+  const handled = click.indexOf('actEl.dataset.act === "email-signin"');
+  assert.ok(handled > 0 && handled < click.indexOf('actEl.closest("#ticket-page")') && handled < click.indexOf('actEl.closest("#visitor-page")') && handled < click.indexOf('actEl.closest("#users-page")'));
+  // Logout endpoint, then the sign-in with the email field focused.
+  assert.match(app, /async function switchToEmailSignin\(\)[\s\S]{0,200}fetch\("\/api\/auth", \{ method: "DELETE"[\s\S]{0,300}showLogin\("", true\)/);
+  assert.match(app, /getElementById\("otp-email"\)[\s\S]{0,80}focus\(\)/);
+});
+
+test("admin header and home page say Express Help", () => {
+  const app = fs.readFileSync(path.join(root, "admin/app.js"), "utf8");
+  const admin = fs.readFileSync(path.join(root, "admin/index.html"), "utf8");
+  const home = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(admin, /<span id="brand-name">Express Help<\/span>/);
+  assert.doesNotMatch(app, /brand-name"\)\.textContent = (state\.settings|"Liberty")/);
+  assert.match(home, /<h1[^>]*>Express Help<\/h1>/);
+  assert.match(home, /<title>Express Help<\/title>/);
+});
