@@ -1686,6 +1686,7 @@ async function paintVisitor() {
     box.innerHTML = visitorDenied();
     return;
   }
+  const viewOnly = readiness.role === "maintenance";
   const params = new URLSearchParams();
   const status = document.getElementById("visitor-status")?.value || "all";
   const from = document.getElementById("visitor-from")?.value || "";
@@ -1696,14 +1697,28 @@ async function paintVisitor() {
   if (to) params.set("to", to);
   if (location) params.set("location", location);
   const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
-  const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
-  const maintenance = await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
+  const settings = viewOnly ? {} : await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
+  const maintenance = viewOnly ? { numbers: [] } : await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
+  const bmUsers = viewOnly ? [] : await fetch("/api/visitor-log/building-maintenance", { credentials: "same-origin" }).then((res) => res.json()).then((body) => body.users || []).catch(() => []);
+  const bmRows = bmUsers.map((email) => '<li data-testid="bm-user">' + esc(email) + ' <button class="btn ghost" type="button" data-act="bm-remove" data-email="' + esc(email) + '">Remove</button></li>').join("");
   const maintenanceFields = [0, 1, 2, 3].map((i) => '<label class="field"><span>Maintenance line ' + (i + 1) + '</span><input id="visitor-maintenance-' + i + '" type="tel" inputmode="tel" maxlength="24" placeholder="Blank to hide" value="' + esc((maintenance.numbers || [])[i] || "") + '" data-testid="visitor-maintenance-input"></label>').join("");
   const rows = (listed.visits || []).map((visit) => {
     const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
     const brief = notes.length > 80 ? notes.slice(0, 77) + "…" : notes;
-    return '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + esc(brief) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>';
+    return '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + esc(brief) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite && !viewOnly ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>';
   }).join("");
+  if (viewOnly) {
+    box.innerHTML = '<p class="muted" data-testid="visitor-view-only">Building maintenance: view-only. You can open visits and ID photos. Every ID photo view is logged.</p>'
+      + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
+      + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
+      + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
+      + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
+      + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button></div>'
+      + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>';
+    const viewStatus = document.getElementById("visitor-status");
+    if (viewStatus) viewStatus.value = status || "all";
+    return;
+  }
   box.innerHTML = '<p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open for this test configuration.") + '</p>'
     + '<p class="muted">Sign in: <a href="/visit/sign-in">/visit/sign-in</a>. Sign out: <a href="/visit/sign-out">/visit/sign-out</a>. The combined page remains at <a href="/visit">/visit</a>.</p>'
     + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
@@ -1717,6 +1732,10 @@ async function paintVisitor() {
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
     + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
+    + '<h2>Building maintenance access</h2><p class="muted">People you add here can sign in with an email code and only view the visitor list, visit records and ID photos. They cannot export, delete, change settings, or open Support Tickets, POS, vouchers, QR codes or any other admin area. Exact @libertyretail.com.au addresses only. Every add, removal and ID photo view is recorded in the visitor log history.</p>'
+    + '<ul data-testid="bm-users">' + (bmRows || '<li class="muted">No building maintenance users.</li>') + '</ul>'
+    + '<label class="field"><span>Add building maintenance user</span><input id="bm-email" type="email" maxlength="254" autocomplete="off" placeholder="name@libertyretail.com.au" data-testid="bm-email"></label>'
+    + '<button class="btn" type="button" data-act="bm-add">Add user</button><p id="bm-note" class="small"></p>'
     + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
     + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
@@ -1755,9 +1774,9 @@ async function paintVisitorRecord(id) {
     + (visit.signOutIssues ? '<p data-testid="visitor-issues-out">Sign-out: ' + esc(visit.signOutIssues) + '</p>' : '')
     + (visit.review ? '<p data-testid="visitor-review">Flagged for review: ' + esc(visit.review) + '</p>' : '')
     + (visit.photoStatus === "stored" ? '<button class="btn" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID photo</button>' : '')
-    + '<p class="err">Deleting removes the written record and the ID photo. This cannot be undone in Express Help.</p>'
+    + (readiness.role === "admin" ? '<p class="err">Deleting removes the written record and the ID photo. This cannot be undone in Express Help.</p>'
     + '<label class="check"><input id="visitor-delete-confirm" type="checkbox"> I understand this permanently deletes the record.</label>'
-    + '<button class="btn danger" type="button" data-act="visitor-delete" data-id="' + esc(visit.id) + '">Delete record</button>'
+    + '<button class="btn danger" type="button" data-act="visitor-delete" data-id="' + esc(visit.id) + '">Delete record</button>' : '<p class="muted small">View-only. ID photo views are logged.</p>')
     + '</div><p id="visitor-note" class="small"></p>';
 }
 async function visitorAction(button) {
@@ -1814,6 +1833,24 @@ async function visitorAction(button) {
     const note = document.getElementById("visitor-sheet-note");
     const stage = typeof body.stage === "string" && /^[a-z-]+$/.test(body.stage) ? body.stage : "";
     if (note) note.textContent = response.ok ? (body.ok ? "verified" : stage || "The check did not finish") : (body.error || "The check did not run");
+    return;
+  }
+  if (act === "bm-add" || act === "bm-remove") {
+    const email = act === "bm-add" ? (document.getElementById("bm-email")?.value || "") : (button.dataset.email || "");
+    if (act === "bm-remove" && !confirm("Remove building maintenance access for " + email + "?")) return;
+    const response = await fetch("/api/visitor-log/building-maintenance", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: act === "bm-add" ? "add" : "remove", email }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const note = document.getElementById("bm-note");
+      if (note) note.textContent = body.error || "The change was not saved";
+      return;
+    }
+    await paintVisitor();
+    const note = document.getElementById("bm-note");
+    if (note) note.textContent = act === "bm-add" ? (body.changed ? "Added " + email.trim().toLowerCase() + "." : "Already on the list.") : (body.changed ? "Removed " + email + "." : "Not on the list.");
     return;
   }
   if (act === "visitor-photo-backfill") {
@@ -1973,6 +2010,7 @@ async function render(opts = {}) {
   const gen = ++renderGen;
   ensureRanges();
   const r = route();
+  if (isBuildingMaintenance() && r.name !== "visitors") { location.replace("#/visitors"); return; }
   const key = r.name + "/" + r.id;
   const keep = opts.keepScroll || (opts.refetch === false && key === lastRouteKey);
   const y = keep ? window.scrollY : 0;
@@ -2679,7 +2717,26 @@ async function saveCollection(form) {
   toast("Collection saved");
   render();
 }
+function isBuildingMaintenance() {
+  return state.actor?.role === "building-maintenance";
+}
 async function enter() {
+  if (isBuildingMaintenance()) {
+    // Visitor Log view-only: load nothing else and show only the Visitor log nav item.
+    state.settings = { workspaceName: "Liberty" };
+    state.codes = []; state.pages = []; state.competitions = []; state.templates = []; state.sites = []; state.posDrafts = []; state.staff = [];
+    $("#boot").classList.add("hidden");
+    $("#login").classList.add("hidden");
+    $("#shell").classList.remove("hidden");
+    $("#brand-name").textContent = "Liberty";
+    document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (btn.dataset.go !== "visitors") btn.hidden = true; });
+    $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Building maintenance") + "</strong><div class='muted small'>Building maintenance · email code</div>";
+    paintAvatar();
+    ensureRanges();
+    if (!location.hash.startsWith("#/visitors")) location.replace("#/visitors");
+    else render();
+    return;
+  }
   const identity = state.actor?.kind === "verified-identity";
   const jobs = identity
     ? [api("/api/sites"), api("/api/pos-drafts")]

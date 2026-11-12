@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
-  deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
+  changeBuildingMaintenance, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -13,7 +13,8 @@ export default async (req) => {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const actor = await actorFromRequest(req);
   if (path === "/api/visitor-log/readiness" && req.method === "GET") {
-    return json(200, { ...visitorReadiness(), granted: visitorCapability(actor) }, PRIVATE);
+    const role = await visitorRole(actor);
+    return json(200, { ...visitorReadiness(), granted: role !== "none", role }, PRIVATE);
   }
   if (!actor) return json(401, { error: "Unauthorized" }, PRIVATE);
   if (path === "/api/visitor-log/sheet-check") {
@@ -29,6 +30,16 @@ export default async (req) => {
     if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
     const body = await req.json().catch(() => ({}));
     const result = await idPhotoBackfill(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/building-maintenance") {
+    if (req.method === "GET") {
+      const result = await listBuildingMaintenance(actor);
+      return json(result.status, result.body || { error: result.error }, PRIVATE);
+    }
+    if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
+    const body = await req.json().catch(() => ({}));
+    const result = await changeBuildingMaintenance(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/settings" && req.method === "GET") {

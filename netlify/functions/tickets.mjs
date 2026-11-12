@@ -14,6 +14,7 @@ export default async (req) => {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const actor = await actorFromRequest(req);
   if (!actor) return json(401, { error: "Unauthorized" }, PRIVATE);
+  if (actor.role === "building-maintenance") return json(403, { role: "none", queues: [], error: "Ticket staff access is not granted." }, PRIVATE);
   if (path === "/api/tickets/access" && req.method === "GET") {
     const access = await ticketAccess(actor);
     if (access.role === "none") return json(403, { role: "none", queues: [], error: "Ticket staff access is not granted." }, PRIVATE);

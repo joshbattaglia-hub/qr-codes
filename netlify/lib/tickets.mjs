@@ -199,7 +199,7 @@ export async function saveSettings(actor, body) {
 }
 
 export async function ticketAccess(actor, settings = null) {
-  if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp") return { role: "none", email: "", queues: [] };
+  if (!actor || actor.kind !== "verified-identity" || actor.provider !== "otp" || actor.role === "building-maintenance") return { role: "none", email: "", queues: [] };
   const email = emailOf(actor.email);
   if (!email) return { role: "none", email: "", queues: [] };
   if (email === TICKET_ADMIN_EMAIL) return { role: "admin", email, queues: [...QUEUES] };
