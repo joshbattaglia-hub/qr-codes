@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
-  deleteVisit, exportVisits, listVisits, notificationSettings, readPhoto, readVisit, recoverReceipt, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
+  deleteVisit, exportVisits, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -26,6 +26,10 @@ export default async (req) => {
   }
   if (path === "/api/visitor-log/settings" && req.method === "GET") {
     const result = await notificationSettings(actor);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/maintenance" && req.method === "GET") {
+    const result = await maintenanceSettings(actor);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/visits" && req.method === "GET") {
@@ -59,6 +63,11 @@ export default async (req) => {
   const recover = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})\/recover$/);
   if (recover) {
     const result = await recoverReceipt(actor, recover[1]);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/maintenance" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await saveMaintenanceSettings(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/settings" && req.method === "POST") {
