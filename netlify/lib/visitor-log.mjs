@@ -19,18 +19,19 @@ export const VISITOR_NOTICE = [
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORPHAN_GRACE_MS = 15 * 60 * 1000;
-let hooks = { collect: false, now: () => Date.now(), beforeNotifySend: null };
+let hooks = { collect: false, now: () => Date.now(), beforeNotifySend: null, idemPollMs: 400 };
 let faults = { failVisitWrite: 0, failPhotoDelete: 0 };
 
 export function setVisitorFaults(next = {}) {
   faults = { failVisitWrite: Number(next.failVisitWrite) || 0, failPhotoDelete: Number(next.failPhotoDelete) || 0 };
 }
 
-export function setVisitorTestHooks({ collect = false, now = null, beforeNotifySend = null } = {}) {
+export function setVisitorTestHooks({ collect = false, now = null, beforeNotifySend = null, idemPollMs = 400 } = {}) {
   hooks = {
     collect: collect === true,
     now: typeof now === "function" ? now : () => Date.now(),
     beforeNotifySend: typeof beforeNotifySend === "function" ? beforeNotifySend : null,
+    idemPollMs: Number(idemPollMs) >= 0 ? Number(idemPollMs) : 400,
   };
 }
 
@@ -360,6 +361,51 @@ export async function signIn(req, body) {
   await syncVisit(visit);
   await notify(visit, "in");
   return { status: 200, body: { ok: true, receipt, signedInAt, signedInMelbourne: melbourne(signedInAt) } };
+}
+
+export const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const IDEMPOTENCY_STALE_MS = 60 * 1000;
+const IDEMPOTENCY_POLLS = 20;
+
+/**
+ * Public form duplicate protection. The browser sends one random key per submission; the first request
+ * with that key runs, a repeat within 10 minutes gets the original successful result back (marked
+ * duplicate) without a second visit, sheet row or notification. Only a hash of the key is stored. A
+ * failed attempt releases the key so the visitor can fix the form and retry. The sign-in receipt is not
+ * kept in the stored result.
+ */
+export async function idempotentSubmit(kind, rawKey, run) {
+  const key = typeof rawKey === "string" && /^[A-Za-z0-9_-]{16,100}$/.test(rawKey) ? rawKey : "";
+  if (!key) return run();
+  const blobKey = "idem/" + kind + "/" + crypto.createHash("sha256").update(kind + "\n" + key).digest("hex").slice(0, 40);
+  const pending = () => ({ state: "pending", at: new Date(now()).toISOString() });
+  let claimed = false;
+  for (let attempt = 0; attempt < IDEMPOTENCY_POLLS && !claimed; attempt++) {
+    const claim = await visitorStore().setJSON(blobKey, pending(), { onlyIfNew: true });
+    if (claim?.modified === true) { claimed = true; break; }
+    const meta = await visitorStore().getWithMetadata(blobKey, { type: "json", consistency: "strong" });
+    if (!meta?.etag) continue;
+    const age = now() - Date.parse(meta.data?.at || "");
+    const expired = !Number.isFinite(age) || age >= IDEMPOTENCY_TTL_MS || (meta.data?.state === "pending" && age >= IDEMPOTENCY_STALE_MS);
+    if (expired) {
+      const take = await visitorStore().setJSON(blobKey, pending(), { onlyIfMatch: meta.etag });
+      if (take?.modified === true) { claimed = true; break; }
+      continue;
+    }
+    if (meta.data?.state === "done") return { status: meta.data.status, body: { ...(meta.data.body || {}), duplicate: true } };
+    if (hooks.idemPollMs) await new Promise((resolve) => setTimeout(resolve, hooks.idemPollMs));
+  }
+  if (!claimed) return { status: 409, error: "This submission is still being saved. Wait a moment and try again." };
+  let result;
+  try { result = await run(); }
+  catch (error) { await visitorStore().delete(blobKey).catch(() => {}); throw error; }
+  if (result.status === 200 && result.body) {
+    const { receipt, ...kept } = result.body;
+    await visitorStore().setJSON(blobKey, { state: "done", at: new Date(now()).toISOString(), status: 200, body: kept }).catch(() => {});
+  } else {
+    await visitorStore().delete(blobKey).catch(() => {});
+  }
+  return result;
 }
 
 async function activeNameMatches(name, company) {
@@ -847,6 +893,12 @@ export async function runVisitorCleanup(at = now()) {
     } else if (visit.sheetSync === "pending" || visit.sheetSync === "unknown") {
       await syncVisit(visit);
     }
+  }
+  const idem = await visitorStore().list({ prefix: "idem/" });
+  for (const blob of idem.blobs) {
+    const row = await visitorStore().get(blob.key, { type: "json" });
+    const age = at - Date.parse(row?.at || "");
+    if (!Number.isFinite(age) || age >= IDEMPOTENCY_TTL_MS) await visitorStore().delete(blob.key);
   }
   const photos = await visitorStore().list({ prefix: "photo/" });
   let orphans = 0;

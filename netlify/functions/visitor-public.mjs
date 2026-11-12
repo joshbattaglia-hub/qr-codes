@@ -1,6 +1,6 @@
 import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
-import { publicMaintenanceContacts, signIn, signOut, visitorReadiness } from "../lib/visitor-log.mjs";
+import { idempotentSubmit, publicMaintenanceContacts, signIn, signOut, visitorReadiness } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer" };
 
@@ -24,11 +24,11 @@ export default async (req) => {
   const parsed = await bodyOf(req);
   if (parsed.error) return json(400, { error: parsed.error }, PRIVATE);
   if (path === "/api/visit/sign-in") {
-    const result = await signIn(req, parsed.body);
+    const result = await idempotentSubmit("in", parsed.body?.idempotencyKey, () => signIn(req, parsed.body));
     return json(result.status, result.body || { error: result.error, blockers: result.blockers }, PRIVATE);
   }
   if (path === "/api/visit/sign-out") {
-    const result = await signOut(req, parsed.body);
+    const result = await idempotentSubmit("out", parsed.body?.idempotencyKey, () => signOut(req, parsed.body));
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   return json(404, { error: "Not found" }, PRIVATE);

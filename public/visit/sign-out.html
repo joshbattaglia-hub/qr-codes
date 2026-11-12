@@ -63,25 +63,29 @@
     <h2>Thanks, you’ve signed out</h2>
   </section>
 </main>
+<script src="/visit/submit.js"></script>
 <script>
 const intro = document.getElementById("intro");
 fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.json()).then((status) => {
   intro.hidden = true;
 }).catch(() => { intro.textContent = "Visitor log is not available."; });
 
-document.getElementById("out-form").addEventListener("submit", async (event) => {
+document.getElementById("out-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  const error = document.getElementById("out-error");
-  error.textContent = "";
-  const data = new FormData(event.target);
-  const response = await fetch("/api/visit/sign-out", {
-    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" }),
+  const outForm = event.target;
+  window.visitSubmit(outForm, {
+    url: "/api/visit/sign-out",
+    errorEl: document.getElementById("out-error"),
+    fallback: "That sign-out could not be completed. Ask the site contact for help.",
+    build: async () => {
+      const data = new FormData(outForm);
+      return { name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" };
+    },
+    done: () => {
+      outForm.hidden = true;
+      document.getElementById("out-done").hidden = false;
+    },
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) { error.textContent = body.error || "That sign-out could not be completed. Ask the site contact for help."; return; }
-  event.target.hidden = true;
-  document.getElementById("out-done").hidden = false;
 });
 </script>
 </body>
