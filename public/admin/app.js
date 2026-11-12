@@ -1727,8 +1727,10 @@ async function paintVisitor() {
     + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button><button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button></div>'
     + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>'
-    + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. Emails go to the one recipient below, which must be an exact @libertyretail.com.au address. They contain only the location, time, the admin record link and the spreadsheet link: no visitor name, phone, company, notes or ID photo. Opening the record still needs Joshua\'s visitor-log sign-in; changing the recipient does not grant access to anyone. Each recipient change is recorded in the visitor log history.</p>'
-    + '<label class="field"><span>Recipient email</span><input id="visitor-recipient" type="email" maxlength="254" autocomplete="off" value="' + esc(settings.recipient || "") + '" placeholder="name@libertyretail.com.au" data-testid="visitor-recipient"></label>'
+    + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. Each recipient below gets their own email (exact @libertyretail.com.au addresses, up to ' + esc(String(settings.max || 10)) + '). Emails contain only the location, time, the admin record link and the spreadsheet link: no visitor name, phone, company, notes or ID photo. Opening the record still needs an authorised visitor-log sign-in; being a recipient does not grant access to anyone. Each recipient added or removed is recorded in the visitor log history.</p>'
+    + '<ul data-testid="visitor-recipients">' + (Array.isArray(settings.recipients) ? settings.recipients : []).map((email) => '<li data-testid="visitor-recipient-row">' + esc(email) + ' <button class="btn ghost" type="button" data-act="nr-remove" data-email="' + esc(email) + '">Remove</button></li>').join("") + '</ul>'
+    + '<label class="field"><span>Add recipient email</span><input id="visitor-recipient" type="email" maxlength="254" autocomplete="off" placeholder="name@libertyretail.com.au" data-testid="visitor-recipient"></label>'
+    + '<button class="btn ghost" type="button" data-act="nr-add">Add recipient</button><p id="nr-note" class="small"></p>'
     + '<label class="check"><input id="visitor-enabled" type="checkbox"' + (settings.enabled ? " checked" : "") + '> Enabled</label>'
     + '<label class="field"><span>Events</span><select id="visitor-events"><option value="both">Sign-in and sign-out</option><option value="in">Sign-in only</option><option value="out">Sign-out only</option></select></label>'
     + '<button class="btn" type="button" data-act="visitor-save">Save notification settings</button><p id="visitor-note" class="small"></p>'
@@ -1835,6 +1837,24 @@ async function visitorAction(button) {
     if (note) note.textContent = response.ok ? (body.ok ? "verified" : stage || "The check did not finish") : (body.error || "The check did not run");
     return;
   }
+  if (act === "nr-add" || act === "nr-remove") {
+    const email = act === "nr-add" ? (document.getElementById("visitor-recipient")?.value || "") : (button.dataset.email || "");
+    if (act === "nr-remove" && !confirm("Stop visitor log notifications to " + email + "?")) return;
+    const response = await fetch("/api/visitor-log/notify-recipients", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: act === "nr-add" ? "add" : "remove", email }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const note = document.getElementById("nr-note");
+      if (note) note.textContent = body.error || "The change was not saved";
+      return;
+    }
+    await paintVisitor();
+    const note = document.getElementById("nr-note");
+    if (note) note.textContent = body.changed ? (act === "nr-add" ? "Added " : "Removed ") + email : "No change";
+    return;
+  }
   if (act === "bm-add" || act === "bm-remove") {
     const email = act === "bm-add" ? (document.getElementById("bm-email")?.value || "") : (button.dataset.email || "");
     if (act === "bm-remove" && !confirm("Remove building maintenance access for " + email + "?")) return;
@@ -1878,11 +1898,11 @@ async function visitorAction(button) {
   if (act === "visitor-save") {
     const response = await fetch("/api/visitor-log/settings", {
       method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: document.getElementById("visitor-enabled").checked, events: document.getElementById("visitor-events").value, recipient: document.getElementById("visitor-recipient")?.value || "" }),
+      body: JSON.stringify({ enabled: document.getElementById("visitor-enabled").checked, events: document.getElementById("visitor-events").value }),
     });
     const body = await response.json().catch(() => ({}));
     const note = document.getElementById("visitor-note");
-    if (note) note.textContent = response.ok ? (body.enabled ? "Notifications enabled for " + body.recipient : "Notifications are off. Recipient saved: " + body.recipient) : (body.error || "Settings were not saved");
+    if (note) note.textContent = response.ok ? (body.enabled ? "Notifications enabled for " + (body.recipients || []).join(", ") : "Notifications are off. Recipients: " + (body.recipients || []).join(", ")) : (body.error || "Settings were not saved");
   }
 }
 function placeholder(title, body) {

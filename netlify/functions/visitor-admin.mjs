@@ -2,7 +2,7 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
-  changeBuildingMaintenance, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
+  changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -30,6 +30,12 @@ export default async (req) => {
     if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
     const body = await req.json().catch(() => ({}));
     const result = await idPhotoBackfill(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/notify-recipients") {
+    if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
+    const body = await req.json().catch(() => ({}));
+    const result = await changeNotificationRecipients(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/building-maintenance") {

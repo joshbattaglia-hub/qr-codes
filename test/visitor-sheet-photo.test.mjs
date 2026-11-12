@@ -272,56 +272,79 @@ test("notification email adds the spreadsheet link from the configured ID and st
   assert.equal(mail.length, off);
 });
 
-test("notification recipient: defaults to Joshua, exact @libertyretail.com.au only, audited old > new, used for sending", async () => {
+test("notification recipients: list defaults to Joshua, migrates a legacy single recipient, exact @libertyretail.com.au, capped, de-duplicated, audited, one email each", async () => {
   await clearStore();
   grid = [[...sheetLib.SHEET_HEADERS]];
-  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { body: { recipient: "maint.one@libertyretail.com.au" } })))).status, 401);
+  const change = (cookie, body) => adminFn(req("POST", "/api/visitor-log/notify-recipients", { cookie, body })).then(read);
+  assert.equal((await change(undefined, { action: "add", email: "maint.one@libertyretail.com.au" })).status, 401);
+  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/settings")))).status, 401);
   const neil = await otpCookie(NEIL);
-  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: neil, body: { recipient: "maint.one@libertyretail.com.au" } })))).status, 403);
+  assert.equal((await change(neil, { action: "add", email: "maint.one@libertyretail.com.au" })).status, 403);
   const headLogin = await authFn(req("POST", "/api/auth", { body: { password: "test-pass" } }));
-  assert.equal((await read(await adminFn(req("GET", "/api/visitor-log/settings", { cookie: cookieNamed(headLogin, "qr_admin") })))).status, 403);
+  assert.equal((await change(cookieNamed(headLogin, "qr_admin"), { action: "add", email: "maint.one@libertyretail.com.au" })).status, 403);
   const joshua = await otpCookie(JOSHUA);
   const start = await read(await adminFn(req("GET", "/api/visitor-log/settings", { cookie: joshua })));
-  assert.deepEqual(start.body, { enabled: false, events: "both", recipient: JOSHUA, domain: "libertyretail.com.au" });
-  for (const bad of ["someone@example.com", "x@sub.libertyretail.com.au", "x@libertyretail.com.au.evil.com", "x@libertyretail.com", "a,b@libertyretail.com.au", "a@b@libertyretail.com.au", "two words@libertyretail.com.au", ".dot@libertyretail.com.au", "a..b@libertyretail.com.au"]) {
-    const res = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, recipient: bad } })));
-    assert.equal(res.status, 400, bad);
+  assert.deepEqual(start.body, { enabled: false, events: "both", recipients: [JOSHUA], max: 10, domain: "libertyretail.com.au" });
+  // Legacy single recipient is migrated into the list.
+  await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipient: "Legacy.One@libertyretail.com.au" });
+  assert.deepEqual((await read(await adminFn(req("GET", "/api/visitor-log/settings", { cookie: joshua })))).body.recipients, ["legacy.one@libertyretail.com.au"]);
+  const saved = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, events: "both" } })));
+  assert.deepEqual(saved.body.recipients, ["legacy.one@libertyretail.com.au"]);
+  assert.deepEqual((await lib.visitorStore().get("notify/settings", { type: "json" })).recipients, ["legacy.one@libertyretail.com.au"]);
+  // Settings save no longer changes recipients.
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, recipient: "x@libertyretail.com.au" } })))).status, 400);
+  for (const bad of ["someone@example.com", "x@sub.libertyretail.com.au", "x@libertyretail.com.au.evil.com", "x@libertyretail.com", "a,b@libertyretail.com.au", "a@b@libertyretail.com.au", "two words@libertyretail.com.au", ".dot@libertyretail.com.au", "a..b@libertyretail.com.au", ["a@libertyretail.com.au"]]) {
+    const res = await change(joshua, { action: "add", email: bad });
+    assert.equal(res.status, 400, String(bad));
     assert.equal(res.body.error, "Use one exact @libertyretail.com.au email address.");
   }
-  assert.equal(visitLib.notifyRecipientOk(" Maint.One@LibertyRetail.com.au "), "maint.one@libertyretail.com.au");
-  // Saving without a recipient keeps the current one and records no change.
-  const kept = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, events: "both" } })));
-  assert.equal(kept.body.recipient, JOSHUA);
-  const auditRows = async () => {
+  assert.equal((await change(joshua, { action: "replace", email: JOSHUA })).status, 400);
+  const added = await change(joshua, { action: "add", email: " JBattaglia@LibertyRetail.com.au " });
+  assert.equal(added.status, 200);
+  assert.deepEqual(added.body.recipients, ["legacy.one@libertyretail.com.au", JOSHUA]);
+  const dup = await change(joshua, { action: "add", email: JOSHUA.toUpperCase() });
+  assert.equal(dup.body.changed, false);
+  assert.deepEqual(dup.body.recipients, ["legacy.one@libertyretail.com.au", JOSHUA]);
+  for (let i = 0; i < 8; i++) assert.equal((await change(joshua, { action: "add", email: "m" + i + "@libertyretail.com.au" })).status, 200);
+  const over = await change(joshua, { action: "add", email: "m9@libertyretail.com.au" });
+  assert.equal(over.status, 400);
+  assert.equal(over.body.error, "Up to 10 recipients.");
+  for (let i = 0; i < 8; i++) assert.equal((await change(joshua, { action: "remove", email: "m" + i + "@libertyretail.com.au" })).status, 200);
+  const auditRows = async (prefix) => {
     const { blobs } = await lib.visitorStore().list({ prefix: "audit/" });
-    return (await Promise.all(blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).filter((row) => row?.action === "notify-recipient").sort((a, b) => a.at.localeCompare(b.at) || 0);
+    return (await Promise.all(blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).filter((row) => row?.action?.startsWith(prefix));
   };
-  assert.equal((await auditRows()).length, 0);
-  const changed = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "in", recipient: "Maint.One@libertyretail.com.au" } })));
-  assert.equal(changed.status, 200, JSON.stringify(changed.body));
-  assert.equal(changed.body.recipient, "maint.one@libertyretail.com.au");
-  let rows = await auditRows();
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].detail, JOSHUA + " > maint.one@libertyretail.com.au");
-  assert.match(rows[0].actorId, /^otp:[a-f0-9]{16}$/);
+  const adds = await auditRows("notify-recipient-add");
+  const removes = await auditRows("notify-recipient-remove");
+  assert.equal(adds.length, 9);
+  assert.equal(removes.length, 8);
+  assert.ok(adds.some((row) => row.detail === JOSHUA));
+  assert.ok(adds.every((row) => /^otp:[a-f0-9]{16}$/.test(row.actorId)));
+  // Enabled: each recipient gets their own email with no visitor details; notifications stay audited.
+  clock += 1000;
+  assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: true, events: "in" } })))).status, 200);
+  assert.deepEqual((await lib.visitorStore().get("notify/settings", { type: "json" })).recipients, ["legacy.one@libertyretail.com.au", JOSHUA]);
   const before = mail.length;
   await signIn("Synthetic Recipient Visitor");
   const sent = mail.slice(before);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].to, "maint.one@libertyretail.com.au");
-  assert.equal(sent[0].text.includes("Synthetic Recipient Visitor"), false);
-  // Change back to Joshua; audited again; notifications off again.
-  clock += 1000;
-  const back = await read(await adminFn(req("POST", "/api/visitor-log/settings", { cookie: joshua, body: { enabled: false, recipient: JOSHUA } })));
-  assert.equal(back.body.recipient, JOSHUA);
-  rows = await auditRows();
-  assert.equal(rows.length, 2);
-  assert.ok(rows.some((row) => row.detail === "maint.one@libertyretail.com.au > " + JOSHUA));
-  // A tampered stored recipient falls back to Joshua.
-  await lib.visitorStore().setJSON("notify/settings", { enabled: true, events: "both", recipient: "attacker@example.com" });
+  assert.deepEqual(sent.map((m) => m.to).sort(), [JOSHUA, "legacy.one@libertyretail.com.au"]);
+  assert.ok(sent.every((m) => !m.text.includes("Synthetic Recipient Visitor") && !String(m.to).includes(",")));
+  assert.equal(new Set(sent.map((m) => m.idempotencyKey)).size, 2);
+  // Removing down to one; the last recipient cannot be removed.
+  assert.equal((await change(joshua, { action: "remove", email: "legacy.one@libertyretail.com.au" })).status, 200);
+  const last = await change(joshua, { action: "remove", email: JOSHUA });
+  assert.equal(last.status, 400);
+  assert.equal(last.body.error, "Keep at least one recipient.");
+  // Recipient changes keep enabled/events as they were.
+  const kept = await lib.visitorStore().get("notify/settings", { type: "json" });
+  assert.equal(kept.enabled, true);
+  assert.equal(kept.events, "in");
+  // A tampered stored list keeps only valid addresses, falling back to Joshua.
+  await lib.visitorStore().setJSON("notify/settings", { enabled: true, events: "both", recipients: ["attacker@example.com", "X@sub.libertyretail.com.au"] });
   const fallback = mail.length;
   await signIn("Synthetic Tamper");
-  assert.equal(mail.slice(fallback)[0].to, JOSHUA);
-  await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipient: JOSHUA });
+  assert.deepEqual(mail.slice(fallback).map((m) => m.to), [JOSHUA]);
+  assert.deepEqual(visitLib.effectiveRecipients({ recipients: ["A@libertyretail.com.au", "a@libertyretail.com.au", "b@example.com"] }), ["a@libertyretail.com.au"]);
+  await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipients: [JOSHUA] });
   clock = Date.parse("2026-11-12T01:00:00.000Z");
 });
