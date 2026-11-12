@@ -94,6 +94,7 @@
 </main>
 <script type="module" src="/visit/photo.js"></script>
 <script src="/visit/maintenance.js" defer></script>
+<script src="/visit/submit.js"></script>
 <script>
 const intro = document.getElementById("intro");
 const closed = document.getElementById("closed");
@@ -108,26 +109,30 @@ fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.jso
   form.hidden = false;
 }).catch(() => { intro.textContent = "Visitor log is not available."; closed.hidden = false; });
 
-form.addEventListener("submit", async (event) => {
+form.addEventListener("submit", (event) => {
   event.preventDefault();
   const error = document.getElementById("in-error");
-  error.textContent = "";
-  const data = new FormData(form);
-  const file = window.visitorIdPhoto ? window.visitorIdPhoto() : null;
-  if (!file || !file.size) { error.textContent = "A photo of the ID is required. Use Take photo or Choose photo."; return; }
-  const photo = await new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-    reader.readAsDataURL(file);
+  window.visitSubmit(form, {
+    url: "/api/visit/sign-in",
+    errorEl: error,
+    fallback: "Sign-in was not saved. Please try again.",
+    build: async () => {
+      const data = new FormData(form);
+      const file = window.visitorIdPhoto ? window.visitorIdPhoto() : null;
+      if (!file || !file.size) throw new Error("A photo of the ID is required. Use Take photo or Choose photo.");
+      const photo = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+        reader.onerror = () => reject(new Error("The photo could not be read. Choose it again."));
+        reader.readAsDataURL(file);
+      });
+      return { location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), photo };
+    },
+    done: () => {
+      form.hidden = true;
+      document.getElementById("in-done").hidden = false;
+    },
   });
-  const response = await fetch("/api/visit/sign-in", {
-    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ location: data.get("location"), name: data.get("name"), phone: data.get("phone"), company: data.get("company"), photo }),
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) { error.textContent = body.error || "Sign-in was not saved."; return; }
-  form.hidden = true;
-  document.getElementById("in-done").hidden = false;
 });
 </script>
 </body>

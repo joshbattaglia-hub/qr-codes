@@ -348,3 +348,78 @@ test("notification recipients: list defaults to Joshua, migrates a legacy single
   await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipients: [JOSHUA] });
   clock = Date.parse("2026-11-12T01:00:00.000Z");
 });
+
+test("public forms: a repeated idempotency key returns the original result with no second visit, sheet row or notification", async () => {
+  await clearStore();
+  grid = [[...sheetLib.SHEET_HEADERS]];
+  await lib.visitorStore().setJSON("notify/settings", { enabled: true, events: "both", recipients: [JOSHUA, "maint.one@libertyretail.com.au"] });
+  const key = "k" + crypto.randomBytes(16).toString("hex");
+  const body = { location: "Example Site", name: "Synthetic Double Tap", phone: "0400 000 000", company: "Example Co", photo: photoBytes().toString("base64"), idempotencyKey: key };
+  const mailBefore = mail.length;
+  const [one, two] = await Promise.all([
+    publicFn(req("POST", "/api/visit/sign-in", { body })).then(read),
+    publicFn(req("POST", "/api/visit/sign-in", { body })).then(read),
+  ]);
+  const three = await read(await publicFn(req("POST", "/api/visit/sign-in", { body })));
+  const results = [one, two, three];
+  assert.ok(results.every((r) => r.status === 200), JSON.stringify(results));
+  assert.equal(results.filter((r) => r.body.duplicate).length, 2);
+  assert.equal(results.filter((r) => r.body.receipt).length, 1);
+  assert.ok(results.every((r) => r.body.signedInAt === one.body.signedInAt));
+  const visits = (await lib.visitorStore().list({ prefix: "visit/" })).blobs;
+  assert.equal(visits.length, 1);
+  assert.equal(grid.length, 2);
+  assert.equal(mail.length - mailBefore, 2); // one email per recipient, once
+  // Only a hash of the key is stored, and no receipt.
+  const idem = (await lib.visitorStore().list({ prefix: "idem/" })).blobs;
+  assert.equal(idem.length, 1);
+  assert.equal(idem[0].key.includes(key), false);
+  assert.equal(JSON.stringify(await lib.visitorStore().get(idem[0].key, { type: "json" })).includes("receipt"), false);
+  // A different key is a new visit.
+  const other = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { ...body, name: "Synthetic Second", idempotencyKey: "k" + crypto.randomBytes(16).toString("hex") } })));
+  assert.equal(other.status, 200);
+  assert.equal(other.body.duplicate, undefined);
+  assert.equal((await lib.visitorStore().list({ prefix: "visit/" })).blobs.length, 2);
+  // A failed attempt releases its key so the corrected form can be sent with the same key.
+  const fixKey = "k" + crypto.randomBytes(16).toString("hex");
+  const bad = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { ...body, name: "", idempotencyKey: fixKey } })));
+  assert.equal(bad.status, 400);
+  const fixed = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { ...body, name: "Synthetic Fixed", idempotencyKey: fixKey } })));
+  assert.equal(fixed.status, 200);
+  assert.equal(fixed.body.duplicate, undefined);
+  // Sign-out: a repeat with the same key does not send a second sign-out notification.
+  const outKey = "k" + crypto.randomBytes(16).toString("hex");
+  const outBody = { name: "Synthetic Double Tap", company: "Example Co", cardReturned: true, idempotencyKey: outKey };
+  const outMail = mail.length;
+  const out1 = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: outBody })));
+  const out2 = await read(await publicFn(req("POST", "/api/visit/sign-out", { body: outBody })));
+  assert.equal(out1.status, 200, JSON.stringify(out1.body));
+  assert.equal(out2.status, 200);
+  assert.equal(out2.body.duplicate, true);
+  assert.equal(out2.body.signedOutAt, out1.body.signedOutAt);
+  assert.equal(mail.length - outMail, 2);
+  // Keys expire after 10 minutes; the daily cleanup removes them. Bad keys are ignored (no idempotency).
+  assert.ok((await lib.visitorStore().list({ prefix: "idem/" })).blobs.length >= 3);
+  clock += visitLib.IDEMPOTENCY_TTL_MS + 1000;
+  await visitLib.runVisitorCleanup(clock);
+  assert.equal((await lib.visitorStore().list({ prefix: "idem/" })).blobs.length, 0);
+  const odd = await read(await publicFn(req("POST", "/api/visit/sign-in", { body: { ...body, name: "Synthetic Odd Key", idempotencyKey: "short" } })));
+  assert.equal(odd.status, 200);
+  assert.equal((await lib.visitorStore().list({ prefix: "idem/" })).blobs.length, 0);
+  await lib.visitorStore().setJSON("notify/settings", { enabled: false, events: "both", recipients: [JOSHUA] });
+  clock = Date.parse("2026-11-12T01:00:00.000Z");
+});
+
+test("public forms disable the button with a Submitting... spinner and send an idempotency key", async () => {
+  const fs = await import("node:fs");
+  const script = fs.readFileSync(new URL("../public/visit/submit.js", import.meta.url), "utf8");
+  assert.match(script, /button\.disabled = true/);
+  assert.match(script, /Submitting\.\.\./);
+  assert.match(script, /idempotencyKey/);
+  for (const page of ["../public/visit.html", "../public/visit/sign-in.html", "../public/visit/sign-out.html"]) {
+    const html = fs.readFileSync(new URL(page, import.meta.url), "utf8");
+    assert.match(html, /<script src="\/visit\/submit\.js"><\/script>/, page);
+    assert.match(html, /window\.visitSubmit\(/, page);
+    assert.equal(/fetch\("\/api\/visit\/sign-(in|out)"/.test(html), false, page);
+  }
+});
