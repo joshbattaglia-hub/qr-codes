@@ -1677,16 +1677,24 @@ function visitorDenied() {
 function visitorPage() {
   return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
 }
+function visitorTabs(active, viewOnly) {
+  if (viewOnly) return "";
+  const tab = (name, label, go) => '<button type="button" role="tab" class="visitor-tab' + (active === name ? " on" : "") + '" aria-selected="' + (active === name) + '" data-go="' + go + '" data-testid="visitor-tab-' + name + '">' + label + '</button>';
+  return '<div class="visitor-tabs" role="tablist">' + tab("logs", "Logs", "visitors") + tab("settings", "Settings", "visitors/settings") + '</div>';
+}
 async function paintVisitor() {
   const box = document.getElementById("visitor-body");
   if (!box) return;
-  if (route().id) return paintVisitorRecord(route().id);
+  const tabId = route().id;
+  if (tabId && tabId !== "settings") return paintVisitorRecord(tabId);
   const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
   if (!readiness?.granted) {
     box.innerHTML = visitorDenied();
     return;
   }
   const viewOnly = readiness.role === "maintenance";
+  if (tabId === "settings" && viewOnly) { window.location.replace("#/visitors"); return; }
+  if (tabId === "settings") return paintVisitorSettings(box, readiness);
   const params = new URLSearchParams();
   const status = document.getElementById("visitor-status")?.value || "all";
   const from = document.getElementById("visitor-from")?.value || "";
@@ -1697,36 +1705,43 @@ async function paintVisitor() {
   if (to) params.set("to", to);
   if (location) params.set("location", location);
   const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
-  const settings = viewOnly ? {} : await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
-  const maintenance = viewOnly ? { numbers: [] } : await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
-  const bmUsers = viewOnly ? [] : await fetch("/api/visitor-log/building-maintenance", { credentials: "same-origin" }).then((res) => res.json()).then((body) => body.users || []).catch(() => []);
-  const bmRows = bmUsers.map((email) => '<li data-testid="bm-user">' + esc(email) + ' <button class="btn ghost" type="button" data-act="bm-remove" data-email="' + esc(email) + '">Remove</button></li>').join("");
-  const maintenanceFields = [0, 1, 2, 3].map((i) => '<label class="field"><span>Maintenance line ' + (i + 1) + '</span><input id="visitor-maintenance-' + i + '" type="tel" inputmode="tel" maxlength="24" placeholder="Blank to hide" value="' + esc((maintenance.numbers || [])[i] || "") + '" data-testid="visitor-maintenance-input"></label>').join("");
   const rows = (listed.visits || []).map((visit) => {
     const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
-    const brief = notes.length > 80 ? notes.slice(0, 77) + "…" : notes;
-    return '<tr data-testid="visitor-row"><td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.location) + '</button></td><td>' + esc(visit.name) + '</td><td>' + esc(visit.phone) + '</td><td>' + esc(visit.signedInMelbourne) + '</td><td>' + esc(visit.signedOutMelbourne || "On site") + '</td><td>' + (visit.cardReturned ? "Yes" : "") + '</td><td>' + esc(visit.photoStatus) + '</td><td>' + esc(brief) + '</td><td>' + (visit.photoStatus === "stored" ? '<button class="btn ghost" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">View ID</button>' : "") + (visit.onSite && !viewOnly ? ' <button class="btn ghost" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Replace receipt</button>' : "") + '</td></tr>';
+    const state = visit.signedOutAt ? "Signed out" : "On site";
+    const photo = visit.photoStatus === "stored"
+      ? '<button class="btn ghost btn-xs" type="button" data-act="visitor-photo" data-id="' + esc(visit.id) + '">ID photo</button>'
+      : '<span class="muted">' + esc(visit.photoStatus === "purged" ? "Deleted" : "None") + '</span>';
+    return '<tr data-testid="visitor-row"' + (notes ? ' title="' + esc(notes) + '"' : "") + '>'
+      + '<td>' + esc(visit.signedInMelbourne) + '</td>'
+      + '<td>' + esc(visit.signedOutMelbourne || "") + '</td>'
+      + '<td>' + esc(visit.location) + '</td>'
+      + '<td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.name) + '</button></td>'
+      + '<td>' + esc(visit.company || "") + '</td>'
+      + '<td><span class="visitor-state ' + (visit.signedOutAt ? "out" : "in") + '">' + state + '</span>' + (notes ? ' <span class="muted" aria-label="Has notes">✎</span>' : "") + '</td>'
+      + '<td>' + (visit.cardReturned ? "Yes" : "No") + '</td>'
+      + '<td>' + photo + (visit.onSite && !viewOnly ? ' <button class="btn ghost btn-xs" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Receipt</button>' : "") + '</td></tr>';
   }).join("");
-  if (viewOnly) {
-    box.innerHTML = '<p class="muted" data-testid="visitor-view-only">Building maintenance: view-only. You can open visits and ID photos. Every ID photo view is logged.</p>'
-      + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
-      + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
-      + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
-      + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
-      + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button></div>'
-      + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>';
-    const viewStatus = document.getElementById("visitor-status");
-    if (viewStatus) viewStatus.value = status || "all";
-    return;
-  }
-  box.innerHTML = '<p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open for this test configuration.") + '</p>'
-    + '<p class="muted">Sign in: <a href="/visit/sign-in">/visit/sign-in</a>. Sign out: <a href="/visit/sign-out">/visit/sign-out</a>. The combined page remains at <a href="/visit">/visit</a>.</p>'
-    + '<div class="asset-dims"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
+  box.innerHTML = visitorTabs("logs", viewOnly)
+    + (viewOnly ? '<p class="muted" data-testid="visitor-view-only">Building maintenance: view-only. You can open visits and ID photos. Every ID photo view is logged.</p>' : "")
+    + '<div class="asset-dims visitor-filters"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
     + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
-    + '<label class="field"><span>Location contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
-    + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button><button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button></div>'
-    + '<div class="table-wrap" data-testid="visitor-list"><table><thead><tr><th>Location</th><th>Name</th><th>Phone</th><th>Signed in</th><th>Signed out</th><th>Card</th><th>Photo</th><th>Issues</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="9">No visits.</td></tr>') + '</tbody></table></div>'
+    + '<label class="field"><span>Site contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
+    + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button>' + (viewOnly ? "" : '<button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button>') + '</div>'
+    + '<div class="table-wrap visitor-sheet-wrap" data-testid="visitor-list"><table class="visitor-sheet"><thead><tr><th>Time in</th><th>Time out</th><th>Site</th><th>Name</th><th>Company</th><th>Status</th><th>Card returned</th><th>ID photo</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">No visits.</td></tr>') + '</tbody></table></div>'
+    + '<p class="muted small">Tap a name to open the full record. Rows with ✎ have notes (hover to read).</p>';
+  const statusSelect = document.getElementById("visitor-status");
+  if (statusSelect) statusSelect.value = status || "all";
+}
+async function paintVisitorSettings(box, readiness) {
+  const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
+  const maintenance = await fetch("/api/visitor-log/maintenance", { credentials: "same-origin" }).then((res) => res.json()).catch(() => ({ numbers: [] }));
+  const bmUsers = await fetch("/api/visitor-log/building-maintenance", { credentials: "same-origin" }).then((res) => res.json()).then((body) => body.users || []).catch(() => []);
+  const bmRows = bmUsers.map((email) => '<li data-testid="bm-user">' + esc(email) + ' <button class="btn ghost" type="button" data-act="bm-remove" data-email="' + esc(email) + '">Remove</button></li>').join("");
+  const maintenanceFields = [0, 1, 2, 3].map((i) => '<label class="field"><span>Maintenance line ' + (i + 1) + '</span><input id="visitor-maintenance-' + i + '" type="tel" inputmode="tel" maxlength="24" placeholder="Blank to hide" value="' + esc((maintenance.numbers || [])[i] || "") + '" data-testid="visitor-maintenance-input"></label>').join("");
+  box.innerHTML = visitorTabs("settings", false)
+    + '<h2>Status</h2><p data-testid="visitor-blockers">' + esc((readiness.blockers || []).join(", ") || "Collection is open.") + '</p>'
+    + '<p class="muted">Sign in: <a href="/visit/sign-in">/visit/sign-in</a>. Sign out: <a href="/visit/sign-out">/visit/sign-out</a>. The combined page remains at <a href="/visit">/visit</a>.</p>'
     + '<h2>Notifications</h2><p class="muted">Off unless you explicitly enable them. Each recipient below gets their own email (exact @libertyretail.com.au addresses, up to ' + esc(String(settings.max || 10)) + '). Emails contain only the location, time, the admin record link and the spreadsheet link: no visitor name, phone, company, notes or ID photo. Opening the record still needs an authorised visitor-log sign-in; being a recipient does not grant access to anyone. Each recipient added or removed is recorded in the visitor log history.</p>'
     + '<ul data-testid="visitor-recipients">' + (Array.isArray(settings.recipients) ? settings.recipients : []).map((email) => '<li data-testid="visitor-recipient-row">' + esc(email) + ' <button class="btn ghost" type="button" data-act="nr-remove" data-email="' + esc(email) + '">Remove</button></li>').join("") + '</ul>'
     + '<label class="field"><span>Add recipient email</span><input id="visitor-recipient" type="email" maxlength="254" autocomplete="off" placeholder="name@libertyretail.com.au" data-testid="visitor-recipient"></label>'
@@ -1748,8 +1763,6 @@ async function paintVisitor() {
     + '<button class="btn ghost" type="button" data-act="visitor-photo-backfill">Fill ID photo column</button><p id="visitor-photo-backfill-note" class="small" data-testid="visitor-photo-backfill-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
-  const statusSelect = document.getElementById("visitor-status");
-  if (statusSelect) statusSelect.value = status || "all";
 }
 async function paintVisitorRecord(id) {
   const box = document.getElementById("visitor-body");
