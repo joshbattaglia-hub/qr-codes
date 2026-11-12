@@ -386,8 +386,9 @@ test("open photos expire 90 days after sign-in, a late sign-out cannot restore t
     }
     if (init.method === "PUT") {
       assert.match(decoded, /valueInputOption=RAW/);
-      const row = Number(decoded.match(/A(\d+)/)[1]) - 2;
-      if (row >= 0) grid[row] = body.values[0];
+      const cell = decoded.match(/!([A-Z]+)(\d+)/);
+      const row = Number(cell[2]) - 2;
+      if (row >= 0) grid[row] = cell[1] === "P" ? Object.assign([...(grid[row] || [])], { 15: body.values[0][0] }) : body.values[0];
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
@@ -525,8 +526,9 @@ test("an in-flight sheet append and a pending notification cannot restore a dele
     }
     if (decoded.includes("Visits!A:A") && init.method === "GET") return new Response(JSON.stringify({ values: [["visit_id"], ...grid.map((row) => [row[0]])] }), { status: 200, headers: { "content-type": "application/json" } });
     if (init.method === "PUT") {
-      const row = Number(decoded.match(/A(\d+)/)[1]) - 2;
-      if (row >= 0) grid[row] = body.values[0];
+      const cell = decoded.match(/!([A-Z]+)(\d+)/);
+      const row = Number(cell[2]) - 2;
+      if (row >= 0) grid[row] = cell[1] === "P" ? Object.assign([...(grid[row] || [])], { 15: body.values[0][0] }) : body.values[0];
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response("{}", { status: 500, headers: { "content-type": "application/json" } });
@@ -675,7 +677,7 @@ test("the sheet connection check stays closed, writes one synthetic row, and doe
       if (hold) await hold;
       return new Response(JSON.stringify({ updates: { updatedRange: "Visits!A" + grid.length + ":O" + grid.length } }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const range = decoded.match(/Visits!A(\d+):O\1/);
+    const range = decoded.match(/Visits!A(\d+):P\1/);
     if (range && init.method === "GET") return new Response(JSON.stringify({ values: [grid[Number(range[1]) - 1] || []] }), { status: 200, headers: { "content-type": "application/json" } });
     if (range && init.method === "PUT") {
       grid[Number(range[1]) - 1] = JSON.parse(init.body).values[0];
@@ -992,7 +994,8 @@ test("sign-out issues are kept beside sign-in issues and do not leak on a failed
   const visit = (await Promise.all((await lib.visitorStore().list({ prefix: "visit/" })).blobs.map((blob) => lib.visitorStore().get(blob.key, { type: "json" })))).find((row) => row && row.phone === "0411555001");
   assert.equal(visit.issues, "Gate was open");
   assert.equal(visit.signOutIssues, "=Lock was stiff");
-  assert.equal(sheetLib.SHEET_HEADERS.length, 15);
+  assert.equal(sheetLib.SHEET_HEADERS.length, 16);
+  assert.equal(sheetLib.SHEET_HEADERS[15], "ID photo");
   assert.equal(sheetLib.SHEET_HEADERS[5], "issues");
   const cell = sheetLib.sheetRowValues(visit, () => "time")[5];
   assert.match(cell, /Sign-in: Gate was open/);
