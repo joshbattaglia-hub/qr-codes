@@ -1721,7 +1721,9 @@ async function paintVisitor() {
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
     + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
     + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
-    + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>';
+    + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>'
+    + '<h3>ID photo column</h3><p class="muted">Column P "ID photo" holds the private admin link to each visit\'s record (sign-in required), "Photo deleted" after the 90-day deletion, or "No photo". This fills column P for rows synced before the column existed. It writes column P only and does not add, move or change other cells. The daily cleanup also does this once.</p>'
+    + '<button class="btn ghost" type="button" data-act="visitor-photo-backfill">Fill ID photo column</button><p id="visitor-photo-backfill-note" class="small" data-testid="visitor-photo-backfill-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
   const statusSelect = document.getElementById("visitor-status");
@@ -1811,6 +1813,16 @@ async function visitorAction(button) {
     const note = document.getElementById("visitor-sheet-note");
     const stage = typeof body.stage === "string" && /^[a-z-]+$/.test(body.stage) ? body.stage : "";
     if (note) note.textContent = response.ok ? (body.ok ? "verified" : stage || "The check did not finish") : (body.error || "The check did not run");
+    return;
+  }
+  if (act === "visitor-photo-backfill") {
+    const response = await fetch("/api/visitor-log/sheet-photo-backfill", {
+      method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirm: "BACKFILL" }),
+    });
+    const body = await response.json().catch(() => ({}));
+    const note = document.getElementById("visitor-photo-backfill-note");
+    if (note) note.textContent = response.ok ? (body.status === "ok" ? "Done. " + body.written + " row" + (body.written === 1 ? "" : "s") + " written; column P read back correctly." : "Finished with status " + body.status + ".") : (body.error || "The fill did not run");
     return;
   }
   if (act === "visitor-maintenance-save") {

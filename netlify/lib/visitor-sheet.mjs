@@ -5,7 +5,13 @@ export const SHEET_HEADERS = [
   "visit_id", "location", "visitor_name", "phone", "company", "issues",
   "signed_in_at_utc", "signed_in_melbourne", "signed_out_at_utc", "signed_out_melbourne",
   "card_returned", "record_url", "photo_status", "review", "updated_at",
+  "ID photo",
 ];
+/** Column P. Private admin record link while the photo exists; never a public/signed URL, embed, or photo bytes. */
+export const ID_PHOTO_COLUMN = "P";
+export const ID_PHOTO_HEADER = "ID photo";
+const ID_PHOTO_INDEX = SHEET_HEADERS.indexOf(ID_PHOTO_HEADER);
+const UPDATED_AT_INDEX = SHEET_HEADERS.indexOf("updated_at");
 
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 let sheetFetch = null;
@@ -98,6 +104,21 @@ export function recordUrl(visitId) {
   return publicBase().replace(/\/$/, "") + "/admin#/visitors/" + visitId;
 }
 
+/** "ID photo" cell: admin record link (requires Joshua's sign-in) while stored, "Photo deleted" after purge, else "No photo". */
+export function idPhotoCell(visit) {
+  if (!visit || visit.deleted) return "";
+  if (visit.photoStatus === "stored") return recordUrl(visit.id);
+  if (visit.photoStatus === "purged") return "Photo deleted";
+  return "No photo";
+}
+
+/** Spreadsheet link for Joshua's notification email, from the configured ID. Empty when not configured. */
+export function sheetUrl(id = env("VISITOR_SHEETS_SPREADSHEET_ID")) {
+  const value = String(id || "").trim();
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(value)) return "";
+  return "https://docs.google.com/spreadsheets/d/" + value + "/edit";
+}
+
 export function sheetIssues(visit) {
   const parts = [];
   if (visit?.issues) parts.push("Sign-in: " + sheetSafe(visit.issues));
@@ -122,11 +143,17 @@ export function sheetRowValues(visit, melbourne) {
     visit.photoStatus || "",
     sheetSafe(visit.review || ""),
     new Date().toISOString(),
+    idPhotoCell(visit),
   ];
 }
 
+/** Row values without updated_at, for drift comparison. */
+function comparable(values) {
+  return values.filter((_, index) => index !== UPDATED_AT_INDEX).join("\n");
+}
+
 export function deletedRowValues(visitId) {
-  return [visitId, "", "", "", "", "", "", "", "", "", "", "", "deleted", "", ""];
+  return [visitId, "", "", "", "", "", "", "", "", "", "", "", "deleted", "", "", ""];
 }
 
 function rowNumber(range) {
@@ -135,9 +162,15 @@ function rowNumber(range) {
 }
 
 async function ensureHeader() {
-  const current = await sheets("GET", "Visits!A1");
-  if (current.ok && current.body.values?.[0]?.[0] === "visit_id") return true;
-  const wrote = await sheets("PUT", "Visits!A1:O1", "valueInputOption=RAW", { values: [SHEET_HEADERS] });
+  const current = await sheets("GET", "Visits!A1:P1");
+  const cells = current.ok ? current.body.values?.[0] || [] : [];
+  if (cells[0] !== "visit_id") {
+    const wrote = await sheets("PUT", "Visits!A1:P1", "valueInputOption=RAW", { values: [SHEET_HEADERS] });
+    return wrote.ok;
+  }
+  if (cells[ID_PHOTO_INDEX] === ID_PHOTO_HEADER) return true;
+  // Existing header: add only the P1 cell, leave A1:O1 untouched.
+  const wrote = await sheets("PUT", "Visits!P1", "valueInputOption=RAW", { values: [[ID_PHOTO_HEADER]] });
   return wrote.ok;
 }
 
@@ -152,7 +185,7 @@ async function findRow(visitId) {
 }
 
 async function writeRow(row, values) {
-  return sheets("PUT", "Visits!A" + row + ":O" + row, "valueInputOption=RAW", { values: [values] });
+  return sheets("PUT", "Visits!A" + row + ":P" + row, "valueInputOption=RAW", { values: [values] });
 }
 
 export const SHEET_PROBE_ID = "v00000000000000000000000000000001";
@@ -160,7 +193,7 @@ const SHEET_PROBE_STAGES = new Set([
   "verified", "key-invalid", "oauth-failed", "sheet-denied", "sheet-missing", "tab-missing",
   "append-failed", "append-unknown", "read-failed", "readback-mismatch", "clear-failed", "clear-unverified", "busy",
 ]);
-const PROBE_ROW = [SHEET_PROBE_ID, "SYNTHETIC", "PROBE", "0400000000", "PROBE", "", "", "", "", "", "", "", "probe", "", ""];
+const PROBE_ROW = [SHEET_PROBE_ID, "SYNTHETIC", "PROBE", "0400000000", "PROBE", "", "", "", "", "", "", "", "probe", "", "", ""];
 
 function probeStage(status, fallback) {
   if (status === 401) return "oauth-failed";
@@ -205,7 +238,7 @@ export async function runSheetConnectionProbe() {
     const header = await sheets("GET", "Visits!A1");
     if (!header.ok) return probeResult(false, probeStage(header.status, "read-failed"));
     if (header.body.values?.[0]?.[0] !== "visit_id") {
-      const wrote = await sheets("PUT", "Visits!A1:O1", "valueInputOption=RAW", { values: [SHEET_HEADERS] });
+      const wrote = await sheets("PUT", "Visits!A1:P1", "valueInputOption=RAW", { values: [SHEET_HEADERS] });
       if (!wrote.ok) return probeResult(false, probeStage(wrote.status, "append-failed"));
     }
     const found = await findRow(SHEET_PROBE_ID);
@@ -213,7 +246,7 @@ export async function runSheetConnectionProbe() {
     let row = found.row;
     if (!row) {
       sentAppend = true;
-      const appended = await sheets("POST", "Visits!A:O", "valueInputOption=RAW&insertDataOption=INSERT_ROWS", { values: [PROBE_ROW] }, ":append");
+      const appended = await sheets("POST", "Visits!A:P", "valueInputOption=RAW&insertDataOption=INSERT_ROWS", { values: [PROBE_ROW] }, ":append");
       if (!appended.ok) return probeResult(false, probeStage(appended.status, appended.status >= 500 ? "append-unknown" : "append-failed"));
       row = rowNumber(appended.body.updates?.updatedRange);
       if (!row) {
@@ -222,13 +255,13 @@ export async function runSheetConnectionProbe() {
         row = again.row;
       }
     }
-    const read = await sheets("GET", "Visits!A" + row + ":O" + row);
+    const read = await sheets("GET", "Visits!A" + row + ":P" + row);
     if (!read.ok) return probeResult(false, probeStage(read.status, "read-failed"));
     const cells = read.body.values?.[0] || [];
     if (!rowIsProbe(cells) && !rowIsClear(cells)) return probeResult(false, "readback-mismatch");
     const cleared = await writeRow(row, deletedRowValues(SHEET_PROBE_ID));
     if (!cleared.ok) return probeResult(false, probeStage(cleared.status, "clear-failed"));
-    const check = await sheets("GET", "Visits!A" + row + ":O" + row);
+    const check = await sheets("GET", "Visits!A" + row + ":P" + row);
     if (!check.ok) return probeResult(false, probeStage(check.status, "clear-unverified"));
     if (!rowIsClear(check.body.values?.[0] || [])) return probeResult(false, "clear-unverified");
     return probeResult(true, "verified");
@@ -262,7 +295,7 @@ export async function syncVisitRow(visit, melbourne) {
     }
     const values = sheetRowValues(current, melbourne);
     if (!row) {
-      const appended = await sheets("POST", "Visits!A:O", "valueInputOption=RAW&insertDataOption=INSERT_ROWS", { values: [values] }, ":append");
+      const appended = await sheets("POST", "Visits!A:P", "valueInputOption=RAW&insertDataOption=INSERT_ROWS", { values: [values] }, ":append");
       if (!appended.ok) return { status: appended.status >= 500 ? "unknown" : "failed" };
       if (afterAppend) await afterAppend(appended.body);
       row = rowNumber(appended.body.updates?.updatedRange);
@@ -277,7 +310,7 @@ export async function syncVisitRow(visit, melbourne) {
     let updated = await writeRow(row, writing);
     if (!updated.ok) return { status: updated.status >= 500 ? "unknown" : "failed" };
     const after = await store.get("visit/" + visit.id, { type: "json" });
-    const drifted = !!after && (after.deleted !== !!latest?.deleted || (!after.deleted && sheetRowValues(after, melbourne).slice(0, -1).join("\n") !== writing.slice(0, -1).join("\n")));
+    const drifted = !!after && (after.deleted !== !!latest?.deleted || (!after.deleted && comparable(sheetRowValues(after, melbourne)) !== comparable(writing)));
     if (drifted) {
       writing = after.deleted ? deletedRowValues(visit.id) : sheetRowValues(after, melbourne);
       updated = await writeRow(row, writing);
@@ -289,5 +322,80 @@ export async function syncVisitRow(visit, melbourne) {
     return { status: "unknown" };
   } finally {
     await store.delete(lockKey);
+  }
+}
+
+const BACKFILL_LOCK = "sheet-photo-backfill/lock";
+
+function cellKind(value, visit) {
+  if (value === "Photo deleted" || value === "No photo") return value;
+  if (!value) return "blank";
+  return value === recordUrl(visit.id) ? "record-link" : "other";
+}
+
+/**
+ * One-off: fill only column P (and the P1 header) for rows already synced. Each row is matched by its
+ * visit_id in column A before writing; rows that do not match are skipped, never appended or reordered.
+ * Reads column P back afterwards with the sync's own access. Returns no visitor details.
+ */
+export async function backfillIdPhotoColumn(visits) {
+  if (!sheetConfigured()) return { status: "not-configured", written: 0, rows: [] };
+  const store = visitorStore();
+  const lock = await store.setJSON(BACKFILL_LOCK, { at: Date.now() }, { onlyIfNew: true });
+  if (lock?.modified !== true) {
+    const meta = await store.getWithMetadata(BACKFILL_LOCK, { type: "json", consistency: "strong" });
+    const age = Number(meta?.data?.at) ? Date.now() - Number(meta.data.at) : 0;
+    if (meta?.etag && age < 300000) return { status: "busy", written: 0, rows: [] };
+    await store.delete(BACKFILL_LOCK);
+    const again = await store.setJSON(BACKFILL_LOCK, { at: Date.now() }, { onlyIfNew: true });
+    if (again?.modified !== true) return { status: "busy", written: 0, rows: [] };
+  }
+  try {
+    if (!(await ensureHeader())) return { status: "header-failed", written: 0, rows: [] };
+    const ids = await sheets("GET", "Visits!A:A");
+    if (!ids.ok) return { status: "read-failed", written: 0, rows: [] };
+    const column = (ids.body.values || []).map((row) => row?.[0] || "");
+    const current = await sheets("GET", "Visits!P:P");
+    const photoColumn = current.ok ? (current.body.values || []).map((row) => row?.[0] || "") : [];
+    let written = 0;
+    const plan = [];
+    for (const visit of visits) {
+      if (!visit?.id || visit.deleted || visit.sheetSync !== "synced") continue;
+      let row = Number(visit.sheetRow) || 0;
+      if (!row || column[row - 1] !== visit.id) {
+        const index = column.indexOf(visit.id);
+        row = index >= 1 ? index + 1 : 0;
+      }
+      if (!row) { plan.push({ visit, row: 0, outcome: "not-in-sheet" }); continue; }
+      const value = idPhotoCell(visit);
+      if (photoColumn[row - 1] === value) { plan.push({ visit, row, outcome: "already-set" }); continue; }
+      const wrote = await sheets("PUT", "Visits!P" + row, "valueInputOption=RAW", { values: [[value]] });
+      if (!wrote.ok) { plan.push({ visit, row, outcome: "write-failed" }); continue; }
+      written += 1;
+      plan.push({ visit, row, outcome: "written" });
+    }
+    const header = await sheets("GET", "Visits!P1");
+    const after = await sheets("GET", "Visits!P:P");
+    const afterIds = await sheets("GET", "Visits!A:A");
+    const readP = after.ok ? (after.body.values || []).map((row) => row?.[0] || "") : [];
+    const readA = afterIds.ok ? (afterIds.body.values || []).map((row) => row?.[0] || "") : [];
+    const rows = plan.map(({ visit, row, outcome }) => ({
+      row,
+      outcome,
+      idMatches: row ? readA[row - 1] === visit.id : false,
+      readBack: row ? cellKind(readP[row - 1] || "", visit) : "",
+      expected: cellKind(idPhotoCell(visit), visit),
+    }));
+    const ok = rows.every((row) => row.outcome === "not-in-sheet" || (row.idMatches && row.readBack === row.expected));
+    return {
+      status: ok ? "ok" : "partial",
+      header: header.ok ? (header.body.values?.[0]?.[0] || "") : "unread",
+      written,
+      rows,
+    };
+  } catch {
+    return { status: "unknown", written: 0, rows: [] };
+  } finally {
+    await store.delete(BACKFILL_LOCK);
   }
 }

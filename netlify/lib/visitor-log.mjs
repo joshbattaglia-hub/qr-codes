@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
-import { recordUrl, runSheetConnectionProbe, sheetConfigured, syncVisitRow } from "./visitor-sheet.mjs";
+import { backfillIdPhotoColumn, recordUrl, runSheetConnectionProbe, sheetConfigured, sheetUrl, syncVisitRow } from "./visitor-sheet.mjs";
 
 export const JOSHUA_EMAIL = "jbattaglia@libertyretail.com.au";
 export const PHOTO_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -240,6 +240,7 @@ async function notify(visit, event) {
       "Location: " + location,
       "When: " + melbourne(event === "out" ? again.signedOutAt : again.signedInAt),
       "Record: " + publicBase() + "/admin#/visitors/" + visit.id,
+      ...(sheetUrl() ? ["View visitor log spreadsheet: " + sheetUrl()] : []),
       "This message has no visitor name, phone, company, notes, or ID photo.",
     ].join("\n"),
   });
@@ -680,7 +681,43 @@ export async function deleteVisit(actor, id) {
   return { status: 409, error: "The record could not be deleted." };
 }
 
+const ID_PHOTO_MIGRATION = "sheet-migration/id-photo-v1";
+
+/**
+ * Fill the sheet's "ID photo" column (P) for rows synced before it existed. Runs once from the daily
+ * cleanup, or when Joshua presses the admin button. Writes column P cells only. The stored result has
+ * row numbers and outcomes, no visitor details.
+ */
+export async function runIdPhotoBackfill({ force = false, actorId = "cleanup" } = {}) {
+  const marker = await visitorStore().get(ID_PHOTO_MIGRATION, { type: "json" });
+  if (marker?.done && !force) return { status: "already-done", written: 0, rows: marker.rows || [] };
+  const { blobs } = await visitorStore().list({ prefix: "visit/" });
+  const visits = (await Promise.all(blobs.map((blob) => visitorStore().get(blob.key, { type: "json" })))).filter((row) => row && row.id);
+  const result = await backfillIdPhotoColumn(visits);
+  if (result.status === "busy" || result.status === "not-configured") return result;
+  await visitorStore().setJSON(ID_PHOTO_MIGRATION, {
+    done: result.status === "ok",
+    status: result.status,
+    header: result.header || "",
+    written: result.written,
+    rows: result.rows,
+    at: new Date(now()).toISOString(),
+    trigger: actorId === "cleanup" ? "cleanup" : "admin",
+  });
+  await audit("sheet-photo-backfill", actorId, "");
+  return result;
+}
+
+export async function idPhotoBackfill(actor, body) {
+  if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
+  if (body?.confirm !== "BACKFILL") return { status: 400, error: "Confirm the ID photo column fill." };
+  const result = await runIdPhotoBackfill({ force: true, actorId: actor.id || "" });
+  return { status: 200, body: { status: result.status, header: result.header || "", written: result.written || 0, rows: result.rows || [] } };
+}
+
 export async function runVisitorCleanup(at = now()) {
+  let idPhotoColumn = "skipped";
+  try { idPhotoColumn = (await runIdPhotoBackfill()).status; } catch { idPhotoColumn = "unknown"; }
   const { blobs } = await visitorStore().list({ prefix: "visit/" });
   let purged = 0;
   for (const blob of blobs) {
@@ -704,6 +741,6 @@ export async function runVisitorCleanup(at = now()) {
     await visitorStore().delete(blob.key);
     orphans += 1;
   }
-  return { purged, orphans };
+  return { purged, orphans, idPhotoColumn };
 }
 
