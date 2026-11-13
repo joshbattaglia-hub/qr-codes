@@ -17,7 +17,7 @@
   car.className = "eh-car";
   car.setAttribute("role", "img");
   car.setAttribute("aria-label", "racing car");
-  car.textContent = "\u{1F3CE}\uFE0E";
+  car.textContent = "\uD83C\uDFCE\uFE0E"; // U+1F3CE U+FE0E (ES5-safe surrogate pair for old signage browsers)
   footer.appendChild(car);
   footer.appendChild(document.createTextNode(" \u2014 need changes? "));
   var link = document.createElement("a");

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Truckies Lounge · Liberty</title>
+<style>
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b1640;color:#fff;cursor:none}
+body{font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:1.25vw;-webkit-font-smoothing:antialiased}
+.tv{position:absolute;top:0;left:0;right:0;bottom:0;display:block}
+.top{position:absolute;top:0;left:0;right:0;height:9vh;background:#0e1b4d;border-bottom:0.35vh solid #e7c98a}
+.brand{position:absolute;left:2vw;top:0;height:9vh;font-size:2.4vw;font-weight:700;white-space:nowrap;line-height:6vh;padding-top:0.4vh}
+.brand svg{width:3vw;height:3vw;vertical-align:middle;margin-right:1vw;position:relative;top:-0.2vw}
+.brand .sub{color:#e7c98a;font-weight:600}
+.clock{position:absolute;right:2vw;top:0;height:9vh;text-align:right}
+.clock .time{font-size:3.4vw;font-weight:700;line-height:6vh;padding-top:0.6vh;letter-spacing:0.02em}
+.clock .date{font-size:1.25vw;color:#cfd6ea;line-height:2.4vh}
+.where{position:absolute;left:6vw;top:6vh;line-height:2.4vh;font-size:1.05vw;color:#cfd6ea;white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis}
+.main{position:absolute;top:10.5vh;left:1.5vw;right:1.5vw;bottom:9vh}
+.panel{position:absolute;background:#132257;border-radius:0.6vw;overflow:hidden;border:1px solid #233574}
+.panel h2{margin:0;padding:1.6vh 1.4vw 1vh;font-size:1.5vw;text-transform:uppercase;letter-spacing:0.08em;color:#e7c98a;font-weight:700}
+.panel .body{padding:0 1.4vw 1.4vh}
+.news{left:0;top:0;bottom:0;width:56%}
+.weather{right:0;top:0;width:42.5%;height:52%}
+.sites{right:0;bottom:0;width:42.5%;height:45.5%}
+.news ol{list-style:none;margin:0;padding:0}
+.news li{padding:1.5vh 0 1.5vh 0;border-top:1px solid #2a3d80}
+.news li:first-child{border-top:0}
+.news .h{font-size:2vw;line-height:1.22;font-weight:600;max-height:4.9vw;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.news .s{font-size:1.15vw;color:#e7c98a;margin-top:0.5vh}
+.news .s span{color:#aeb8d6}
+.pager{position:absolute;right:1.4vw;top:1.8vh;font-size:1.1vw;color:#aeb8d6}
+.now{overflow:hidden}
+.now .temp{float:left;font-size:6.4vw;font-weight:700;line-height:1;margin-right:1.6vw}
+.now .cond{font-size:2.1vw;font-weight:600;padding-top:0.6vh}
+.now .meta{font-size:1.25vw;color:#cfd6ea;margin-top:0.8vh;line-height:1.5}
+.days{margin-top:2vh;overflow:hidden}
+.day{float:left;width:23.5%;margin-right:2%;background:#0e1b4d;border-radius:0.4vw;padding:1vh 0.6vw;box-sizing:border-box;text-align:center}
+.day:last-child{margin-right:0}
+.day .d{font-size:1.2vw;color:#e7c98a;font-weight:700}
+.day .c{font-size:1.05vw;color:#cfd6ea;height:2.8vw;line-height:1.35vw;overflow:hidden;margin:0.4vh 0}
+.day .t{font-size:1.6vw;font-weight:700}
+.day .t span{color:#aeb8d6;font-weight:400}
+.day .r{font-size:1vw;color:#9fd0ff}
+.warn{margin-top:1.6vh;font-size:1.15vw;color:#cfd6ea}
+.warn.alert{background:#b42318;color:#fff;border-radius:0.4vw;padding:0.8vh 0.8vw;font-weight:600}
+.sites table{width:100%;border-collapse:collapse}
+.sites td{padding:1.15vh 0;border-top:1px solid #2a3d80;font-size:1.6vw;vertical-align:top}
+.sites tr:first-child td{border-top:0}
+.sites .km{text-align:right;font-weight:700;color:#e7c98a;white-space:nowrap;padding-left:1vw}
+.sites .sub{display:block;font-size:1.1vw;color:#aeb8d6}
+.sites .flag{display:inline-block;font-size:0.9vw;background:#e7c98a;color:#0e1b4d;border-radius:0.3vw;padding:0 0.4vw;margin-left:0.5vw;vertical-align:middle;font-weight:700}
+.muted{color:#aeb8d6}
+.note{font-size:1.2vw;color:#cfd6ea;line-height:1.45}
+.bottom{position:absolute;left:0;right:0;bottom:0;height:7.5vh;background:#0e1b4d;border-top:1px solid #233574}
+.status{position:absolute;left:2vw;top:0;line-height:4vh;font-size:1vw;color:#aeb8d6;white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis}
+.status.offline{color:#fdb022}
+.attrib{position:absolute;right:2vw;top:0;line-height:4vh;font-size:0.85vw;color:#7f8bb3;white-space:nowrap}
+body .eh-footer{position:absolute;left:0;right:0;bottom:0.4vh;margin:0;max-width:none;font-size:1vw;line-height:3vh;color:#aeb8d6}
+body .eh-footer a{color:#e7c98a}
+</style>
+</head>
+<body>
+<div class="tv" id="tv">
+  <div class="top">
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#e7c98a"/><path fill="#0e1b4d" d="M9.5 8h13v3.2h-9.2V24H9.5z"/></svg>Liberty <span class="sub">Truckies Lounge</span></div>
+    <div class="where" id="where">&nbsp;</div>
+    <div class="clock"><div class="time" id="time">--:--</div><div class="date" id="date">&nbsp;</div></div>
+  </div>
+  <div class="main">
+    <section class="panel news"><h2>Trucking news</h2><div class="pager" id="pager"></div><div class="body"><ol id="news"><li><div class="h">Loading headlines…</div></li></ol></div></section>
+    <section class="panel weather"><h2 id="weather-title">Weather</h2><div class="body" id="weather"><div class="note">Loading weather…</div></div></section>
+    <section class="panel sites"><h2>Nearest Liberty sites</h2><div class="body" id="sites"><div class="note">Loading sites…</div></div></section>
+  </div>
+  <div class="bottom">
+    <div class="status" id="status">Starting…</div>
+    <div class="attrib" id="attrib">Weather: Open-Meteo.com · Warnings: VicEmergency</div>
+  </div>
+</div>
+<script src="/tv/truckies-lounge.js"></script>
+<script src="/footer.js" defer></script>
+</body>
+</html>

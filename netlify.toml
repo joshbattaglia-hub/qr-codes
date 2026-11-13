@@ -51,6 +51,21 @@
   to = "/support/index.html"
   status = 200
 
+[[redirects]]
+  from = "/tv/truckies-lounge"
+  to = "/tv/truckies-lounge.html"
+  status = 200
+[[redirects]]
+  from = "/tv/truckies-lounge/"
+  to = "/tv/truckies-lounge.html"
+  status = 200
+
+[[headers]]
+  for = "/tv/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+    X-Robots-Tag = "noindex, nofollow"
+
 [[headers]]
   for = "/admin/*"
   [headers.values]
