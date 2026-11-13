@@ -21,7 +21,7 @@ test("every static HTML page loads the shared footer (future pages fail this tes
 test("footer text, emoji code points and mailto are exact in both the script and the server helper", async () => {
   const script = fs.readFileSync(path.join(root, "footer.js"), "utf8");
   assert.match(script, /"Built, not bought, by J\.Batt "/);
-  assert.match(script, /"\\u\{1F3CE\}\\uFE0E"/);
+  assert.match(script, /"\\uD83C\\uDFCE\\uFE0E"/);
   assert.match(script, /" \\u2014 need changes\? "/);
   assert.match(script, /mailto:jbattaglia@libertyretail\.com\.au/);
   assert.match(script, /"email me here"/);

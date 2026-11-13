@@ -845,7 +845,7 @@ function settingsPage() {
     '<label class="field"><span>Default QR background</span><span class="color-row"><input name="defaultBg" type="color" value="' + esc(s.defaultBg) + '"><input name="defaultBgText" type="text" value="' + esc(s.defaultBg) + '"></span></label></div>' +
     '<label class="field"><span>Public URL</span><input type="text" readonly value="' + esc(s.publicUrl) + '"></label>' +
     '<p class="muted small">Short links stay on ' + esc(base()) + "/r/&lt;slug&gt;. The admin password is the ADMIN_PASSWORD environment variable and is not changed here. This session cookie lasts 7 days.</p>" +
-    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + staffSettings();
+    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + tvSettings() + staffSettings();
 }
 const PAGE_COLORS = [
   ["background", "Background"],
@@ -1419,6 +1419,35 @@ function sitesPage() {
     (head ? '<form class="card" data-act="create-site" data-testid="create-site"><label class="field"><span>New location</span><input name="name" required maxlength="80" placeholder="Location name"></label><button class="btn" type="submit">Add site</button><p class="muted small">Existing records stay unassigned until someone moves them.</p></form>' +
       '<form class="card" data-act="preview-import" data-testid="site-import"><h2>Import locations</h2><p class="muted small">Head office only. Preview is the default. Held rows are not written. LOC, address, operational region, and geographic state stay separate. Nothing here grants staff access.</p><label class="field"><span>JSON rows</span><textarea name="rows" id="import-rows" placeholder=\'[{"loc":"LOC1","name":"North","address":"1 Main Street","operationalRegion":"North","geographicState":"","sourceRef":"row-1"}]\'></textarea></label><button class="btn" type="submit">Preview import</button><div id="import-report"></div></form>' : "") +
     (cards || '<div class="card"><p class="muted">No sites are assigned to this login.</p></div>');
+}
+function tvSettings() {
+  if (state.actor?.role !== "head") return "";
+  return '<form class="card" data-act="save-tv" data-testid="tv-settings"><h2>Truckies Lounge TV</h2>'
+    + '<p class="muted small">Default location for <a href="/tv/truckies-lounge" target="_blank" rel="noopener">expresshelp.site/tv/truckies-lounge</a> (weather, warnings and nearest sites). A screen can override it with <code>?site=LOC</code> or <code>?lat=…&amp;lng=…</code> in its address. With nothing set it shows Melbourne CBD.</p>'
+    + '<div id="tv-settings-body" class="muted small">Loading…</div></form>';
+}
+async function paintTvSettings() {
+  const box = document.getElementById("tv-settings-body");
+  if (!box) return;
+  let current;
+  try { current = await api("/api/tv/settings"); } catch (err) { box.textContent = err.message; return; }
+  const sites = (state.sites || []).filter((site) => site.loc).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  box.className = "";
+  box.innerHTML = '<label class="field"><span>Site</span><select name="site" data-testid="tv-site"><option value="">No site (use the coordinates below)</option>'
+    + sites.map((site) => '<option value="' + esc(site.loc) + '"' + (String(current.site).toLowerCase() === String(site.loc).toLowerCase() ? " selected" : "") + ">" + esc(site.name) + " (" + esc(site.loc) + ")</option>").join("") + "</select></label>"
+    + '<p class="muted small">A site is only used once it has map coordinates. Until then the coordinates below are used.</p>'
+    + '<div class="split"><label class="field"><span>Latitude</span><input name="lat" inputmode="decimal" placeholder="-37.8136" value="' + esc(current.lat ?? "") + '"></label><label class="field"><span>Longitude</span><input name="lng" inputmode="decimal" placeholder="144.9631" value="' + esc(current.lng ?? "") + '"></label></div>'
+    + '<label class="field"><span>Location name shown on screen</span><input name="label" maxlength="60" placeholder="e.g. Truckies Lounge" value="' + esc(current.label || "") + '"></label>'
+    + '<div class="row"><button class="btn" type="submit">Save TV location</button><a class="btn ghost" href="/tv/truckies-lounge" target="_blank" rel="noopener">Open TV page</a></div><p id="tv-note" class="small" role="status"></p>';
+}
+async function saveTvLocation(form) {
+  const data = Object.fromEntries(new FormData(form));
+  const note = document.getElementById("tv-note");
+  try {
+    await api("/api/tv/settings", { method: "PATCH", body: JSON.stringify({ site: data.site || "", lat: data.lat || "", lng: data.lng || "", label: data.label || "" }) });
+    if (note) note.textContent = "Saved. Screens pick it up within about 15 minutes.";
+    toast("TV location saved");
+  } catch (err) { if (note) note.textContent = err.message; }
 }
 function staffSettings() {
   if (state.actor?.role !== "head") return "";
@@ -2262,6 +2291,7 @@ async function render(opts = {}) {
     if (r.name === "assets") paintAsset();
     if (r.name === "visitors") paintVisitor();
     if (r.name === "users") paintUsers();
+    if (r.name === "settings") paintTvSettings();
     if (r.name === "tickets") paintTickets(r.id, state).catch((err) => { const box = document.getElementById("ticket-body"); if (box) box.textContent = err.message; });
   }
   if (state.focus) {
@@ -2713,7 +2743,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-tv" ? () => saveTvLocation(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast(err.message));
 });
 document.body.addEventListener("input", (e) => {
