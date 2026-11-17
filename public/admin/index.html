@@ -6,6 +6,8 @@
 <meta name="robots" content="noindex">
 <title>Express Help</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1b4d'/%3E%3Cpath fill='%23e7c98a' d='M9.5 8h13v3.2h-9.2V24H9.5z'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#f3f4f8">
+<script src="/admin/theme.js"></script>
 <link rel="stylesheet" href="/admin/styles.css">
 </head>
 <body>
@@ -119,11 +121,18 @@
       <div id="search-results" class="search-results hidden"></div>
       <div class="top-actions">
         <button class="icon-btn" type="button" data-pop="help" aria-label="Help">?</button>
+        <button class="icon-btn theme-btn" id="theme-btn" type="button" data-pop="theme" aria-haspopup="menu" aria-expanded="false" aria-controls="pop-theme" aria-label="Theme: Light" title="Theme" data-testid="theme-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg></button>
         <button class="avatar" type="button" data-pop="account" aria-label="Account">L</button>
       </div>
       <div id="pop-help" class="pop help-pop hidden">
         <strong>Short links and QR codes</strong>
         <p class="muted small">Short links, QR codes, and landing pages use expresshelp.site. A downloaded QR image counts as a scan. Opening the short link counts as a click. A visit to a published page counts as a page click. No raw IP addresses are stored.</p>
+      </div>
+      <div id="pop-theme" class="pop theme-pop hidden" role="menu" aria-label="Theme" data-testid="theme-menu">
+        <p class="theme-title" aria-hidden="true">Theme</p>
+        <button type="button" role="menuitemradio" aria-checked="true" data-theme-choice="light" data-testid="theme-light"><span class="theme-swatch light"></span><span>Light</span><span class="theme-tick" aria-hidden="true">✓</span></button>
+        <button type="button" role="menuitemradio" aria-checked="false" data-theme-choice="dark" data-testid="theme-dark"><span class="theme-swatch dark"></span><span>Dark</span><span class="theme-tick" aria-hidden="true">✓</span></button>
+        <button type="button" role="menuitemradio" aria-checked="false" data-theme-choice="crazy" data-testid="theme-crazy"><span class="theme-swatch crazy"></span><span>Crazy</span><span class="theme-tick" aria-hidden="true">✓</span></button>
       </div>
       <div id="pop-account" class="pop account-pop hidden">
         <div id="account-label" class="pad"><strong>Express Help</strong><div class="muted small">Admin session</div></div>

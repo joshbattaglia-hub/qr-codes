@@ -154,7 +154,8 @@ function setSidebar(open) {
   $("#overlay").classList.toggle("show", open);
 }
 function closePops() {
-  document.querySelectorAll("#pop-create,#pop-help,#pop-account,#search-results").forEach((el) => el.classList.add("hidden"));
+  document.querySelectorAll("#pop-create,#pop-help,#pop-account,#pop-theme,#search-results").forEach((el) => el.classList.add("hidden"));
+  $("#theme-btn")?.setAttribute("aria-expanded", "false");
 }
 function togglePop(id) {
   const el = $("#pop-" + id);
@@ -162,7 +163,34 @@ function togglePop(id) {
   const willOpen = el.classList.contains("hidden");
   closePops();
   if (willOpen) el.classList.remove("hidden");
+  if (id === "theme") {
+    syncThemeUi();
+    $("#theme-btn")?.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    if (willOpen) el.querySelector('[aria-checked="true"]')?.focus();
+  }
 }
+/** Theme control (Light / Dark / Crazy). The choice is remembered per signed-in account by theme.js. */
+function syncThemeUi() {
+  const current = window.EHTheme ? window.EHTheme.current() : "light";
+  document.querySelectorAll("#pop-theme [data-theme-choice]").forEach((b) => b.setAttribute("aria-checked", b.dataset.themeChoice === current ? "true" : "false"));
+  $("#theme-btn")?.setAttribute("aria-label", "Theme: " + (window.EHTheme?.LABELS[current] || "Light"));
+}
+function chooseTheme(name) {
+  if (!window.EHTheme) return;
+  window.EHTheme.choose(name);
+  syncThemeUi();
+}
+function themeMenuKey(e) {
+  const items = [...document.querySelectorAll("#pop-theme [data-theme-choice]")];
+  const at = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); items[(at + 1) % items.length].focus(); }
+  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+  else if (e.key === "Home") { e.preventDefault(); items[0].focus(); }
+  else if (e.key === "End") { e.preventDefault(); items[items.length - 1].focus(); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePops(); $("#theme-btn")?.focus(); }
+  else if (e.key === "Tab") { closePops(); }
+}
+document.getElementById("pop-theme")?.addEventListener("keydown", themeMenuKey);
 async function entraLoginState() {
   const box = $("#entra-setup");
   const link = $("#entra-signin");
@@ -203,6 +231,7 @@ async function switchToEmailSignin() {
   showLogin("", true);
 }
 function showLogin(message, focusEmail) {
+  window.EHTheme?.signedOut();
   $("#boot").classList.add("hidden");
   $("#shell").classList.add("hidden");
   $("#login").classList.remove("hidden");
@@ -499,8 +528,8 @@ function areaChart(series, compare) {
   const grid = ticks.map((t) => {
     const yy = y(t).toFixed(1);
     const label = Math.abs(t - Math.round(t)) < 0.05 ? String(Math.round(t)) : t.toFixed(1);
-    return '<line x1="' + pad.l + '" x2="' + (w - pad.r) + '" y1="' + yy + '" y2="' + yy + '" stroke="#eef0f4"/>' +
-      '<text x="' + (pad.l - 6) + '" y="' + (Number(yy) + 4) + '" text-anchor="end" font-size="11" fill="#98a2b3">' + label + "</text>";
+    return '<line x1="' + pad.l + '" x2="' + (w - pad.r) + '" y1="' + yy + '" y2="' + yy + '" stroke="var(--chart-grid)"/>' +
+      '<text x="' + (pad.l - 6) + '" y="' + (Number(yy) + 4) + '" text-anchor="end" font-size="11" fill="var(--chart-text)">' + label + "</text>";
   }).join("");
   const indexes = (() => {
     const n = series.length;
@@ -512,12 +541,12 @@ function areaChart(series, compare) {
   })();
   const labels = indexes.map((i) => {
     const anchor = i === 0 ? "start" : i === series.length - 1 ? "end" : "middle";
-    return '<text x="' + x(i, series.length).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="' + anchor + '" font-size="11" fill="#98a2b3">' + esc(shortDate(series[i].date)) + "</text>";
+    return '<text x="' + x(i, series.length).toFixed(1) + '" y="' + (h - 8) + '" text-anchor="' + anchor + '" font-size="11" fill="var(--chart-text)">' + esc(shortDate(series[i].date)) + "</text>";
   }).join("");
   const titles = series.map((d, i) => '<rect x="' + (x(i, series.length) - iw / Math.max(series.length, 1) / 2) + '" y="' + pad.t + '" width="' + (iw / Math.max(series.length, 1)) + '" height="' + ih + '" fill="transparent"><title>' + esc(shortDate(d.date) + ": " + d.value) + "</title></rect>").join("");
   return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" role="img" aria-label="Engagements chart">' + grid +
-    '<path d="' + area + '" fill="rgba(37,99,235,.16)"></path><path d="' + line + '" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"></path>' +
-    (cmp ? '<path d="' + cmp + '" fill="none" stroke="#98a2b3" stroke-width="2" stroke-dasharray="5 4"></path>' : "") +
+    '<path d="' + area + '" fill="var(--chart-fill)"></path><path d="' + line + '" fill="none" stroke="var(--chart-a)" stroke-width="2.5" stroke-linejoin="round"></path>' +
+    (cmp ? '<path d="' + cmp + '" fill="none" stroke="var(--chart-b)" stroke-width="2" stroke-dasharray="5 4"></path>' : "") +
     labels + titles + "</svg>";
 }
 function dimTable(map, total, label, countLabel) {
@@ -632,7 +661,7 @@ function siteOverviewHtml() {
   return '<div class="card" data-testid="site-overview"><div class="card-head"><h2>' + (state.actor?.role === "head" ? "All sites" : "Your sites") + '</h2><button class="btn ghost" type="button" data-go="sites">Open</button></div><div class="metrics">' + cards + "</div></div>";
 }
 function ring(pct) {
-  return '<svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="#e6e8ee" stroke-width="4"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="#12b76a" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + pct + ' 100" pathLength="100" transform="rotate(-90 18 18)"></circle></svg>';
+  return '<svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="var(--ring-track)" stroke-width="4"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="var(--ring-fill)" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + pct + ' 100" pathLength="100" transform="rotate(-90 18 18)"></circle></svg>';
 }
 function checklist() {
   const defaults = state.settings || {};
@@ -679,7 +708,7 @@ function detailsCard(code, qr) {
     ? kv("Scan destination", "Website / URL") + kv("Destination", '<a href="' + esc(code.url) + '" target="_blank" rel="noreferrer">' + esc(code.url) + "</a>")
     : kv("Short link", '<a href="' + esc(shortUrl(code.slug)) + '" target="_blank" rel="noreferrer">' + esc(shortUrl(code.slug)) + "</a>") + kv("Destination", '<a href="' + esc(code.url) + '" target="_blank" rel="noreferrer">' + esc(code.url) + "</a>");
   return '<div class="card" data-testid="' + (qr ? "qr-details" : "link-details") + '"><div class="card-head"><h2>Details</h2><button class="text-btn" type="button" data-act="edit">Edit</button></div><div class="kv">' +
-    rows + '<div class="k">Tags</div><div><div class="chips">' + tags + '</div><form data-act="add-tag" class="row" style="margin-top:8px"><input name="tag" type="text" maxlength="40" placeholder="Add a tag" aria-label="Add a tag" style="flex:1;border:1px solid #d0d5dd;border-radius:8px;padding:8px 10px"><button class="btn ghost" type="submit">Add</button></form></div>' +
+    rows + '<div class="k">Tags</div><div><div class="chips">' + tags + '</div><form data-act="add-tag" class="row" style="margin-top:8px"><input name="tag" type="text" maxlength="40" placeholder="Add a tag" aria-label="Add a tag" style="flex:1;border:1px solid var(--input-line);border-radius:8px;padding:8px 10px"><button class="btn ghost" type="submit">Add</button></form></div>' +
     kv("Site", esc(siteName(code.siteId))) +
     kv("Link check", esc(code.health?.status || state.detail?.health?.status || "unchecked") + (code.health?.checkedAt || state.detail?.health?.checkedAt ? " · " + esc(code.health?.checkedAt || state.detail?.health?.checkedAt) : "")) +
     kv("Created on", esc(formatCreated(code.created))) +
@@ -2825,6 +2854,8 @@ function paintSearch() {
 }
 
 document.body.addEventListener("click", (e) => {
+  const themeEl = e.target.closest("[data-theme-choice]");
+  if (themeEl) { chooseTheme(themeEl.dataset.themeChoice); closePops(); $("#theme-btn")?.focus(); return; }
   const popOpener = e.target.closest("[data-pop]");
   if (popOpener) { togglePop(popOpener.dataset.pop); return; }
   if (e.target.closest("#menu-btn")) { setSidebar(!$("#sidebar").classList.contains("open")); return; }
@@ -3199,6 +3230,8 @@ function stayOrLand(allowed) {
   return true;
 }
 async function enter() {
+  window.EHTheme?.setAccount(state.actor?.email);
+  syncThemeUi();
   restoreNav();
   if (isBuildingMaintenance()) {
     // Visitor Log view-only: load nothing else and show only the Visitor log nav item.

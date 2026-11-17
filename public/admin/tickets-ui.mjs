@@ -145,9 +145,9 @@ function boardCard(ticket) {
 }
 
 const BOARD_STYLE = '<style>.ticket-board{display:grid;grid-template-columns:repeat(4,minmax(200px,1fr));gap:12px;margin-top:12px;overflow-x:auto}'
-  + '.ticket-col{background:#f6f7fb;border:1px solid var(--line,#e6e8ee);border-radius:12px;padding:8px;min-height:160px}'
+  + '.ticket-col{background:var(--code-bg,#f6f7fb);border:1px solid var(--line,#e6e8ee);border-radius:12px;padding:8px;min-height:160px}'
   + '.ticket-col.drop{outline:2px dashed var(--blue,#1f4bdb)}.ticket-col h3{font-size:14px;margin:4px 4px 8px;display:flex;justify-content:space-between}'
-  + '.ticket-card{background:#fff;border:1px solid var(--line,#e6e8ee);border-radius:10px;padding:10px;margin-bottom:8px;cursor:grab}'
+  + '.ticket-card{background:var(--card,#fff);border:1px solid var(--line,#e6e8ee);border-radius:10px;padding:10px;margin-bottom:8px;cursor:grab}'
   + '.ticket-card p{margin:6px 0 0}.ticket-card-open{text-align:left;font-size:14px}.ticket-move{display:flex;gap:6px;margin-top:8px}.ticket-move select{flex:1;min-width:0}'
   + '.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}'
   + '.ticket-dialog{border:1px solid var(--line,#e6e8ee);border-radius:12px;max-width:440px;width:92vw}.ticket-dialog textarea{width:100%;min-height:110px}'
