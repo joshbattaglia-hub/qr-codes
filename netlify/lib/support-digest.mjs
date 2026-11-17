@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { env, ticketStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
-import { FOOTER_CAR, FOOTER_EMAIL } from "./footer.mjs";
+import { footerHtml, footerText } from "./footer.mjs";
 import { notifyRecipientOk, NOTIFY_DOMAIN, NOTIFY_RECIPIENTS_MAX } from "./visitor-log.mjs";
 import { allTicketRows, columnFor, columnLabel, isOpenStatus, NATIONAL_SITE_ID, NATIONAL_SITE_LABEL, QUEUES, STATUS_LABEL, TICKET_ADMIN_EMAIL } from "./tickets.mjs";
 
@@ -151,7 +151,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
   const subject = prefix + (jobs.length
     ? `Support digest: ${jobs.length} open ${label} job${jobs.length === 1 ? "" : "s"}${overdue ? ` (${overdue} overdue)` : ""} · ${prettyDate(date)}`
     : `Support digest: nothing open in ${label} · ${prettyDate(date)}`);
-  const footerText = `Built, not bought, by J.Batt ${FOOTER_CAR} — need changes? email me here: mailto:${FOOTER_EMAIL}`;
+  const footerLine = footerText();
   const lines = [];
   if (test) lines.push("This is a test digest. The daily schedule is not affected.", "");
   lines.push(jobs.length ? `${jobs.length} open ${label} job${jobs.length === 1 ? "" : "s"}, most overdue first.` : `No open ${label} jobs today.`, "");
@@ -162,7 +162,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
     lines.push(`  Submitted by ${j.submitter || "unknown"} · ${j.age}${j.assignee ? ` · Assignee ${j.assignee}` : ""}`);
     lines.push(`  ${j.link}`, "");
   }
-  lines.push(`Support: ${supportUrl}`, "", footerText);
+  lines.push(`Support: ${supportUrl}`, "", footerLine);
   const dueColour = (j) => (j.due.kind === "overdue" ? "#b42318" : j.due.kind === "today" ? "#b54708" : "#475467");
   const cards = jobs.map((j) => `<tr><td style="padding:12px 0;border-top:1px solid #e4e7ec">`
     + `<div style="font-weight:600;font-size:15px"><a href="${esc(j.link)}" style="color:#1f4bdb;text-decoration:none">T-${esc(j.number)}</a> · ${esc(j.subject)}</div>`
@@ -175,7 +175,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
     + `<h2 style="margin:0 0 4px;font-size:18px">Express Help · ${esc(label)} digest</h2><p style="margin:0 0 12px;color:#667085">${esc(prettyDate(date))} · ${jobs.length ? `${jobs.length} open, ${overdue} overdue, most overdue first` : "nothing open"}</p>`
     + (jobs.length ? `<table role="presentation" style="width:100%;border-collapse:collapse">${cards}</table>` : `<p>No open ${esc(label)} jobs today.</p>`)
     + `<p style="margin-top:16px"><a href="${esc(supportUrl)}" style="color:#1f4bdb">Open Support</a></p>`
-    + `<p style="margin-top:24px;font-size:12px;color:#667085;text-align:center">Built, not bought, by J.Batt <span style="font-family:'Segoe UI Symbol','Noto Sans Symbols 2','Apple Symbols',sans-serif;font-variant-emoji:text">${FOOTER_CAR}</span> — need changes? <a href="mailto:${FOOTER_EMAIL}" style="color:#667085">email me here</a></p></div>`;
+    + footerHtml() + `</div>`;
   return { subject, text: lines.join("\n"), html, count: jobs.length, overdue };
 }
 

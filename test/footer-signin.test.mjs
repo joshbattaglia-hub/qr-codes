@@ -18,21 +18,54 @@ test("every static HTML page loads the shared footer (future pages fail this tes
   for (const file of files) assert.match(fs.readFileSync(file, "utf8"), /<script src="\/footer\.js" defer><\/script>/, file);
 });
 
-test("footer text, emoji code points and mailto are exact in both the script and the server helper", async () => {
+test("footer text and mailto are exact in both the script and the server helper", async () => {
   const script = fs.readFileSync(path.join(root, "footer.js"), "utf8");
-  assert.match(script, /"Built, not bought, by J\.Batt "/);
-  assert.match(script, /"\\uD83C\\uDFCE\\uFE0E"/);
-  assert.match(script, /" \\u2014 need changes\? "/);
+  assert.match(script, /"Cowabunga - please hesitate to reach out "/);
   assert.match(script, /mailto:jbattaglia@libertyretail\.com\.au/);
   assert.match(script, /"email me here"/);
-  assert.match(script, /Segoe UI Symbol/);
-  const { footerHtml, FOOTER_CAR } = await import("../netlify/lib/footer.mjs");
-  assert.deepEqual([...FOOTER_CAR].map((c) => c.codePointAt(0).toString(16)), ["1f3ce", "fe0e"]);
+  assert.match(script, /font:11px\/1\.5/);
+  const { footerHtml, footerText, FOOTER_LEAD } = await import("../netlify/lib/footer.mjs");
+  assert.equal(FOOTER_LEAD, "Cowabunga - please hesitate to reach out");
   const html = footerHtml();
-  const text = html.replace(/<[^>]+>/g, "");
-  assert.equal(text, "Built, not bought, by J.Batt \u{1F3CE}\uFE0E \u2014 need changes? email me here");
+  assert.equal(html.replace(/<[^>]+>/g, ""), "Cowabunga - please hesitate to reach out email me here");
   assert.match(html, /<a href="mailto:jbattaglia@libertyretail\.com\.au"[^>]*>email me here<\/a>/);
+  assert.match(html, /font:11px\/1\.5/);
   assert.match(html, /^<footer /);
+  assert.equal(footerText(), "Cowabunga - please hesitate to reach out email me here: mailto:jbattaglia@libertyretail.com.au");
+});
+
+test("the old footer wording and the racing-car emoji are gone everywhere in the repository", () => {
+  const root = new URL("../", import.meta.url).pathname;
+  const skip = new Set(["node_modules", ".git", ".netlify", "screenshots"]);
+  const hits = [];
+  const old = [/Built, not bought/i, /J\.Batt/, /need changes/i, /\u{1F3CE}/u, /\\uD83C\\uDFCE/i, /\\u\{1F3CE\}/i, /FOOTER_CAR/, /eh-car/, /racing car/i];
+  (function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!/\.(html|js|mjs|css|md|json|toml|txt)$/.test(entry.name) || entry.name === "package-lock.json") continue;
+      if (full.endsWith("test/footer-signin.test.mjs")) continue;
+      const text = fs.readFileSync(full, "utf8");
+      for (const re of old) if (re.test(text)) hits.push(path.relative(root, full) + " " + re);
+    }
+  })(root);
+  assert.deepEqual(hits, []);
+});
+
+test("every email that carries the footer uses the new wording, in HTML and plain text", async () => {
+  const { footerHtml, footerText } = await import("../netlify/lib/footer.mjs");
+  const cred = await import("../netlify/lib/credentials.mjs");
+  const FOOT = footerText();
+  for (const kind of ["invite", "reset"]) {
+    const m = cred.inviteMessage("synthetic@libertyretail.com.au", "t" + "a".repeat(24) + "." + "b".repeat(43), kind, Date.now() + 3600e3);
+    assert.ok(m.text.endsWith(FOOT), kind + " text");
+    assert.ok(m.html.includes(footerHtml()), kind + " html");
+    assert.equal(/Built, not bought|J\.Batt|need changes|\u{1F3CE}/u.test(m.text + m.html), false);
+  }
+  const src = fs.readFileSync(new URL("../netlify/lib/support-digest.mjs", import.meta.url), "utf8");
+  assert.match(src, /footerText\(\)/);
+  assert.match(src, /footerHtml\(\)/);
 });
 
 test("server-rendered pages include the footer", async () => {
