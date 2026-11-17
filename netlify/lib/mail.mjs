@@ -44,6 +44,7 @@ export async function deliver(message) {
         to: [message.to],
         subject: message.subject,
         text: message.text,
+        html: message.html || undefined,
         attachments: message.attachments || undefined,
         reply_to: message.replyTo || undefined,
       }),

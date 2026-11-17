@@ -63,6 +63,7 @@ export function doneAt(ticket) {
   return ticket?.updatedAt || ticket?.createdAt || "";
 }
 const OPEN = new Set(["new", "in-progress", "awaiting", "scheduled"]);
+export function isOpenStatus(status) { return OPEN.has(status); }
 const FILE_MAX = 1_500_000;
 const TEXT_MAX = 4000;
 

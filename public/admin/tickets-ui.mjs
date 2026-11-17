@@ -378,6 +378,21 @@ function parseMapping(lines, key) {
   }).filter((row) => row.email || row.domain);
 }
 
+function digestCard(d) {
+  if (!d) return "";
+  const queues = ["screens", "signage"].map((q) => '<label class="check"><input type="checkbox" class="digest-queue" value="' + q + '"' + ((d.queues || []).includes(q) ? " checked" : "") + "> " + esc(QUEUE_LABEL[q]) + "</label>").join(" ");
+  return '<div class="field-card" data-testid="ticket-digest"><h2>Daily digest email</h2>'
+    + '<p class="muted small">Once a day, each recipient gets their own email listing open jobs in the chosen queues, most overdue first, with a link to each ticket. Sent at most once a day (Melbourne time), only in the ' + esc(Math.round((d.windowMinutes || 180) / 60)) + ' hours after the set time.</p>'
+    + '<label class="check"><input id="digest-enabled" type="checkbox"' + (d.enabled ? " checked" : "") + "> Send the daily digest</label>"
+    + '<label class="field"><span>Time (Melbourne)</span><input id="digest-time" type="time" step="900" value="' + esc(d.time || "07:00") + '"></label>'
+    + '<label class="field"><span>Recipients (exact @libertyretail.com.au, one per line, up to 10)</span><textarea id="digest-recipients" rows="3">' + esc((d.recipients || []).join("\n")) + "</textarea></label>"
+    + '<div class="field"><span>Queues</span><div>' + queues + "</div></div>"
+    + '<label class="field"><span>When nothing is open</span><select id="digest-empty"><option value="skip"' + (d.emptyDay !== "note" ? " selected" : "") + '>Skip the email</option><option value="note"' + (d.emptyDay === "note" ? " selected" : "") + '>Send a short "nothing open" note</option></select></label>'
+    + '<p><button class="btn" type="button" data-act="ticket-save-digest">Save digest settings</button> <button class="btn ghost" type="button" data-act="ticket-digest-test">Send a test digest to me</button></p>'
+    + '<p class="small muted">The test goes only to ' + esc(d.testTo || "you") + ", is marked [TEST], and does not affect the daily send.</p>"
+    + '<p id="digest-note" class="small" role="status"></p></div>';
+}
+
 async function paintSettings(box, access) {
   if (access.role !== "admin") {
     box.innerHTML = denied();
@@ -386,6 +401,7 @@ async function paintSettings(box, access) {
   const settings = await api("/api/tickets/settings");
   const sites = await api("/api/tickets/sites").then((body) => body.sites || []).catch(() => []);
   const held = await api("/api/tickets/quarantine").catch(() => ({ quarantine: [] }));
+  const digest = await api("/api/tickets/digest").catch(() => null);
   const siteRef = sites.map((site) => esc(site.id) + " — " + esc(site.name) + (site.area ? " · " + esc(site.area) : "")).join("<br>");
   const origin = (location.origin || "https://expresshelp.site").replace(/\/+$/, "");
   const postmarkUrl = origin + "/api/support/inbound/postmark?token=";
@@ -423,6 +439,7 @@ async function paintSettings(box, access) {
     + "<p>If you use Resend receiving, copy the MX record shown for your domain in the Resend dashboard (values vary by region). Webhook URL: <code>" + esc(resendUrl) + "</code> plus <code>TICKET_INBOUND_SECRET</code>. Optionally set <code>RESEND_WEBHOOK_SECRET</code> so the Svix signature is also checked. The receiving API uses the existing <code>RESEND_API_KEY</code>.</p>"
     + '<p>Docs: <a href="https://resend.com/docs/dashboard/receiving/" target="_blank" rel="noopener">Receiving emails</a>, <a href="https://resend.com/docs/webhooks/emails/received" target="_blank" rel="noopener">email.received</a>, <a href="https://resend.com/docs/webhooks/verify-webhooks-requests" target="_blank" rel="noopener">Verify webhooks</a>, <a href="https://resend.com/docs/dashboard/receiving/custom-domains" target="_blank" rel="noopener">Custom receiving domains</a>.</p>'
     + "<p class=\"muted small\">Inbound mail is not accepted until the secret, at least one queue address, and the inbound switch are set. There are no auto-replies. Failed authentication or an unknown sender is held for review.</p></div>"
+    + digestCard(digest)
     + "<h2>Quarantine</h2>"
     + '<div class="table-wrap"><table><thead><tr><th>When</th><th>From</th><th>Subject</th><th>Reason</th><th></th></tr></thead><tbody>'
     + (quarantine || '<tr><td colspan="5">No held mail.</td></tr>') + "</tbody></table></div>"
@@ -555,6 +572,25 @@ export async function ticketAction(button, state, go) {
   if (act === "ticket-close") {
     const photo = (await filesFromInput("ticket-close-photo", { photoOnly: true }))[0];
     await api("/api/tickets/" + id + "/close", { method: "POST", body: JSON.stringify({ notes: document.getElementById("ticket-close").value, photo: photo?.data || "" }) });
+  }
+  if (act === "ticket-save-digest" || act === "ticket-digest-test") {
+    const out = document.getElementById("digest-note");
+    try {
+      if (act === "ticket-save-digest") {
+        await api("/api/tickets/digest", { method: "PUT", body: JSON.stringify({
+          enabled: !!document.getElementById("digest-enabled")?.checked,
+          time: document.getElementById("digest-time")?.value || "",
+          recipients: lines("digest-recipients"),
+          queues: [...document.querySelectorAll(".digest-queue:checked")].map((el) => el.value),
+          emptyDay: document.getElementById("digest-empty")?.value || "skip",
+        }) });
+        if (out) out.textContent = "Digest settings saved.";
+      } else {
+        const result = await api("/api/tickets/digest/test", { method: "POST", body: JSON.stringify({}) });
+        if (out) out.textContent = result.sent ? "Test digest sent to " + result.to + " (" + result.count + " open jobs)." : "The test digest was not confirmed as sent (" + (result.status || "unknown") + ").";
+      }
+    } catch (err) { if (out) out.textContent = err.message; }
+    return;
   }
   if (act === "ticket-save-settings") {
     const current = state.ticketAccess?.settings || await api("/api/tickets/settings");
