@@ -275,3 +275,18 @@ tr.clickable:hover{background:#f8fafc}
 .wh-admin-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .wh-admin-row .field{margin:0;min-width:160px}
 .warehouse-page .btn-xs{padding:6px 10px;font-size:13px}
+.perm-list{display:grid;gap:10px;margin:10px 0}
+.perm-tool{border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden}
+.perm-tool.on{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue) inset}
+.perm-head{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;cursor:pointer}
+.perm-head input{margin-top:4px;width:18px;height:18px;flex:none}
+.perm-head>span{display:flex;flex-direction:column;gap:2px}
+.perm-body{padding:2px 14px 14px 44px;border-top:1px dashed var(--line);background:var(--soft)}
+.perm-body[hidden]{display:none}
+.perm-body .check{display:flex;margin:6px 0}
+.perm-locked{opacity:.7}
+.perm-locked .perm-head,.perm-head.perm-locked{cursor:default}
+.perm-summary{background:var(--soft);color:var(--navy);border-radius:10px;padding:10px 12px;font-weight:600;margin:10px 0}
+@media (max-width:640px){.perm-body{padding-left:14px}}
+.visitor-sheet .pill{display:inline-block;width:auto;padding:1px 9px;margin:0 0 0 6px;font-size:12px}
+.visitor-sheet td:last-child{white-space:nowrap}

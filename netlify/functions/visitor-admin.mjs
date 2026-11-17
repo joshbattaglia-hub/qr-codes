@@ -14,7 +14,9 @@ export default async (req) => {
   const actor = await actorFromRequest(req);
   if (path === "/api/visitor-log/readiness" && req.method === "GET") {
     const role = await visitorRole(actor);
-    return json(200, { ...visitorReadiness(), granted: role !== "none", role }, PRIVATE);
+    // People without Visitor Log access get no readiness detail (the tab is off for them).
+    if (role === "none") return json(403, { granted: false, role: "none", error: "Visitor log access is not granted." }, PRIVATE);
+    return json(200, { ...visitorReadiness(), granted: true, role }, PRIVATE);
   }
   if (!actor) return json(401, { error: "Unauthorized" }, PRIVATE);
   if (path === "/api/visitor-log/sheet-check") {

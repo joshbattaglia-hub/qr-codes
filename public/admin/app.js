@@ -1,5 +1,6 @@
 import { CODE39_DEFAULTS, readLayout, validatePayload, parseBatch, code39Svg, safeAssetName, zipStore, printHtml } from "./code39.mjs";
 import { warehousePage, paintWarehouse, warehouseAction } from "./warehouse-ui.mjs";
+import { ASSET_LABELS, HEAD_ONLY_TABS, effectiveAssets, tabsFor } from "./permissions.mjs";
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 
@@ -1706,20 +1707,22 @@ function assetAction(act) {
 }
 function assetPage() {
   const d = CODE39_DEFAULTS;
+  const lock = state.actor?.kind === "verified-identity" && state.actor?.provider === "otp" && !state.actor?.owner && effectiveAssets(state.actor) === "view";
+  const ro = lock ? " readonly" : "";
   return '<div class="asset-page" id="asset-page" data-testid="asset-page"><div class="page-head"><div><p class="asset-kicker">Asset labels</p><h1>Asset Barcodes</h1><p class="muted">Equipment stickers use standard Code 39. This tab does not create POS vouchers, offers, or claim links.</p></div></div>'
     + '<form id="asset-form" class="asset-layout"><div class="card"><h2>Single ID</h2><label class="field"><span>Asset ID</span><input name="payload" data-testid="asset-id" value="' + esc(d.payload) + '" autocomplete="off" spellcheck="false" maxlength="40"></label>'
     + '<label class="check"><input type="checkbox" name="uppercase" value="on"> Convert lower-case letters to uppercase. I confirm this change.</label>'
-    + '<label class="field"><span>Label heading</span><input name="heading" data-testid="asset-heading" value="' + esc(d.heading) + '" maxlength="80"></label>'
+    + '<label class="field"><span>Label heading</span><input name="heading"' + ro + ' data-testid="asset-heading" value="' + esc(d.heading) + '" maxlength="80"></label>'
     + '<h2>Batch</h2><label class="field"><span>One ID per line</span><textarea name="batch" data-testid="asset-batch" maxlength="4000" placeholder="LOC50924&#10;TEST-1"></textarea></label>'
     + '<p class="small muted">Empty lines are skipped. Up to 40 IDs, 40 characters each. Interior spaces stay in the ID.</p>'
     + '<h2>Label size</h2><div class="asset-dims">'
-    + '<label class="field"><span>Label width (mm)</span><input name="labelWidthMm" type="number" min="20" max="150" step="1" value="' + d.labelWidthMm + '"></label>'
-    + '<label class="field"><span>Label height (mm)</span><input name="labelHeightMm" type="number" min="15" max="80" step="1" value="' + d.labelHeightMm + '"></label>'
-    + '<label class="field"><span>Narrow module (mm)</span><input name="moduleMm" type="number" min="0.19" max="1" step="0.01" value="' + d.moduleMm + '"></label>'
-    + '<label class="field"><span>Wide to narrow</span><input name="ratio" type="number" min="2" max="3" step="0.1" value="' + d.ratio + '"></label>'
-    + '<label class="field"><span>Bar height (mm)</span><input name="barHeightMm" type="number" min="5" max="40" step="0.5" value="' + d.barHeightMm + '"></label>'
-    + '<label class="field"><span>Quiet zone (modules)</span><input name="quietModules" type="number" min="10" max="30" step="1" value="' + d.quietModules + '"></label>'
-    + '</div><p class="small muted">Quiet zone stays at least 10 narrow modules. If the bars do not fit the label, the message says so. The module width is not reduced to force a fit.</p>'
+    + '<label class="field"><span>Label width (mm)</span><input name="labelWidthMm"' + ro + ' type="number" min="20" max="150" step="1" value="' + d.labelWidthMm + '"></label>'
+    + '<label class="field"><span>Label height (mm)</span><input name="labelHeightMm"' + ro + ' type="number" min="15" max="80" step="1" value="' + d.labelHeightMm + '"></label>'
+    + '<label class="field"><span>Narrow module (mm)</span><input name="moduleMm"' + ro + ' type="number" min="0.19" max="1" step="0.01" value="' + d.moduleMm + '"></label>'
+    + '<label class="field"><span>Wide to narrow</span><input name="ratio"' + ro + ' type="number" min="2" max="3" step="0.1" value="' + d.ratio + '"></label>'
+    + '<label class="field"><span>Bar height (mm)</span><input name="barHeightMm"' + ro + ' type="number" min="5" max="40" step="0.5" value="' + d.barHeightMm + '"></label>'
+    + '<label class="field"><span>Quiet zone (modules)</span><input name="quietModules"' + ro + ' type="number" min="10" max="30" step="1" value="' + d.quietModules + '"></label>'
+    + '</div><p class="small muted">' + (lock ? "Standard labels only: label size, heading and bar settings are fixed for your access. " : "") + 'Quiet zone stays at least 10 narrow modules. If the bars do not fit the label, the message says so. The module width is not reduced to force a fit.</p>'
     + '<div class="asset-actions"><button class="btn" type="button" data-act="asset-download">Download SVG</button><button class="btn ghost" type="button" data-act="asset-copy">Copy SVG</button><button class="btn ghost" type="button" data-act="asset-print">Print label</button><button class="btn ghost" type="button" data-act="asset-zip">Download batch ZIP</button><button class="btn ghost" type="button" data-act="asset-sheet">Print sheet</button></div>'
     + '<p id="asset-copy" class="small" role="status" data-testid="asset-status"></p></div>'
     + '<div class="card"><h2>Preview</h2><div id="asset-preview" class="asset-preview"></div><p id="asset-notes" class="asset-note small"></p></div></form></div>';
@@ -1842,25 +1845,86 @@ function posOptions(email, options) {
   }
   return out;
 }
+const TAB_NAMES = { pos: "POS setup", sites: "Sites", assets: "Asset Barcodes", warehouse: "Warehouse Stickers", visitors: "Visitor Log", tickets: "Support", users: "Users" };
+function permTool(key, title, desc, checked, body, locked) {
+  return '<section class="perm-tool' + (checked ? " on" : "") + '" data-tool="' + key + '" data-testid="perm-' + key + '"><label class="perm-head"><input type="checkbox" class="perm-toggle" id="perm-' + key + '" data-tool="' + key + '"' + (checked ? " checked" : "") + (locked ? " disabled" : "") + '><span><strong>' + title + '</strong><span class="muted small">' + desc + '</span></span></label>'
+    + '<div class="perm-body"' + (checked ? "" : " hidden") + ">" + body + "</div></section>";
+}
+function permSummary(tabs) {
+  return tabs.length ? "Menu tabs they will see: " + tabs.map((t) => TAB_NAMES[t]).join(", ") + "." : "No tabs yet. Tick at least one tool.";
+}
 function userForm(data) {
   const editing = state.userEdit && state.userEdit !== "new" ? data.users.find((u) => u.email === state.userEdit) : null;
-  const u = editing || { email: "", approverKey: "", preparerClass: "", siteIds: [], visitor: "none", tickets: [], warehouse: false };
+  const u = editing || { email: "", approverKey: "", preparerClass: "", siteIds: [], visitor: "none", tickets: [], warehouse: false, warehouseGenerate: true, warehouseReprint: true, assets: "none" };
   const owner = !!editing?.owner;
   const opts = data.options;
   const posValue = (u.approverKey || "") + "|" + (u.preparerClass || "");
-  const pos = posOptions(u.email, opts).map((o) => '<option value="' + esc(o.value) + '"' + ((o.value || "|") === posValue ? " selected" : "") + '>' + esc(o.label) + '</option>').join("");
+  const pos = posOptions(u.email, opts).map((o) => '<option value="' + esc(o.value) + '"' + ((o.value || "|") === posValue ? " selected" : "") + '>' + esc(o.value ? o.label : "Choose a role…") + '</option>').join("");
   const have = new Set(u.siteIds || []);
   const sites = (data.sites || []).map((site) => '<label class="check user-site" data-name="' + esc(site.name.toLowerCase()) + '"><input type="checkbox" name="user-site" value="' + esc(site.id) + '"' + (have.has(site.id) ? " checked" : "") + '> ' + esc(site.name) + '</label>').join("");
-  const visitor = owner ? '<p class="muted">Owner: full Visitor Log access (cannot be changed).</p>' : (opts.visitorLevels || []).map((level) => '<label class="check"><input type="radio" name="user-visitor" value="' + level + '"' + (u.visitor === level ? " checked" : "") + '> ' + esc(VISITOR_LEVEL_LABELS[level] || level) + '</label>').join("");
-  const tickets = owner ? '<p class="muted">Owner: Support Tickets admin for all areas.</p>' : (opts.queues || []).map((q) => '<label class="check"><input type="checkbox" name="user-ticket" value="' + q + '"' + ((u.tickets || []).includes(q) ? " checked" : "") + '> ' + esc(q === "screens" ? "Screens" : q === "signage" ? "Signage" : q) + '</label>').join("");
-  return '<div class="card user-form" data-testid="user-form"><h2>' + (editing ? "Edit " + esc(u.email) : "Add user") + '</h2>'
-    + (editing ? '<input type="hidden" id="user-email" value="' + esc(u.email) + '">' : '<label class="field"><span>Email (exact @' + esc(opts.domain) + ')</span><input id="user-email" type="email" maxlength="254" autocomplete="off" placeholder="name@' + esc(opts.domain) + '" data-testid="user-email"></label>')
-    + '<h3>POS setup</h3>' + (owner ? '<p class="muted">Owner roles: ' + esc(posLabel(u)) + ' (cannot be changed here).</p><input type="hidden" id="user-pos" value="' + esc(posValue) + '">' : '<label class="field"><span>POS role</span><select id="user-pos" data-testid="user-pos">' + pos + '</select></label><p class="muted small">Approver roles are tied to their own address. Choose None for people who only use the Visitor Log or Support.</p>')
-    + '<h3>Sites</h3><p class="muted small">Sites this person can see in POS setup and Sites. Only used with a POS role.</p><label class="field"><span>Filter sites</span><input id="user-site-filter" autocomplete="off" placeholder="Type to filter"></label><div class="user-sites" data-testid="user-sites">' + sites + '</div>'
-    + '<h3>Visitor Log</h3>' + visitor
-    + '<h3>Support Tickets</h3><p class="muted small">Areas (queues) this person works on as ticket staff.</p>' + tickets
-    + '<h3>Warehouse Stickers</h3>' + (owner ? '<p class="muted">Owner: full Warehouse Stickers access, including the next-number setting.</p>' : '<label class="check"><input type="checkbox" id="user-warehouse" data-testid="user-warehouse"' + (u.warehouse ? " checked" : "") + '> Can print Warehouse Stickers (sequential WH sticker sheets). With no other permission, this person sees only that tool.</label>')
+  const hasPos = !!(u.approverKey || u.preparerClass);
+  const visitorOn = u.visitor && u.visitor !== "none";
+  const vLevels = (opts.visitorLevels || []).filter((l) => l !== "none");
+  const assetsLevel = u.assets && u.assets !== "none" ? u.assets : "custom";
+  const queuesOn = (u.tickets || []).length > 0;
+  const head = '<h2>' + (editing ? "Edit " + esc(u.email) : "Add user") + '</h2>'
+    + (editing ? '<input type="hidden" id="user-email" value="' + esc(u.email) + '">' : '<label class="field"><span>Email (exact @' + esc(opts.domain) + ')</span><input id="user-email" type="email" maxlength="254" autocomplete="off" placeholder="name@' + esc(opts.domain) + '" data-testid="user-email"></label>');
+  if (owner) {
+    return '<div class="card user-form" data-testid="user-form">' + head
+      + '<p class="muted" data-testid="perm-owner-note">Owner: full access to every tool, including Users and the Warehouse Stickers next-number setting. This cannot be changed here.</p>'
+      + '<div class="perm-list">' + ["POS setup and Sites", "Asset Barcodes", "Warehouse Stickers", "Visitor Log", "Support", "Users"].map((t) => '<label class="perm-head perm-locked"><input type="checkbox" checked disabled><span><strong>' + t + '</strong></span></label>').join("") + '</div>'
+      + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="user-cancel">Close</button></div></div>';
+  }
+  const tools = [
+    permTool("pos", "POS setup and Sites", "Draft and approve POS offers for the sites chosen below.", hasPos,
+      '<label class="field"><span>POS role</span><select id="user-pos" data-testid="user-pos">' + pos + '</select></label><p class="muted small">Approver roles are tied to their own address.</p>'
+      + '<p class="muted small">Sites this person can see in POS setup and Sites.</p><label class="field"><span>Filter sites</span><input id="user-site-filter" autocomplete="off" placeholder="Type to filter"></label><div class="user-sites" data-testid="user-sites">' + sites + "</div>"),
+    permTool("assets", "Asset Barcodes", "Code 39 equipment stickers.", u.assets !== "none" && (u.assets === "view" || u.assets === "custom"),
+      ["custom", "view"].map((l) => '<label class="check"><input type="radio" name="user-assets" value="' + l + '"' + (assetsLevel === l ? " checked" : "") + "> " + esc(ASSET_LABELS[l]) + "</label>").join("")
+      + '<p class="muted small">Standard labels only: can type IDs and print, but cannot change label size, heading or bar settings. Asset Barcodes holds no saved data, so this limit is in the page itself.</p>'),
+    permTool("warehouse", "Warehouse Stickers", "Sequential WH sticker sheets (WH1000, WH1001, …).", !!u.warehouse,
+      '<label class="check"><input type="checkbox" id="user-wh-generate" data-testid="user-wh-generate"' + (u.warehouseGenerate !== false ? " checked" : "") + '> Generate new sheets</label>'
+      + '<label class="check"><input type="checkbox" id="user-wh-reprint" data-testid="user-wh-reprint"' + (u.warehouseReprint !== false ? " checked" : "") + '> Reprint earlier sheets (does not use new numbers)</label>'
+      + '<label class="check perm-locked"><input type="checkbox" disabled> Change the next number <span class="muted small">Admins only (Joshua and the head-office sign-in). Not available to other users.</span></label>'),
+    permTool("visitors", "Visitor Log", "Visitor sign-ins and records.", !!visitorOn,
+      vLevels.map((level) => '<label class="check"><input type="radio" name="user-visitor" value="' + level + '"' + ((visitorOn ? u.visitor : "view") === level ? " checked" : "") + '> ' + esc(VISITOR_LEVEL_LABELS[level] || level) + '</label>').join("")),
+    permTool("tickets", "Support", "Support tickets for the areas ticked. Support admin (all areas, settings) stays with Joshua.", queuesOn,
+      (opts.queues || []).map((q) => '<label class="check"><input type="checkbox" name="user-ticket" value="' + q + '"' + ((u.tickets || []).includes(q) ? " checked" : "") + '> ' + esc(q === "screens" ? "Screens" : q === "signage" ? "Signage" : q) + '</label>').join("")),
+    '<section class="perm-tool perm-locked" data-testid="perm-users"><label class="perm-head"><input type="checkbox" disabled><span><strong>Users</strong><span class="muted small">Owner only. Cannot be given to anyone else.</span></span></label></section>',
+  ].join("");
+  return '<div class="card user-form" data-testid="user-form">' + head
+    + '<h3>What can this person use?</h3><p class="muted small">Tick a tool to show it in their menu and open its finer settings. Unticked tools are hidden and refused by the server.</p>'
+    + '<div class="perm-list">' + tools + '</div>'
+    + '<p class="muted small" data-testid="perm-head-only">Head-office password only, not available to email-code users: ' + HEAD_ONLY_TABS.join(", ") + '.</p>'
+    + '<p class="perm-summary" id="perm-summary" data-testid="perm-summary" role="status">' + esc(permSummary(editing ? (editing.tabs || []) : [])) + '</p>'
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-save" data-mode="' + (editing ? "edit" : "add") + '" data-testid="user-save">Save</button><button class="btn ghost" type="button" data-act="user-cancel">Cancel</button></div><p id="user-note" class="small err"></p></div>';
+}
+/** Read the checklist into the save payload. Unticked tools send "off" values so the server removes that access. */
+function collectUserPerms() {
+  const on = (key) => !!document.getElementById("perm-" + key)?.checked;
+  const [approverKey, preparerClass] = String(document.getElementById("user-pos")?.value || "|").split("|");
+  if (on("pos") && !approverKey && !preparerClass) return { error: "Choose a POS role, or untick POS setup and Sites." };
+  const tickets = on("tickets") ? [...document.querySelectorAll('input[name="user-ticket"]:checked')].map((el) => el.value) : [];
+  if (on("tickets") && !tickets.length) return { error: "Tick at least one Support area, or untick Support." };
+  return {
+    approverKey: on("pos") ? approverKey || "" : "",
+    preparerClass: on("pos") ? preparerClass || "" : "",
+    siteIds: on("pos") ? [...document.querySelectorAll('input[name="user-site"]:checked')].map((el) => el.value) : [],
+    assets: on("assets") ? (document.querySelector('input[name="user-assets"]:checked')?.value || "custom") : "none",
+    warehouse: on("warehouse"),
+    warehouseGenerate: on("warehouse") ? !!document.getElementById("user-wh-generate")?.checked : true,
+    warehouseReprint: on("warehouse") ? !!document.getElementById("user-wh-reprint")?.checked : true,
+    visitor: on("visitors") ? (document.querySelector('input[name="user-visitor"]:checked')?.value || "view") : "none",
+    tickets,
+  };
+}
+function refreshPermSummary() {
+  const list = [];
+  const on = (key) => !!document.getElementById("perm-" + key)?.checked;
+  if (on("pos")) list.push("pos", "sites");
+  for (const [key, route] of [["assets", "assets"], ["warehouse", "warehouse"], ["visitors", "visitors"], ["tickets", "tickets"]]) if (on(key)) list.push(route);
+  const box = document.getElementById("perm-summary");
+  if (box) box.textContent = permSummary(list);
 }
 async function paintUsers() {
   const box = document.getElementById("users-body");
@@ -1870,14 +1934,21 @@ async function paintUsers() {
   if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p><p class="muted">Users is managed with your email code sign-in.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>'; return; }
   state.usersData = data;
   const mig = data.migration;
-  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + (u.owner ? "Admin" : u.warehouse ? "Yes" : "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
+  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
   const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
   box.innerHTML = (mig ? '<p class="muted small" data-testid="users-migration">Moved from the previous sign-in list on ' + esc(new Date(mig.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + ': ' + esc(String(mig.users)) + ' users, effective access ' + (mig.same ? "identical" : "NOT identical") + ' (' + esc(String(mig.checked)) + ' addresses checked).</p>' : "")
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-add-open" data-testid="user-add-open">Add user</button></div>'
-    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th>Warehouse Stickers</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th>Menu tabs</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
     + (state.userEdit ? userForm(data) : "")
     + '<h2>History</h2><ul class="user-history" data-testid="users-history">' + (history || '<li class="muted">No changes yet.</li>') + '</ul>'
     + '<p class="muted small">Not managed here: the head-office password (QR codes, links, pages, competitions, vouchers, templates, domains and workspace settings) and site-manager password logins.</p>';
+  document.querySelectorAll(".perm-toggle").forEach((box) => box.addEventListener("change", () => {
+    const tool = box.closest(".perm-tool");
+    const body = tool?.querySelector(".perm-body");
+    if (body) body.hidden = !box.checked;
+    tool?.classList.toggle("on", box.checked);
+    refreshPermSummary();
+  }));
   const filter = document.getElementById("user-site-filter");
   if (filter) filter.addEventListener("input", () => {
     const q = filter.value.trim().toLowerCase();
@@ -1886,7 +1957,7 @@ async function paintUsers() {
   const emailInput = document.getElementById("user-email");
   if (emailInput && state.userEdit === "new") emailInput.addEventListener("change", () => {
     const select = document.getElementById("user-pos");
-    if (select) select.innerHTML = posOptions(emailInput.value, data.options).map((o) => '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>').join("");
+    if (select) select.innerHTML = posOptions(emailInput.value, data.options).map((o) => '<option value="' + esc(o.value) + '">' + esc(o.value ? o.label : "Choose a role…") + '</option>').join("");
   });
   if (state.userEdit) document.querySelector(".user-form")?.scrollIntoView({ block: "start" });
 }
@@ -2000,30 +2071,37 @@ async function visitorAction(button) {
   }
   if (act === "user-cancel") { state.userEdit = ""; return paintUsers(); }
   if (act === "user-save") {
-    const [approverKey, preparerClass] = String(document.getElementById("user-pos")?.value || "|").split("|");
-    const payload = {
-      mode: button.dataset.mode,
-      email: document.getElementById("user-email")?.value || "",
-      approverKey: approverKey || "",
-      preparerClass: preparerClass || "",
-      siteIds: [...document.querySelectorAll('input[name="user-site"]:checked')].map((el) => el.value),
-      visitor: document.querySelector('input[name="user-visitor"]:checked')?.value || "none",
-      tickets: [...document.querySelectorAll('input[name="user-ticket"]:checked')].map((el) => el.value),
-      warehouse: !!document.getElementById("user-warehouse")?.checked,
-    };
-    const response = await fetch("/api/users/save", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) { const note = document.getElementById("user-note"); if (note) note.textContent = body.error || "Not saved"; return; }
-    state.userEdit = "";
-    toast("User saved");
-    return paintUsers();
+    if (button.disabled) return;
+    const note = document.getElementById("user-note");
+    const perms = collectUserPerms();
+    if (perms.error) { if (note) note.textContent = perms.error; return; }
+    const payload = { mode: button.dataset.mode, email: document.getElementById("user-email")?.value || "", ...perms };
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Saving…";
+    button.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch("/api/users/save", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) { if (note) note.textContent = body.error || "Not saved"; return; }
+      state.userEdit = "";
+      toast("User saved");
+      return paintUsers();
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = label;
+    }
   }
   if (act === "user-remove") {
     const email = button.dataset.email || "";
     if (!confirm("Remove " + email + "? Their access ends now, including any open session.")) return;
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = "Removing…";
     const response = await fetch("/api/users/remove", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) { toast(body.error || "Not removed"); return; }
+    if (!response.ok) { button.disabled = false; button.textContent = "Remove"; toast(body.error || "Not removed"); return; }
     state.userEdit = "";
     toast("Removed " + email);
     return paintUsers();
@@ -2205,7 +2283,8 @@ async function render(opts = {}) {
   const gen = ++renderGen;
   ensureRanges();
   const r = route();
-  if (isBuildingMaintenance() && !limitedRoutes().includes(r.name)) { location.replace("#/" + (limitedRoutes()[0] || "visitors")); return; }
+  const allowedTabs = accessRoutes();
+  if (allowedTabs && !allowedTabs.includes(r.name)) { location.replace("#/" + (allowedTabs[0] || "visitors")); return; }
   if (r.name === "users" && !state.actor?.owner) { location.replace("#/home"); return; }
   const key = r.name + "/" + r.id;
   const keep = opts.keepScroll || (opts.refetch === false && key === lastRouteKey);
@@ -2927,13 +3006,13 @@ async function saveCollection(form) {
 function isBuildingMaintenance() {
   return state.actor?.role === "building-maintenance";
 }
-function limitedRoutes() {
-  const out = [];
-  if (state.actor?.visitor && state.actor.visitor !== "none") out.push("visitors");
-  if (state.limitedTickets) out.push("tickets");
-  if (state.actor?.warehouse === true) out.push("warehouse");
-  return out;
+/** Tabs an email-code user may open, from the Users checklist (same rules as the server). null = no restriction (head office, owner, other sign-ins). */
+function accessRoutes() {
+  const a = state.actor;
+  if (!a || a.kind !== "verified-identity" || a.provider !== "otp" || a.owner) return null;
+  return tabsFor(a, state.limitedTickets ? ["support"] : []);
 }
+function limitedRoutes() { return accessRoutes() || []; }
 async function enter() {
   if (isBuildingMaintenance()) {
     // Visitor Log view-only: load nothing else and show only the Visitor log nav item.
@@ -2946,7 +3025,7 @@ async function enter() {
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
     const allowed = limitedRoutes();
     document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (!allowed.includes(btn.dataset.go)) btn.hidden = true; });
-    const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : state.limitedTickets ? "Support" : state.actor?.warehouse ? "Warehouse Stickers" : "Support";
+    const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : state.limitedTickets ? "Support" : state.actor?.warehouse ? "Warehouse Stickers" : state.actor?.assets && state.actor.assets !== "none" ? "Asset Barcodes" : "Support";
     $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Email code user") + "</strong><div class='muted small'>" + esc(label) + " · email code</div>";
     paintAvatar();
     ensureRanges();
@@ -2994,6 +3073,16 @@ async function enter() {
   if (usersNav) usersNav.hidden = !state.actor?.owner;
   const warehouseNav = document.querySelector('#nav [data-go="warehouse"]');
   if (warehouseNav && identity) warehouseNav.hidden = !(state.actor?.owner || state.actor?.warehouse === true);
+  if (identity && state.actor?.provider === "otp" && !state.actor?.owner) {
+    state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
+  }
+  const allowedNav = accessRoutes();
+  if (allowedNav) {
+    document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = !allowedNav.includes(btn.dataset.go); });
+    if (!allowedNav.some((name) => location.hash.startsWith("#/" + name))) { location.replace("#/" + (allowedNav[0] || "pos")); return; }
+    render();
+    return;
+  }
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
 }

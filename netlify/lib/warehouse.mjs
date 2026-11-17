@@ -47,6 +47,16 @@ export function canUseWarehouse(actor) {
   if (isOwner(actor)) return true;
   return actor.kind === "verified-identity" && actor.provider === "otp" && actor.warehouse === true && !!actor.email;
 }
+const tabOn = (actor) => canUseWarehouse(actor);
+/** Generate and reprint are separate rights for Users with the tab (missing means allowed, as before). Admins have both. */
+export function canGenerateWarehouse(actor) {
+  if (!tabOn(actor)) return false;
+  return canAdminWarehouse(actor) || actor.warehouseGenerate !== false;
+}
+export function canReprintWarehouse(actor) {
+  if (!tabOn(actor)) return false;
+  return canAdminWarehouse(actor) || actor.warehouseReprint !== false;
+}
 export function canAdminWarehouse(actor) {
   return !!actor && (actor.role === "head" || isOwner(actor));
 }
@@ -88,7 +98,7 @@ function idemKeyFor(actor, key) {
 }
 
 export async function issueSheet(actor, body) {
-  if (!canUseWarehouse(actor)) return { status: 403, error: "Warehouse Stickers access is not granted." };
+  if (!canGenerateWarehouse(actor)) return { status: 403, error: "Warehouse Stickers access is not granted." };
   const key = String(body?.idempotencyKey || "");
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(key)) return { status: 400, error: "Missing request key. Reload the page and try again." };
   const idem = idemKeyFor(actor, key);
@@ -150,7 +160,7 @@ export async function listChanges(limit = 30) {
 
 /** Reprint regenerates exactly the stored range. The counter is not read or written. */
 export async function reprintSheet(actor, id) {
-  if (!canUseWarehouse(actor)) return { status: 403, error: "Warehouse Stickers access is not granted." };
+  if (!canReprintWarehouse(actor)) return { status: 403, error: "Warehouse Stickers access is not granted." };
   const from = Number(id);
   if (!Number.isSafeInteger(from) || from < 0) return { status: 404, error: "That sheet is not in the history." };
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -209,6 +219,7 @@ export async function warehouseOverview(actor) {
       sheets,
       totalSheets: total,
       canAdmin: admin,
+      can: { generate: canGenerateWarehouse(actor), reprint: canReprintWarehouse(actor), admin },
       changes: admin ? await listChanges(30) : [],
     },
   };
