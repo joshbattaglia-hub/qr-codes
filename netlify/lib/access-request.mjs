@@ -2,6 +2,7 @@ import { conditionalIncrement, publicBase, rateStore } from "./lib.mjs";
 import { deliver, mailAvailable } from "./mail.mjs";
 import { emailKey, now } from "./credentials.mjs";
 import { footerHtml, footerText } from "./footer.mjs";
+import { emailLogoHtml } from "./brand.mjs";
 import { OWNER_EMAIL } from "./users.mjs";
 import { ticketAccess } from "./tickets.mjs";
 import { tabsFor } from "../../public/admin/permissions.mjs";
@@ -66,7 +67,7 @@ export function requestMessage(email, tool, reason, at) {
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;padding:28px"><tr><td>'
-    + '<div style="font-weight:700;font-size:18px;color:#0e1b4d;margin-bottom:18px">Express Help</div>'
+    + emailLogoHtml()
     + '<h1 style="font-size:20px;margin:0 0 10px">Access request: ' + esc(name) + '</h1>'
     + '<p style="font-size:15px;line-height:1.5;margin:0 0 14px"><strong>' + esc(email) + '</strong> would like access to <strong>' + esc(name) + '</strong>.</p>'
     + '<table role="presentation" style="font-size:14px;line-height:1.5;margin:0 0 18px">'

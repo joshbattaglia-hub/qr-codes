@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { env, ticketStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { footerHtml, footerText } from "./footer.mjs";
+import { emailLogoHtml } from "./brand.mjs";
 import { notifyRecipientOk, NOTIFY_DOMAIN, NOTIFY_RECIPIENTS_MAX } from "./visitor-log.mjs";
 import { allTicketRows, columnFor, columnLabel, isOpenStatus, NATIONAL_SITE_ID, NATIONAL_SITE_LABEL, QUEUES, STATUS_LABEL, TICKET_ADMIN_EMAIL } from "./tickets.mjs";
 
@@ -172,6 +173,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
     + `<div style="margin-top:6px"><a href="${esc(j.link)}" style="color:#1f4bdb">Open ticket</a></div></td></tr>`).join("");
   const html = `<div style="font:14px/1.5 -apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#101828;max-width:640px">`
     + (test ? `<p style="background:#fef0c7;padding:8px 12px;border-radius:6px">This is a test digest. The daily schedule is not affected.</p>` : "")
+    + emailLogoHtml()
     + `<h2 style="margin:0 0 4px;font-size:18px">Express Help · ${esc(label)} digest</h2><p style="margin:0 0 12px;color:#667085">${esc(prettyDate(date))} · ${jobs.length ? `${jobs.length} open, ${overdue} overdue, most overdue first` : "nothing open"}</p>`
     + (jobs.length ? `<table role="presentation" style="width:100%;border-collapse:collapse">${cards}</table>` : `<p>No open ${esc(label)} jobs today.</p>`)
     + `<p style="margin-top:16px"><a href="${esc(supportUrl)}" style="color:#1f4bdb">Open Support</a></p>`

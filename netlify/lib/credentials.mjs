@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { conditionalIncrement, credStore, publicBase, rateStore } from "./lib.mjs";
 import { deliver, mailAvailable } from "./mail.mjs";
 import { footerHtml, footerText } from "./footer.mjs";
+import { emailLogoHtml } from "./brand.mjs";
 
 /**
  * Password credentials and set-password / reset links for Users (email-code users).
@@ -242,7 +243,7 @@ export function inviteMessage(email, token, kind, exp) {
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;padding:28px">'
-    + '<tr><td><div style="font-weight:700;font-size:18px;color:#0e1b4d;margin-bottom:18px">Express Help</div>'
+    + '<tr><td>' + emailLogoHtml()
     + '<h1 style="font-size:20px;margin:0 0 10px">' + esc(subject) + '</h1>'
     + '<p style="font-size:15px;line-height:1.5;margin:0 0 18px">' + esc(lead) + '</p>'
     + '<p style="margin:0 0 20px"><a href="' + esc(url) + '" data-testid="invite-link" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">' + (reset ? "Choose a new password" : "Set your password") + '</a></p>'

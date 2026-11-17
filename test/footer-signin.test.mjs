@@ -82,7 +82,7 @@ test("server-rendered pages include the footer", async () => {
 test("admin sign-in: Express Help, email code and password first, other ways below, no developer wording", () => {
   const html = fs.readFileSync(path.join(root, "admin/index.html"), "utf8");
   const login = html.slice(html.indexOf('<div id="login"'), html.indexOf('<div id="shell"'));
-  assert.match(login, /<h1 id="signin-title">Express Help<\/h1>/);
+  assert.match(login, /<h1 id="signin-title" class="sr-only">Express Help<\/h1>/);
   assert.equal(login.includes("Sign in to manage short links and QR codes."), false);
   const card = login.slice(login.indexOf('class="login-card signin-card"'), login.indexOf('class="signin-other"'));
   assert.ok(card.indexOf('id="otp-form"') > 0 && card.indexOf('id="login-form"') > card.indexOf('id="otp-form"'));
@@ -130,7 +130,7 @@ test("admin header and home page say Express Help", () => {
   const app = fs.readFileSync(path.join(root, "admin/app.js"), "utf8");
   const admin = fs.readFileSync(path.join(root, "admin/index.html"), "utf8");
   const home = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(admin, /<span id="brand-name">Express Help<\/span>/);
+  assert.match(admin, /<span id="brand-name" class="sr-only">Express Help<\/span>/);
   assert.doesNotMatch(app, /brand-name"\)\.textContent = (state\.settings|"Liberty")/);
   assert.match(home, /<h1[^>]*>Express Help<\/h1>/);
   assert.match(home, /<title>Express Help<\/title>/);
