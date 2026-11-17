@@ -185,9 +185,13 @@ async function sendTo(recipients, digest, keyPrefix) {
   const results = [];
   for (const to of recipients) {
     let status = "unknown";
-    try { status = (await deliver({ to, subject: digest.subject, text: digest.text, html: digest.html, idempotencyKey: keyPrefix + "-" + hashed(to) }))?.status || "unknown"; }
-    catch { status = "unknown"; }
-    results.push({ to: hashed(to), status });
+    let id = "";
+    try {
+      const r = await deliver({ to, subject: digest.subject, text: digest.text, html: digest.html, idempotencyKey: keyPrefix + "-" + hashed(to) });
+      status = r?.status || "unknown";
+      id = typeof r?.id === "string" ? r.id : "";
+    } catch { status = "unknown"; }
+    results.push({ to: hashed(to), status, id });
   }
   return results;
 }
@@ -231,7 +235,7 @@ export async function sendTestDigest({ at = clock(), requestId = "" } = {}) {
   const digest = buildDigest({ jobs, queues: settings.queues, date, test: true });
   const results = await sendTo([TICKET_ADMIN_EMAIL], digest, "support-digest-test-" + slot);
   await ticketStore().setJSON("digest/test/" + slot, { at: new Date(at).toISOString(), requestId, count: digest.count, results });
-  return { status: 200, body: { sent: results[0]?.status === "sent", status: results[0]?.status, count: digest.count, overdue: digest.overdue, to: TICKET_ADMIN_EMAIL } };
+  return { status: 200, body: { sent: results[0]?.status === "sent", status: results[0]?.status, count: digest.count, overdue: digest.overdue, to: TICKET_ADMIN_EMAIL, id: results[0]?.id || "" } };
 }
 
 /** One-off test requested out of band (for example by the release process): processed by the scheduled run, once. */
