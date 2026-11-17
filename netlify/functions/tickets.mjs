@@ -5,6 +5,7 @@ import {
   addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, editTicket, listAudit, listSiteChoices, listTickets, moveTicket, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
 } from "../lib/tickets.mjs";
 import { approveQuarantine, discardQuarantine, listQuarantine, notifyTicket } from "../lib/ticket-mail.mjs";
+import { DIGEST_WINDOW_MINUTES, readDigestSettings, saveDigestSettings, sendTestDigest } from "../lib/support-digest.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
 
@@ -49,6 +50,20 @@ export default async (req) => {
   if (quarantine && req.method === "POST") {
     const result = quarantine[2] === "discard" ? await discardQuarantine(actor, quarantine[1]) : await approveQuarantine(actor, quarantine[1]);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/tickets/digest" || path === "/api/tickets/digest/test") {
+    const access = await ticketAccess(actor);
+    if (access.role !== "admin") return json(403, { error: "Digest settings are limited to the ticket admin." }, PRIVATE);
+    if (path === "/api/tickets/digest" && req.method === "GET") return json(200, { ...(await readDigestSettings()), windowMinutes: DIGEST_WINDOW_MINUTES, testTo: access.email }, PRIVATE);
+    if (path === "/api/tickets/digest" && req.method === "PUT") {
+      const result = await saveDigestSettings(access.email, await req.json().catch(() => ({})));
+      return json(result.status, result.body || { error: result.error }, PRIVATE);
+    }
+    if (path === "/api/tickets/digest/test" && req.method === "POST") {
+      const result = await sendTestDigest();
+      return json(result.status, result.body || { error: result.error }, PRIVATE);
+    }
+    return json(405, { error: "Not found" }, PRIVATE);
   }
   if (path === "/api/tickets/audit" && req.method === "GET") {
     const result = await listAudit(actor);
