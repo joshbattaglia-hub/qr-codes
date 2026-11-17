@@ -23,9 +23,10 @@ test("logo in a real browser: sidebar variant per theme, sign-in and set-passwor
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const MIME = { svg: "image/svg+xml", png: "image/png", ico: "image/x-icon", css: "text/css", js: "text/javascript", mjs: "text/javascript", woff2: "font/woff2", html: "text/html" };
   try {
-    async function open(path, { signedIn = true, theme, w = 1280, h = 800 } = {}) {
+    async function open(path, { signedIn = true, theme, clear = false, w = 1280, h = 800 } = {}) {
       const page = await browser.newPage();
       await page.setViewport({ width: w, height: h });
+      if (clear) await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch {} });
       if (theme) await page.evaluateOnNewDocument((t, key) => { try { localStorage.setItem("eh-theme:last", key); localStorage.setItem("eh-theme:u:" + key, t); } catch {} }, theme, JOSHUA);
       await page.setRequestInterception(true);
       page.on("request", async (r) => {
@@ -66,13 +67,19 @@ test("logo in a real browser: sidebar variant per theme, sign-in and set-passwor
       assert.equal(await p.$eval("#brand-name", (e) => e.textContent), "Express Help", "accessible name kept");
       await p.close();
     }
-    // sign-in (signed out, always Light): lockup above the form
-    const s = await open("/admin/", { signedIn: false, theme: "dark" });
-    await s.waitForSelector("#login:not(.hidden)");
-    const sl = await s.$eval('[data-testid="signin-logo"]', (e) => ({ shown: e.checkVisibility(), loaded: e.complete && e.naturalWidth > 0, above: e.getBoundingClientRect().bottom <= document.querySelector("#otp-card").getBoundingClientRect().top }));
-    assert.deepEqual(sl, { shown: true, loaded: true, above: true });
-    assert.equal(await s.evaluate(() => document.documentElement.getAttribute("data-theme")), "light", "sign-in stays Light");
-    await s.close();
+    // sign-in (signed out): follows the last account's theme (Crazy when nothing saved); the lockup above the form is readable on each surface
+    for (const [theme, kind] of [["dark", "dark"], ["light", "light"], [undefined, "light"]]) {
+      const s = await open("/admin/", { signedIn: false, theme, clear: !theme });
+      await s.waitForSelector("#login:not(.hidden)");
+      const sl = await s.$$eval(".signin-logo", (els) => els.filter((e) => e.checkVisibility()).map((e) => ({ kind: e.classList.contains("on-dark") ? "dark" : "light", loaded: e.complete && e.naturalWidth > 0, above: e.getBoundingClientRect().bottom <= document.querySelector("#otp-card").getBoundingClientRect().top })));
+      assert.deepEqual(sl, [{ kind, loaded: true, above: true }], (theme || "default") + ": one sign-in lockup, loaded, above the form");
+      assert.equal(await s.evaluate(() => document.documentElement.getAttribute("data-theme")), theme || "crazy");
+      // the drawn surface behind the lockup: light card in Crazy, dark page in Dark, light page in Light
+      const lum = await s.$eval(".signin-logo:not([hidden])", (e) => { const box = e.closest(".signin-brand"); let el = box; while (el) { const c = getComputedStyle(el).backgroundColor; if (c !== "rgba(0, 0, 0, 0)") return c; el = el.parentElement; } return "rgb(255,255,255)"; });
+      const v = lum.match(/\d+/g).slice(0, 3).map(Number).reduce((a, b) => a + b, 0) / 3;
+      if (theme === "dark") assert.ok(v < 60, "dark sign-in surface"); else assert.ok(v > 200, (theme || "crazy") + " sign-in lockup sits on a light surface");
+      await s.close();
+    }
     const sp = await open("/set-password", { signedIn: false });
     const spl = await sp.$eval('[data-testid="signin-logo"]', (e) => ({ shown: e.checkVisibility(), loaded: e.complete && e.naturalWidth > 0 }));
     assert.deepEqual(spl, { shown: true, loaded: true });

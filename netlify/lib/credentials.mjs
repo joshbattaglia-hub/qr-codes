@@ -242,11 +242,11 @@ export function inviteMessage(email, token, kind, exp) {
   ].join("\n");
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'
-    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;padding:28px">'
-    + '<tr><td>' + emailLogoHtml()
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px">'
+    + '<tr><td style="padding:28px 22px;overflow-wrap:anywhere">' + emailLogoHtml()
     + '<h1 style="font-size:20px;margin:0 0 10px">' + esc(subject) + '</h1>'
     + '<p style="font-size:15px;line-height:1.5;margin:0 0 18px">' + esc(lead) + '</p>'
-    + '<p style="margin:0 0 20px"><a href="' + esc(url) + '" data-testid="invite-link" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">' + (reset ? "Choose a new password" : "Set your password") + '</a></p>'
+    + '<p style="margin:0 0 20px"><a href="' + esc(url) + '" data-testid="invite-link" style="display:inline-block;max-width:100%;box-sizing:border-box;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px;text-align:center">' + (reset ? "Choose a new password" : "Set your password") + '</a></p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0 0 8px">The link works once and expires in ' + esc(when) + '. Your sign-in email is <strong>' + esc(email) + '</strong>.</p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0 0 8px">If the button does not work, paste this address into your browser:<br><span style="word-break:break-all">' + esc(url) + '</span></p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0 0 8px">You can also sign in without a password: on the sign-in page choose &ldquo;Email me a code&rdquo;.</p>'
