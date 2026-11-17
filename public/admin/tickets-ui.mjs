@@ -426,6 +426,8 @@ async function paintSettings(box, access) {
     + '<label class="check"><input id="ticket-notify-signage" type="checkbox"' + (settings.notify.signage ? " checked" : "") + "> Signage notifications</label>"
     + '<label class="field"><span>Screens inbound email</span><input id="ticket-inbound-screens" value="' + esc(settings.inbound?.addresses?.screens || "") + '" placeholder="screens@support.example"></label>'
     + '<label class="field"><span>Signage inbound email</span><input id="ticket-inbound-signage" value="' + esc(settings.inbound?.addresses?.signage || "") + '" placeholder="signage@support.example"></label>'
+    + '<label class="field"><span>Screens: also accept (old addresses, one per line)</span><textarea id="ticket-inbound-aliases-screens" rows="2">' + esc((settings.inbound?.aliases?.screens || []).join("\n")) + '</textarea></label>'
+    + '<label class="field"><span>Signage: also accept (old addresses, one per line)</span><textarea id="ticket-inbound-aliases-signage" rows="2">' + esc((settings.inbound?.aliases?.signage || []).join("\n")) + '</textarea></label>'
     + '<label class="check"><input id="ticket-inbound-enabled" type="checkbox"' + (settings.inbound?.enabled ? " checked" : "") + "> Enable inbound email (off until the secret, addresses and this switch are set)</label>"
     + '<button class="btn" type="button" data-act="ticket-save-settings">Save ticket settings</button>'
     + '<div class="field-card" data-testid="ticket-inbound-setup"><h2>Inbound email setup</h2>'
@@ -609,6 +611,7 @@ export async function ticketAction(button, state, go) {
           screens: document.getElementById("ticket-inbound-screens").value,
           signage: document.getElementById("ticket-inbound-signage").value,
         },
+        aliases: { screens: lines("ticket-inbound-aliases-screens"), signage: lines("ticket-inbound-aliases-signage") },
       },
     }) });
     setNote("Settings saved.");

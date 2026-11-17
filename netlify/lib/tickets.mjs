@@ -83,7 +83,7 @@ export function defaultSettings() {
     visibility: "own-and-sites",
     notify: { screens: false, signage: false },
     notifyGlobal: false,
-    inbound: { enabled: false, addresses: { screens: "", signage: "" } },
+    inbound: { enabled: false, addresses: { screens: "", signage: "" }, aliases: { screens: [], signage: [] } },
   };
 }
 
@@ -180,6 +180,11 @@ export function normaliseSettings(raw) {
         screens: emailOf(raw?.inbound?.addresses?.screens),
         signage: emailOf(raw?.inbound?.addresses?.signage),
       },
+      // Extra addresses that also route to the queue (for example an old address kept working). Replies use the main address.
+      aliases: {
+        screens: inboundAliases(raw?.inbound?.aliases?.screens, raw?.inbound?.addresses?.screens),
+        signage: inboundAliases(raw?.inbound?.aliases?.signage, raw?.inbound?.addresses?.signage),
+      },
     },
   };
 }
@@ -198,6 +203,17 @@ export async function setTicketStaffQueues(email, queues) {
   }
   if (changed) await ticketStore().setJSON("settings", current);
   return current.staff;
+}
+
+function inboundAliases(rows, primary) {
+  const main = emailOf(primary);
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : String(rows || "").split(/[\s,;]+/)) {
+    const email = emailOf(row);
+    if (email && email !== main && !out.includes(email)) out.push(email);
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 export async function readSettings() {
