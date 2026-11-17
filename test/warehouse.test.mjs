@@ -165,7 +165,7 @@ test("access: Users 'Warehouse Stickers' permission alone grants only this tool;
   assert.equal(wh.canUseWarehouse(await otpLib.actorForEmail(WH)), false);
   const audit = (await usersLib.listUsers(owner)).body.history.map((h) => h.detail).join("\n");
   assert.match(audit, /warehouse=yes/);
-  assert.equal(sent.length, 0, "no mail");
+  assert.equal(sent.filter((m) => !/^Set your Express Help password$/.test(m.subject)).length, 0, "no mail");
 });
 
 test("endpoints: 401 signed out; cross-site POST refused", async () => {

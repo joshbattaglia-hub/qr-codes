@@ -23,6 +23,14 @@
   to = "/visit.html"
   status = 200
 [[redirects]]
+  from = "/set-password"
+  to = "/set-password.html"
+  status = 200
+[[redirects]]
+  from = "/set-password/"
+  to = "/set-password.html"
+  status = 200
+[[redirects]]
   from = "/admin/*"
   to = "/admin/index.html"
   status = 200

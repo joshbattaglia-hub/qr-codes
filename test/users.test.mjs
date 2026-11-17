@@ -232,5 +232,5 @@ test("add, edit and remove a user; permissions enforced on every endpoint; chang
   assert.equal(edit.actorEmail, JOSHUA);
   assert.match(history.find((h) => h.action === "user-remove").detail, / > removed; sessions ended \d+$/);
   // No visitor mail was sent by any of this.
-  assert.equal(mail.length, 0);
+  assert.equal(mail.filter((m) => !/^Set your Express Help password$/.test(m.subject)).length, 0);
 });

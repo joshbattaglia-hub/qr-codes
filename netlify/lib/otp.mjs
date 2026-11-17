@@ -434,6 +434,16 @@ export async function verifyOtp(req, email, code) {
   return { status: 200, actor, cookie: otpCookie(req, session.id, session.exp) };
 }
 
+/** Starts the same email-code session after another proof of identity (a password). Access still comes from the Users list on every request. */
+export async function startSessionForEmail(req, email) {
+  if (secret().length < 32) return null;
+  const normalized = normalizeEmail(email);
+  const actor = normalized ? await actorForEmail(normalized) : null;
+  if (!actor) return null;
+  const session = await createSession(normalized);
+  return { actor, cookie: otpCookie(req, session.id, session.exp) };
+}
+
 export async function deleteOtpSession(req) {
   const row = await readSession(req);
   if (row) await otpStore().delete("sess/" + row.id);

@@ -1926,6 +1926,14 @@ function refreshPermSummary() {
   const box = document.getElementById("perm-summary");
   if (box) box.textContent = permSummary(list);
 }
+function inviteBadge(p) {
+  const when = (iso) => new Date(iso).toLocaleString("en-AU", { timeZone: "Australia/Melbourne", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const state = p?.state || "none";
+  if (state === "active") return '<span class="status-pill ok">Active</span> <span class="muted small">password set</span>';
+  if (state === "invited") return '<span class="status-pill wait">Invited</span><br><span class="muted small">expires ' + esc(when(p.expiresAt)) + '</span>';
+  if (state === "expired") return '<span class="status-pill bad">Expired</span><br><span class="muted small">lapsed ' + esc(when(p.expiredAt)) + '</span>';
+  return '<span class="status-pill none">No password set</span><br><span class="muted small">uses email code</span>';
+}
 async function paintUsers() {
   const box = document.getElementById("users-body");
   if (!box) return;
@@ -1934,11 +1942,11 @@ async function paintUsers() {
   if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p><p class="muted">Users is managed with your email code sign-in.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>'; return; }
   state.usersData = data;
   const mig = data.migration;
-  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
+  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td data-testid="user-invite-status">' + inviteBadge(u.password) + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button> <button class="btn ghost btn-xs" type="button" data-act="user-invite" data-testid="user-invite" data-email="' + esc(u.email) + '">' + (u.password?.state === "active" ? "Send new link" : "Resend invite") + '</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
   const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
   box.innerHTML = (mig ? '<p class="muted small" data-testid="users-migration">Moved from the previous sign-in list on ' + esc(new Date(mig.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + ': ' + esc(String(mig.users)) + ' users, effective access ' + (mig.same ? "identical" : "NOT identical") + ' (' + esc(String(mig.checked)) + ' addresses checked).</p>' : "")
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-add-open" data-testid="user-add-open">Add user</button></div>'
-    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th>Menu tabs</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>Password</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th>Menu tabs</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
     + (state.userEdit ? userForm(data) : "")
     + '<h2>History</h2><ul class="user-history" data-testid="users-history">' + (history || '<li class="muted">No changes yet.</li>') + '</ul>'
     + '<p class="muted small">Not managed here: the head-office password (QR codes, links, pages, competitions, vouchers, templates, domains and workspace settings) and site-manager password logins.</p>';
@@ -2085,13 +2093,34 @@ async function visitorAction(button) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) { if (note) note.textContent = body.error || "Not saved"; return; }
       state.userEdit = "";
-      toast("User saved");
+      const inv = body.invite?.status;
+      toast(!inv ? "User saved" : inv === "sent" ? "User added. Invite email sent." : "User added, but the invite email was not sent. Use Resend invite.");
       return paintUsers();
     } finally {
       button.disabled = false;
       button.removeAttribute("aria-busy");
       button.textContent = label;
     }
+  }
+  if (act === "user-invite") {
+    const email = button.dataset.email || "";
+    if (button.disabled) return;
+    if (!confirm("Email a set-password link to " + email + "? Any earlier link stops working.")) return;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Sending…";
+    button.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch("/api/users/invite", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
+      const body = await response.json().catch(() => ({}));
+      toast(response.ok ? "Invite sent to " + email : body.error || "Invite not sent");
+      if (response.ok) return paintUsers();
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = label;
+    }
+    return;
   }
   if (act === "user-remove") {
     const email = button.dataset.email || "";
@@ -2913,18 +2942,65 @@ async function applyImport() {
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const err = $("#login-error");
+  const submit = $("#login-submit");
   err.textContent = "";
+  if (submit?.disabled) return;
+  const label = submit?.textContent;
+  if (submit) { submit.disabled = true; submit.textContent = "Signing in…"; submit.setAttribute("aria-busy", "true"); }
   try {
     const email = $("#staff-email")?.value.trim();
-    const session = await api("/api/auth", { method: "POST", body: JSON.stringify(email ? { email, password: $("#pw").value } : { password: $("#pw").value }) });
-    state.actor = {
-      authenticated: true,
-      role: session.role || "head",
-      name: session.staff?.name || "Head office",
-      siteIds: session.role === "manager" ? (session.staff?.siteIds || []) : null,
-    };
+    const password = $("#pw").value;
+    if (email) {
+      // A user's own password first (same session and permissions as the email code); site-manager passwords stay as they were.
+      const response = await fetch("/api/identity/password/login", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) {
+        state.actor = { authenticated: true, ...(payload.identity || {}), role: payload.role };
+        await enter();
+        return;
+      }
+      if (response.status === 429) { err.textContent = payload.error || "Too many attempts. Wait a few minutes and try again."; return; }
+    }
+    try {
+      const session = await api("/api/auth", { method: "POST", body: JSON.stringify(email ? { email, password } : { password }) });
+      state.actor = {
+        authenticated: true,
+        role: session.role || "head",
+        name: session.staff?.name || "Head office",
+        siteIds: session.role === "manager" ? (session.staff?.siteIds || []) : null,
+      };
+    } catch (ex) { throw new Error(email ? "That email and password were not accepted." : ex.message); }
     await enter();
   } catch (ex) { err.textContent = ex.message; }
+  finally { if (submit) { submit.disabled = false; submit.textContent = label; submit.removeAttribute("aria-busy"); } }
+});
+$("#pw-toggle")?.addEventListener("click", () => {
+  const input = $("#pw"); const button = $("#pw-toggle");
+  const show = input.type === "password";
+  input.type = show ? "text" : "password";
+  button.textContent = show ? "Hide" : "Show";
+  button.setAttribute("aria-pressed", String(show));
+});
+$("#forgot-open")?.addEventListener("click", () => {
+  $("#login-form").hidden = true; $("#forgot-form").hidden = false;
+  const typed = $("#staff-email")?.value.trim(); if (typed && !$("#forgot-email").value) $("#forgot-email").value = typed;
+  $("#forgot-email").focus();
+});
+$("#forgot-cancel")?.addEventListener("click", () => { $("#forgot-form").hidden = true; $("#login-form").hidden = false; });
+$("#forgot-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submit = $("#forgot-submit"); const status = $("#forgot-status"); const error = $("#forgot-error");
+  if (submit.disabled) return;
+  status.textContent = ""; error.textContent = "";
+  const label = submit.textContent;
+  submit.disabled = true; submit.textContent = "Sending…"; submit.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch("/api/identity/password/forgot", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: $("#forgot-email").value }) });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) status.textContent = payload.message || "If that address can sign in, a reset link is on its way.";
+    else error.textContent = payload.error || "Could not send a reset link right now.";
+  } catch { error.textContent = "Could not send a reset link right now."; }
+  finally { submit.disabled = false; submit.textContent = label; submit.removeAttribute("aria-busy"); }
 });
 $("#otp-form")?.addEventListener("submit", (event) => { submitOtp(event).catch((err) => { const box = $("#otp-error"); if (box) box.textContent = err.message; }); });
 $("#otp-verify")?.addEventListener("click", () => { submitOtp({ preventDefault() {} }).catch((err) => { const box = $("#otp-error"); if (box) box.textContent = err.message; }); });

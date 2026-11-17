@@ -33,10 +33,22 @@
       <section class="signin-section" aria-labelledby="pw-title">
         <h2 id="pw-title">Sign in with a password</h2>
         <form id="login-form">
-          <label class="field"><span>Staff email</span><input id="staff-email" type="email" autocomplete="username" placeholder="Leave blank for head office"></label>
-          <label class="field"><span>Password</span><input id="pw" type="password" autocomplete="current-password" required></label>
-          <button class="btn" type="submit">Log in</button>
+          <label class="field"><span>Email</span><input id="staff-email" type="email" autocomplete="username" maxlength="254" placeholder="Leave blank for head office" data-testid="pw-email"></label>
+          <label class="field"><span>Password</span>
+            <span class="pw-row"><input id="pw" type="password" autocomplete="current-password" required data-testid="pw-input"><button class="btn ghost btn-xs pw-toggle" type="button" id="pw-toggle" data-testid="pw-toggle" aria-pressed="false" aria-controls="pw">Show</button></span>
+          </label>
+          <button class="btn" type="submit" id="login-submit" data-testid="pw-submit">Log in</button>
           <p class="err" id="login-error" role="alert"></p>
+          <p class="small"><button class="text-btn" type="button" id="forgot-open" data-testid="forgot-open">Forgot password?</button> <span class="muted">Or use an email code above.</span></p>
+        </form>
+        <form id="forgot-form" hidden data-testid="forgot-form">
+          <h3>Reset your password</h3>
+          <p class="muted small">Enter your email and we'll send a reset link if the address can sign in. The link works once and lasts one hour.</p>
+          <label class="field"><span>Email address</span><input id="forgot-email" type="email" autocomplete="username" maxlength="254" required data-testid="forgot-email"></label>
+          <button class="btn" type="submit" id="forgot-submit" data-testid="forgot-submit">Email me a reset link</button>
+          <button class="btn ghost" type="button" id="forgot-cancel">Back</button>
+          <p class="small" id="forgot-status" data-testid="forgot-status" role="status"></p>
+          <p class="err" id="forgot-error" role="alert"></p>
         </form>
       </section>
     </div>

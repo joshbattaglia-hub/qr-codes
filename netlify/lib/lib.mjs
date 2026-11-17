@@ -52,6 +52,7 @@ export const rateStore = () => openStore("auth-rate");
 export const visitorStore = () => openStore("visitor-log");
 export const ticketStore = () => openStore("support-tickets");
 export const usersStore = () => openStore("users");
+export const credStore = () => openStore("user-credentials");
 export const warehouseStore = () => openStore("warehouse-stickers");
 
 /**
