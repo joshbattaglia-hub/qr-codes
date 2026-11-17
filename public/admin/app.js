@@ -1941,6 +1941,13 @@ async function paintUsers() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p><p class="muted">Users is managed with your email code sign-in.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>'; return; }
   state.usersData = data;
+  // Deep link from an access-request email: #/users?edit=<email> opens that person's edit form once.
+  const deep = new URLSearchParams((location.hash.split("?")[1] || "")).get("edit");
+  if (deep) {
+    const wanted = deep.trim().toLowerCase();
+    if (data.users.some((u) => u.email === wanted)) state.userEdit = wanted;
+    try { window.history.replaceState(null, "", "#/users"); } catch { /* ignore */ }
+  }
   const mig = data.migration;
   const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td data-testid="user-invite-status">' + inviteBadge(u.password) + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button> <button class="btn ghost btn-xs" type="button" data-act="user-invite" data-testid="user-invite" data-email="' + esc(u.email) + '">' + (u.password?.state === "active" ? "Send new link" : "Resend invite") + '</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
   const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
@@ -2313,19 +2320,26 @@ async function render(opts = {}) {
   ensureRanges();
   const r = route();
   const allowedTabs = accessRoutes();
-  if (allowedTabs && !allowedTabs.includes(r.name)) { location.replace("#/" + (allowedTabs[0] || "visitors")); return; }
-  if (r.name === "users" && !state.actor?.owner) { location.replace("#/home"); return; }
+  if (allowedTabs && !allowedTabs.includes(r.name) && !REQUEST_NAMES[r.name]) { location.replace("#/" + (allowedTabs[0] || "visitors")); return; }
+  if (!allowedTabs && r.name === "users" && !state.actor?.owner) { location.replace("#/home"); return; }
   const key = r.name + "/" + r.id;
   const keep = opts.keepScroll || (opts.refetch === false && key === lastRouteKey);
   const y = keep ? window.scrollY : 0;
   const routeChanged = key !== lastRouteKey;
   lastRouteKey = key;
-  document.querySelectorAll("#nav [data-go]").forEach((btn) => {
+  document.querySelectorAll("#sidebar [data-go]").forEach((btn) => {
     const on = btn.dataset.go === r.name;
     btn.classList.toggle("active", on);
     if (on) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
   });
   const view = $("#view");
+  if (allowedTabs && !allowedTabs.includes(r.name)) {
+    // A tool this person was not given: say so and let them ask Joshua. Nothing is loaded and nothing is granted.
+    view.innerHTML = requestPage(r.name, allowedTabs);
+    loadRequestState(r.name);
+    window.scrollTo(0, 0);
+    return;
+  }
   if ((r.name === "qrcodes" || r.name === "links") && r.id) {
     if (!(opts.refetch === false && state.detail?.code?.slug === r.id)) {
       if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
@@ -2837,6 +2851,10 @@ document.body.addEventListener("click", (e) => {
     Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) note.textContent = err.message; else toast(err.message); });
     return;
   }
+  if (actEl && actEl.closest("#request-page")) {
+    Promise.resolve(requestAccessAction(actEl)).catch(() => { const e = document.getElementById("request-error"); if (e) e.textContent = "The request could not be sent right now. Try again shortly."; });
+    return;
+  }
   if (actEl && actEl.closest("#users-page")) {
     Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("user-note"); if (note) note.textContent = err.message; else toast(err.message); });
     return;
@@ -3089,7 +3107,99 @@ function accessRoutes() {
   return tabsFor(a, state.limitedTickets ? ["support"] : []);
 }
 function limitedRoutes() { return accessRoutes() || []; }
+const REQUEST_NAMES = { home: "Home", links: "Links", qrcodes: "QR Codes", pages: "Pages", analytics: "Analytics", competitions: "Competitions", pos: "POS setup", assets: "Asset Barcodes", warehouse: "Warehouse Stickers", visitors: "Visitor Log", tickets: "Support", users: "Users", sites: "Sites", domains: "Custom domains", settings: "Settings" };
+const REQUEST_GRANTABLE = ["pos", "sites", "assets", "warehouse", "visitors", "tickets"];
+let navOrder = null;
+/** Puts every menu item back in the main menu (used before each sign-in so one person's menu never leaks into the next). */
+function restoreNav() {
+  const nav = document.getElementById("nav");
+  if (!nav) return;
+  if (!navOrder) navOrder = [...nav.querySelectorAll("[data-go]")];
+  navOrder.forEach((btn) => { btn.hidden = btn.dataset.go === "users"; btn.classList.remove("locked"); nav.append(btn); });
+  const other = document.getElementById("other-tools");
+  if (other) { other.hidden = true; other.open = false; }
+  document.querySelector(".create-wrap")?.removeAttribute("hidden");
+  document.querySelector(".search")?.removeAttribute("hidden");
+}
+/** Limited email-code users: only granted tools in the menu; everything else under a collapsed "Other tools". No Create new or search. */
+function applyLimitedChrome(allowed) {
+  restoreNav();
+  const nav = document.getElementById("nav");
+  const list = document.getElementById("other-tools-list");
+  const other = document.getElementById("other-tools");
+  navOrder.forEach((btn) => {
+    const granted = allowed.includes(btn.dataset.go);
+    btn.hidden = false;
+    if (granted) return;
+    btn.classList.add("locked");
+    list.append(btn);
+  });
+  if (other) { other.hidden = list.children.length === 0; other.open = false; }
+  document.querySelector(".create-wrap")?.setAttribute("hidden", "");
+  document.querySelector(".search")?.setAttribute("hidden", "");
+  document.getElementById("search-results")?.classList.add("hidden");
+  void nav;
+}
+function requestPage(name, allowed) {
+  const tool = REQUEST_NAMES[name] || name;
+  const grantable = REQUEST_GRANTABLE.includes(name);
+  return '<div class="card req-card" id="request-page" data-testid="request-page" data-tool="' + esc(name) + '">'
+    + '<h1 data-testid="request-title">You don\'t have access to ' + esc(tool) + '</h1>'
+    + '<p class="muted">' + (grantable ? "Joshua sets who can use each tool. You can ask for access and he will get an email." : "This is a head-office tool that can\'t be switched on for email sign-ins yet. You can still ask Joshua about it.") + '</p>'
+    + '<div id="request-form">'
+    + '<label class="field"><span>Why do you need it? (optional)</span><textarea id="request-reason" maxlength="500" data-testid="request-reason" placeholder="e.g. I\'m covering the stickers this week"></textarea><span class="req-count muted small" id="request-count">0 / 500</span></label>'
+    + '<button class="btn" type="button" data-act="request-access" data-tool="' + esc(name) + '" data-testid="request-access">Request access</button>'
+    + '</div>'
+    + '<p class="req-sent hidden" id="request-sent" data-testid="request-sent" role="status"></p>'
+    + '<p class="err small" id="request-error" role="alert" data-testid="request-error"></p>'
+    + '<p class="muted small">No access is granted automatically. Joshua decides.</p>'
+    + (allowed && allowed[0] ? '<p><button class="btn ghost" type="button" data-go="' + esc(allowed[0]) + '">Back to ' + esc(REQUEST_NAMES[allowed[0]] || allowed[0]) + '</button></p>' : "")
+    + '</div>';
+}
+function showRequestSent(at) {
+  const sent = document.getElementById("request-sent");
+  const form = document.getElementById("request-form");
+  if (!sent) return;
+  const when = at ? new Date(at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
+  sent.textContent = "Request sent" + (when ? " · " + when : "") + ". Joshua has been emailed. Nothing changes until he approves it.";
+  sent.classList.remove("hidden");
+  if (form) form.hidden = true;
+}
+async function loadRequestState(name) {
+  try {
+    const response = await fetch("/api/access-request?tool=" + encodeURIComponent(name), { credentials: "same-origin" });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok && body.sent && location.hash.startsWith("#/" + name)) showRequestSent(body.at);
+  } catch { /* the form still works */ }
+}
+async function requestAccessAction(button) {
+  if (button.disabled) return;
+  const error = document.getElementById("request-error");
+  if (error) error.textContent = "";
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Sending…";
+  button.setAttribute("aria-busy", "true");
+  try {
+    const response = await fetch("/api/access-request", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ tool: button.dataset.tool, reason: document.getElementById("request-reason")?.value || "" }) });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok || body.sent) { showRequestSent(body.at); return; }
+    if (error) error.textContent = body.error || "The request could not be sent right now. Try again shortly.";
+  } catch { if (error) error.textContent = "The request could not be sent right now. Try again shortly."; }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = label; }
+}
+document.addEventListener("input", (event) => {
+  if (event.target?.id !== "request-reason") return;
+  const count = document.getElementById("request-count");
+  if (count) count.textContent = event.target.value.length + " / 500";
+});
+function stayOrLand(allowed) {
+  const hash = location.hash || "";
+  if (!hash || hash === "#" || hash === "#/" || hash === "#/home") { location.replace("#/" + (allowed[0] || "visitors")); return false; }
+  return true;
+}
 async function enter() {
+  restoreNav();
   if (isBuildingMaintenance()) {
     // Visitor Log view-only: load nothing else and show only the Visitor log nav item.
     state.settings = { workspaceName: "Liberty" };
@@ -3100,14 +3210,12 @@ async function enter() {
     $("#brand-name").textContent = BRAND;
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
     const allowed = limitedRoutes();
-    document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (!allowed.includes(btn.dataset.go)) btn.hidden = true; });
+    applyLimitedChrome(allowed);
     const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : state.limitedTickets ? "Support" : state.actor?.warehouse ? "Warehouse Stickers" : state.actor?.assets && state.actor.assets !== "none" ? "Asset Barcodes" : "Support";
     $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Email code user") + "</strong><div class='muted small'>" + esc(label) + " · email code</div>";
     paintAvatar();
     ensureRanges();
-    const first = allowed[0] || "visitors";
-    if (!allowed.some((name) => location.hash.startsWith("#/" + name))) location.replace("#/" + first);
-    else render();
+    if (stayOrLand(allowed)) render();
     return;
   }
   const identity = state.actor?.kind === "verified-identity";
@@ -3144,6 +3252,7 @@ async function enter() {
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || BRAND) + "</strong><div class='muted small'>" + roleLabel + "</div>";
   paintAvatar();
   ensureRanges();
+  restoreNav();
   document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = false; });
   const usersNav = document.querySelector('#nav [data-go="users"]');
   if (usersNav) usersNav.hidden = !state.actor?.owner;
@@ -3154,9 +3263,8 @@ async function enter() {
   }
   const allowedNav = accessRoutes();
   if (allowedNav) {
-    document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = !allowedNav.includes(btn.dataset.go); });
-    if (!allowedNav.some((name) => location.hash.startsWith("#/" + name))) { location.replace("#/" + (allowedNav[0] || "pos")); return; }
-    render();
+    applyLimitedChrome(allowedNav);
+    if (stayOrLand(allowedNav)) render();
     return;
   }
   if (!location.hash || location.hash === "#") location.replace("#/home");
