@@ -28,7 +28,7 @@ const DUMMY_SALT = "00000000000000000000000000000000";
 
 let clock = () => Date.now();
 export function setCredentialsTestHooks({ now = null } = {}) { clock = typeof now === "function" ? now : () => Date.now(); }
-const now = () => clock();
+export const now = () => clock();
 
 export function emailKey(email) {
   return crypto.createHash("sha256").update("cred-email\n" + String(email || "").trim().toLowerCase()).digest("hex");
