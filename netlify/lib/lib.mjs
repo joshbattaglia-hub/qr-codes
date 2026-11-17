@@ -52,6 +52,7 @@ export const rateStore = () => openStore("auth-rate");
 export const visitorStore = () => openStore("visitor-log");
 export const ticketStore = () => openStore("support-tickets");
 export const usersStore = () => openStore("users");
+export const warehouseStore = () => openStore("warehouse-stickers");
 
 /**
  * Durable counter. Succeeds only with onlyIfNew or onlyIfMatch.

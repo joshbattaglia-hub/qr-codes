@@ -263,3 +263,15 @@ tr.clickable:hover{background:#f8fafc}
 .signin-option form{margin-top:8px}
 .signin-option .btn{margin-top:8px}
 @media (max-width:560px){.login{padding:24px 16px}.signin{width:100%}}
+.warehouse-page .wh-main{text-align:center;padding:28px 20px}
+.wh-next-label{margin:0}
+.wh-next-code{font:700 34px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px;letter-spacing:.04em}
+.btn.wh-go{font-size:18px;padding:16px 26px;min-width:min(100%,340px);gap:10px}
+.wh-spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;display:inline-block;animation:whspin .8s linear infinite}
+@keyframes whspin{to{transform:rotate(360deg)}}
+.wh-mini{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;background:#f1f5f9;padding:8px;border-radius:10px}
+.wh-mini-label{background:#fff;border:1px dashed #cbd5e1;border-radius:6px;padding:4px;display:flex;justify-content:center}
+.wh-mini-label svg{width:100%;height:auto;max-width:240px}
+.wh-admin-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.wh-admin-row .field{margin:0;min-width:160px}
+.warehouse-page .btn-xs{padding:6px 10px;font-size:13px}

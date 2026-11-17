@@ -67,6 +67,8 @@ function cleanUser(row) {
     visitor: email === OWNER_EMAIL ? "none" : visitor,
     // Users without a POS role reach Support Tickets only when this is set (the old rules never let them in).
     ticketsEnabled: row.ticketsEnabled === true,
+    // Warehouse Stickers tool (sequential WH sticker sheets). Users with only this see only that tool.
+    warehouse: row.warehouse === true,
     addedAt: typeof row.addedAt === "string" ? row.addedAt : "",
     updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : "",
   };
@@ -110,6 +112,7 @@ export function userActorFields(user) {
     siteIds: [...user.siteIds],
     visitor: user.visitor,
     ticketsEnabled: user.ticketsEnabled === true,
+    warehouse: user.warehouse === true,
     owner: user.owner === true,
   };
 }
@@ -261,6 +264,7 @@ function describe(user, queues) {
     "sites=" + user.siteIds.length,
     "visitor=" + (user.owner ? "owner" : user.visitor),
     "tickets=" + (queues.length ? queues.join(",") : "none"),
+    ...(user.warehouse ? ["warehouse=yes"] : []),
   ].join(" ");
 }
 
@@ -314,9 +318,9 @@ export async function saveUser(actor, body) {
     if (isOwnerRow && before && (approverKey !== before.approverKey || preparerClass !== before.preparerClass)) {
       return { status: 400, error: "The owner's own roles cannot be changed here." };
     }
-    const next = cleanUser({ email, approverKey, preparerClass, siteIds, visitor: isOwnerRow ? "none" : visitor, ticketsEnabled: tickets.length > 0, addedAt: before?.addedAt || nowIso(), updatedAt: nowIso() });
+    const next = cleanUser({ email, approverKey, preparerClass, siteIds, visitor: isOwnerRow ? "none" : visitor, ticketsEnabled: tickets.length > 0, warehouse: body?.warehouse === true, addedAt: before?.addedAt || nowIso(), updatedAt: nowIso() });
     if (!next) return { status: 400, error: "That combination is not allowed." };
-    if (!isOwnerRow && !next.approverKey && !next.preparerClass && next.visitor === "none" && !tickets.length) {
+    if (!isOwnerRow && !next.approverKey && !next.preparerClass && next.visitor === "none" && !tickets.length && !next.warehouse) {
       return { status: 400, error: "Give at least one permission, or remove the user." };
     }
     const settings = await readTicketSettings();
@@ -369,6 +373,6 @@ export async function setVisitorLevel(actor, email, level) {
   if (user.owner) return { status: 400, error: "Joshua already has full visitor log access." };
   const settings = await readTicketSettings();
   const queues = publicUser(user, settings).tickets;
-  if (level === "none" && !user.approverKey && !user.preparerClass && !queues.length) return removeUser(actor, { email });
-  return saveUser(actor, { mode: "edit", email, approverKey: user.approverKey, preparerClass: user.preparerClass, siteIds: user.siteIds, visitor: level, tickets: queues });
+  if (level === "none" && !user.approverKey && !user.preparerClass && !queues.length && !user.warehouse) return removeUser(actor, { email });
+  return saveUser(actor, { mode: "edit", email, approverKey: user.approverKey, preparerClass: user.preparerClass, siteIds: user.siteIds, visitor: level, tickets: queues, warehouse: user.warehouse === true });
 }
