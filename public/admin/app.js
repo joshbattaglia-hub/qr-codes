@@ -3,6 +3,7 @@ import { warehousePage, paintWarehouse, warehouseAction } from "./warehouse-ui.m
 import { ASSET_LABELS, HEAD_ONLY_TABS, effectiveAssets, tabsFor } from "./permissions.mjs";
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
+import { TOOL_ICONS } from "./tool-icons.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const DEVICE_OPTIONS = [
@@ -149,10 +150,83 @@ function go(path) {
   if (location.hash === next) render();
   else location.hash = next;
 }
-function setSidebar(open) {
+/* ---- Sidebar: desktop collapse to an emoji rail (remembered per account, like the theme) and mobile drawer ---- */
+const MOBILE_QUERY = window.matchMedia ? window.matchMedia("(max-width:860px)") : { matches: false };
+const NAV_KEYS = { device: "eh-nav:device", user: "eh-nav:u:" };
+let navAccount = null;
+function navStorageKey() { return navAccount ? NAV_KEYS.user + navAccount : NAV_KEYS.device; }
+function isMobileNav() { return !!MOBILE_QUERY.matches; }
+function isNavCollapsed() { return document.documentElement.getAttribute("data-nav") === "collapsed"; }
+function drawerOpen() { return $("#sidebar").classList.contains("open"); }
+/** Tooltips only while the labels are hidden (the icon-only rail). */
+function syncNavTitles() {
+  const rail = isNavCollapsed() && !isMobileNav();
+  const items = [...document.querySelectorAll("#sidebar .nav button, #sidebar .other-tools summary, #sidebar .create-btn")];
+  for (const el of items) {
+    const label = el.querySelector(".nav-label, .cn-label")?.textContent?.trim();
+    if (rail && label) el.setAttribute("title", label); else el.removeAttribute("title");
+  }
+}
+function syncMenuUi() {
+  const btn = $("#menu-btn");
+  const sidebar = $("#sidebar");
+  if (!btn || !sidebar) return;
+  let expanded, label;
+  if (isMobileNav()) {
+    expanded = drawerOpen();
+    label = expanded ? "Close menu" : "Open menu";
+    sidebar.inert = !expanded;
+  } else {
+    expanded = !isNavCollapsed();
+    label = expanded ? "Collapse menu" : "Expand menu";
+    sidebar.inert = false;
+  }
+  btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+  syncNavTitles();
+}
+function applyNavCollapsed(collapsed) {
+  document.documentElement.setAttribute("data-nav", collapsed ? "collapsed" : "expanded");
+  syncMenuUi();
+}
+/** Load this account's saved rail state (no email = head office / device-wide). Nothing saved = expanded. */
+function loadNavState(email) {
+  navAccount = window.EHTheme ? window.EHTheme.accountKey(email) : null;
+  let saved = null;
+  try { saved = localStorage.getItem(navStorageKey()); } catch { /* private mode */ }
+  applyNavCollapsed(saved === "collapsed");
+}
+function toggleNavCollapsed() {
+  const next = !isNavCollapsed();
+  applyNavCollapsed(next);
+  try { localStorage.setItem(navStorageKey(), next ? "collapsed" : "expanded"); } catch { /* the choice just lasts for this page */ }
+}
+function setSidebar(open, focus) {
   $("#sidebar").classList.toggle("open", open);
   $("#overlay").classList.toggle("show", open);
+  syncMenuUi();
+  if (!focus) return;
+  if (open) ($("#sidebar .nav button:not([hidden])") || $("#sidebar .create-btn"))?.focus();
+  else $("#menu-btn")?.focus();
 }
+function menuButton() {
+  if (isMobileNav()) setSidebar(!drawerOpen(), true);
+  else toggleNavCollapsed();
+}
+/** Tab stays inside the open mobile drawer. */
+function trapDrawerTab(e) {
+  if (e.key !== "Tab" || !isMobileNav() || !drawerOpen()) return;
+  const items = [...document.querySelectorAll("#sidebar button, #sidebar summary")].filter((el) => !el.hidden && el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !$("#sidebar").contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+if (MOBILE_QUERY.addEventListener) MOBILE_QUERY.addEventListener("change", () => {
+  if (!isMobileNav() && drawerOpen()) setSidebar(false);
+  syncMenuUi();
+});
 function closePops() {
   document.querySelectorAll("#pop-create,#pop-help,#pop-account,#pop-theme,#search-results").forEach((el) => el.classList.add("hidden"));
   $("#theme-btn")?.setAttribute("aria-expanded", "false");
@@ -171,9 +245,9 @@ function togglePop(id) {
 }
 /** Theme control (Light / Dark / Crazy). The choice is remembered per signed-in account by theme.js. */
 function syncThemeUi() {
-  const current = window.EHTheme ? window.EHTheme.current() : "light";
+  const current = window.EHTheme ? window.EHTheme.current() : "crazy";
   document.querySelectorAll("#pop-theme [data-theme-choice]").forEach((b) => b.setAttribute("aria-checked", b.dataset.themeChoice === current ? "true" : "false"));
-  $("#theme-btn")?.setAttribute("aria-label", "Theme: " + (window.EHTheme?.LABELS[current] || "Light"));
+  $("#theme-btn")?.setAttribute("aria-label", "Theme: " + (window.EHTheme?.LABELS[current] || "Crazy"));
 }
 function chooseTheme(name) {
   if (!window.EHTheme) return;
@@ -2858,8 +2932,8 @@ document.body.addEventListener("click", (e) => {
   if (themeEl) { chooseTheme(themeEl.dataset.themeChoice); closePops(); $("#theme-btn")?.focus(); return; }
   const popOpener = e.target.closest("[data-pop]");
   if (popOpener) { togglePop(popOpener.dataset.pop); return; }
-  if (e.target.closest("#menu-btn")) { setSidebar(!$("#sidebar").classList.contains("open")); return; }
-  if (e.target.id === "overlay") { setSidebar(false); return; }
+  if (e.target.closest("#menu-btn")) { menuButton(); return; }
+  if (e.target.id === "overlay") { setSidebar(false, true); return; }
   if (e.target.id === "slug-toggle") { $("#slug-wrap")?.classList.toggle("hidden"); return; }
   const goEl = e.target.closest("[data-go]");
   const actEl = e.target.closest("[data-act]");
@@ -3064,6 +3138,8 @@ $("#identity-form")?.addEventListener("submit", async (e) => {
   } catch (ex) { err.textContent = ex.message; }
 });
 window.addEventListener("hashchange", () => { if (!$("#shell").classList.contains("hidden")) render(); });
+document.addEventListener("keydown", trapDrawerTab);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && isMobileNav() && drawerOpen()) { setSidebar(false, true); return; } });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePops(); document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden")); } });
 
 async function openPoster(path) {
@@ -3175,6 +3251,7 @@ function requestPage(name, allowed) {
   const tool = REQUEST_NAMES[name] || name;
   const grantable = REQUEST_GRANTABLE.includes(name);
   return '<div class="card req-card" id="request-page" data-testid="request-page" data-tool="' + esc(name) + '">'
+    + (TOOL_ICONS[name] ? '<p class="req-emoji" aria-hidden="true" data-testid="request-emoji">' + TOOL_ICONS[name] + '</p>' : "")
     + '<h1 data-testid="request-title">You don\'t have access to ' + esc(tool) + '</h1>'
     + '<p class="muted">' + (grantable ? "Joshua sets who can use each tool. You can ask for access and he will get an email." : "This is a head-office tool that can\'t be switched on for email sign-ins yet. You can still ask Joshua about it.") + '</p>'
     + '<div id="request-form">'
@@ -3231,6 +3308,7 @@ function stayOrLand(allowed) {
 }
 async function enter() {
   window.EHTheme?.setAccount(state.actor?.email);
+  loadNavState(state.actor?.email);
   syncThemeUi();
   restoreNav();
   if (isBuildingMaintenance()) {

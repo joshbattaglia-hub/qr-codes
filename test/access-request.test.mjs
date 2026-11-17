@@ -198,7 +198,7 @@ test("reason is trimmed to 500 characters and control characters are removed", (
 test("menus: limited user sees granted tools and 'Other tools'; owner, head office and Entra are unchanged (static checks)", () => {
   const app = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
   const html = fs.readFileSync(new URL("../public/admin/index.html", import.meta.url), "utf8");
-  assert.match(html, /<details class="other-tools" id="other-tools"[^>]*hidden>\s*<summary[^>]*>Other tools<\/summary>/);
+  assert.match(html, /<details class="other-tools" id="other-tools"[^>]*hidden>\s*<summary[^>]*>[^]*?Other tools<\/span><\/summary>/);
   for (const needle of ["applyLimitedChrome", "restoreNav", "requestPage", "You don\\'t have access to ", "Request access", "Sending…", "/api/access-request", "request-sent", "maxlength=\"500\"", "state.userEdit = wanted", "get(\"edit\")"]) assert.ok(app.includes(needle), needle);
   // owner / head office / Entra: accessRoutes() stays null for them, so the full menu code path is used.
   assert.match(app, /if \(!a \|\| a\.kind !== "verified-identity" \|\| a\.provider !== "otp" \|\| a\.owner\) return null;/);

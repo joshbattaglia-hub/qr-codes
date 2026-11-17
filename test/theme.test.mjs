@@ -4,7 +4,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import { createRequire } from "node:module";
 
-/** Themes (Light / Dark / Crazy): storage, early apply, options, print, reduced motion and contrast. Synthetic data only. */
+/** Themes (Crazy default / Light / Dark): storage, early apply, options, print, reduced motion and contrast. Synthetic data only. */
 const require = createRequire(import.meta.url);
 const THEME_SRC = fs.readFileSync("public/admin/theme.js", "utf8");
 const CSS = fs.readFileSync("public/admin/styles.css", "utf8");
@@ -30,18 +30,22 @@ function boot(initial = {}) {
   return { win, store, attrs, sheets };
 }
 
-test("theme options: Light, Dark and Crazy are offered, Light is the default, and the toggle sits next to the profile image", () => {
+test("theme options: Light, Dark and Crazy are offered, Crazy is the default, and the toggle sits next to the profile image", () => {
   assert.deepEqual(T.THEMES, ["light", "dark", "crazy"]);
   assert.deepEqual(T.LABELS, { light: "Light", dark: "Dark", crazy: "Crazy" });
   for (const t of T.THEMES) assert.match(HTML, new RegExp('data-theme-choice="' + t + '"'));
-  assert.match(HTML, /id="theme-btn"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="pop-theme"[^>]*aria-label="Theme: Light"/);
+  assert.match(HTML, /id="theme-btn"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*aria-controls="pop-theme"[^>]*aria-label="Theme: Crazy"/);
+  assert.match(HTML, /data-theme-choice="crazy"/);
+  assert.equal((HTML.match(/aria-checked="true"/g) || []).length, 1, "exactly one tick in the static markup");
+  assert.match(HTML, /role="menuitemradio" aria-checked="true" data-theme-choice="crazy"/, "Crazy carries the default tick when nothing is saved");
   assert.match(HTML, /id="pop-theme"[^>]*role="menu"/);
   assert.equal((HTML.match(/role="menuitemradio"/g) || []).length, 3);
   assert.match(HTML, /<button class="icon-btn theme-btn"[^>]*>[\s\S]*?<\/button>\s*<button class="avatar"/, "the toggle is immediately before the profile image");
-  assert.equal(boot().attrs["data-theme"], "light", "nothing saved: Light");
+  assert.equal(boot().attrs["data-theme"], "crazy", "nothing saved: Crazy");
+  assert.equal(T.DEFAULT, "crazy");
 });
 
-test("the system dark-mode setting is ignored on purpose (Light unless the user chose otherwise)", () => {
+test("the system dark-mode setting is ignored on purpose (Crazy unless the user chose otherwise)", () => {
   assert.equal(/matchMedia|prefers-color-scheme/.test(THEME_SRC), false);
   assert.equal(/prefers-color-scheme/.test(CSS), false);
 });
@@ -58,7 +62,7 @@ test("early apply: theme.js is a blocking script in <head> before the stylesheet
   const b = boot({ "eh-theme:device": "dark" });
   assert.equal(b.attrs["data-theme"], "dark", "no account known: the device-wide choice");
   const c = boot({ "eh-theme:device": "<script>", "eh-theme:last": "x" });
-  assert.equal(c.attrs["data-theme"], "light", "junk in storage falls back to Light");
+  assert.equal(c.attrs["data-theme"], "crazy", "junk in storage falls back to the Crazy default");
   const d = boot({ "eh-theme:last": "pat@libertyretail.com.au", "eh-theme:u:pat@libertyretail.com.au": "crazy" });
   assert.equal(d.attrs["data-theme"], "crazy");
   assert.match(d.sheets.get("eh-crazy-vars").textContent, /^@media screen\{html\[data-theme="crazy"\]\{--bg:#/, "Crazy palette is in place at load, screen only");
@@ -68,21 +72,22 @@ test("persistence is per account, with a device-wide fallback for head office an
   const { win, store } = boot();
   const E = win.EHTheme;
   E.setAccount("Pat@LibertyRetail.com.au");
-  assert.equal(E.current(), "light");
+  assert.equal(E.current(), "crazy", "nothing saved: the Crazy default");
+  assert.equal(store.has("eh-theme:u:pat@libertyretail.com.au"), false, "the default is read, never written back");
   E.choose("dark");
   assert.equal(store.get("eh-theme:u:pat@libertyretail.com.au"), "dark", "keyed by the lower-cased email");
   assert.equal(store.has("eh-theme:device"), false, "a signed-in choice does not become the device choice");
   assert.equal(store.get("eh-theme:last"), "pat@libertyretail.com.au");
   // a different account on the same device does not inherit it, and a lookalike address is a different account
-  assert.equal(E.setAccount("pat2@libertyretail.com.au"), "light");
-  assert.equal(E.setAccount("pat@libertyretail.com.au.evil.example"), "light");
+  assert.equal(E.setAccount("pat2@libertyretail.com.au"), "crazy");
+  assert.equal(E.setAccount("pat@libertyretail.com.au.evil.example"), "crazy");
   assert.equal(E.setAccount("pat@libertyretail.com.au"), "dark");
   E.setAccount("sam@libertyretail.com.au"); E.choose("crazy");
   assert.equal(E.setAccount("pat@libertyretail.com.au"), "dark");
   assert.equal(E.setAccount("sam@libertyretail.com.au"), "crazy");
   // head office (no email): the device-wide key
   E.setAccount(null);
-  assert.equal(E.current(), "light");
+  assert.equal(E.current(), "crazy");
   E.choose("dark");
   assert.equal(store.get("eh-theme:device"), "dark");
   assert.equal(store.has("eh-theme:last"), false);
@@ -91,9 +96,44 @@ test("persistence is per account, with a device-wide fallback for head office an
   // unknown values are refused
   assert.equal(E.choose("neon"), null);
   assert.equal(E.choose("__proto__"), null);
-  // sign-in page and signed-out state are Light and are not saved
-  assert.equal(E.signedOut(), "light");
+  // sign-in page and signed-out state follow whoever last signed in on this device (else the device choice, else Crazy); nothing is saved
+  assert.equal(E.signedOut(), "dark");
   assert.equal(store.get("eh-theme:device"), "dark");
+  assert.equal(store.get("eh-theme:u:pat@libertyretail.com.au"), "dark");
+});
+
+test("Crazy is the default for everyone, but saved Light and Dark choices are kept and never overwritten", () => {
+  // nothing saved anywhere: Crazy
+  assert.equal(boot().attrs["data-theme"], "crazy");
+  const fresh = boot();
+  assert.equal(fresh.store.size, 0, "the default is not written to storage");
+  assert.equal(fresh.win.EHTheme.setAccount("new.person@libertyretail.com.au"), "crazy");
+  assert.equal(fresh.store.has("eh-theme:u:new.person@libertyretail.com.au"), false);
+  // a saved Light stays Light, early and after sign-in, for an account and for the device
+  const light = boot({ "eh-theme:last": "pat@libertyretail.com.au", "eh-theme:u:pat@libertyretail.com.au": "light" });
+  assert.equal(light.attrs["data-theme"], "light", "saved light is not replaced by the new default");
+  assert.equal(light.win.EHTheme.setAccount("pat@libertyretail.com.au"), "light");
+  assert.equal(light.store.get("eh-theme:u:pat@libertyretail.com.au"), "light");
+  const dev = boot({ "eh-theme:device": "light" });
+  assert.equal(dev.attrs["data-theme"], "light");
+  assert.equal(dev.win.EHTheme.setAccount(null), "light");
+  assert.equal(dev.win.EHTheme.signedOut(), "light");
+  assert.equal(dev.store.get("eh-theme:device"), "light");
+  const dark = boot({ "eh-theme:last": "pat@libertyretail.com.au", "eh-theme:u:pat@libertyretail.com.au": "dark" });
+  assert.equal(dark.attrs["data-theme"], "dark");
+  assert.equal(dark.win.EHTheme.signedOut(), "dark");
+  // another account on the same device with nothing saved gets the default, not the last person's Light
+  assert.equal(light.win.EHTheme.setAccount("other@libertyretail.com.au"), "crazy");
+  // an explicit pick of Crazy is saved like any other
+  light.win.EHTheme.choose("crazy");
+  assert.equal(light.store.get("eh-theme:u:other@libertyretail.com.au"), "crazy");
+});
+
+test("Crazy default: early script keeps no-flash order; reduced-motion stays static; print stays light (source checks)", () => {
+  const head = HTML.slice(HTML.indexOf("<head>"), HTML.indexOf("</head>"));
+  assert.ok(head.indexOf("/admin/theme.js") < head.indexOf('rel="stylesheet"'));
+  assert.match(CSS, /@media screen and \(prefers-reduced-motion:reduce\)\{\s*html\[data-theme="crazy"\] body\{animation:none\}/);
+  assert.match(CSS, /@media print\{[^]*html\[data-theme\],html\[data-theme\] body\{background:#fff !important/);
 });
 
 test("Crazy: every selection rolls a new random palette, and the palette only exists on screen", () => {

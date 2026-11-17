@@ -63,18 +63,18 @@ export function requestMessage(email, tool, reason, at) {
     "",
     footerText(),
   ].join("\n");
-  const row = (k, v) => '<tr><td style="padding:4px 14px 4px 0;color:#667085;vertical-align:top;white-space:nowrap">' + k + '</td><td style="padding:4px 0">' + v + '</td></tr>';
+  const row = (k, v) => '<tr><td style="padding:4px 14px 4px 0;color:#667085;vertical-align:top;white-space:nowrap">' + k + '</td><td style="padding:4px 0;word-break:break-word;overflow-wrap:anywhere">' + v + '</td></tr>';
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'
-    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;padding:28px"><tr><td>'
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px"><tr><td style="padding:28px 22px;overflow-wrap:anywhere">'
     + emailLogoHtml()
     + '<h1 style="font-size:20px;margin:0 0 10px">Access request: ' + esc(name) + '</h1>'
-    + '<p style="font-size:15px;line-height:1.5;margin:0 0 14px"><strong>' + esc(email) + '</strong> would like access to <strong>' + esc(name) + '</strong>.</p>'
-    + '<table role="presentation" style="font-size:14px;line-height:1.5;margin:0 0 18px">'
+    + '<p style="font-size:15px;line-height:1.5;margin:0 0 14px"><strong style="word-break:break-word;overflow-wrap:anywhere">' + esc(email) + '</strong> would like access to <strong>' + esc(name) + '</strong>.</p>'
+    + '<table role="presentation" width="100%" style="font-size:14px;line-height:1.5;margin:0 0 18px;table-layout:auto">'
     + row("Requester", esc(email)) + row("Tool", esc(name)) + row("Time", esc(when))
     + row("Reason", reason ? '<span data-testid="request-reason" style="white-space:pre-wrap">' + esc(reason) + '</span>' : '<span style="color:#667085">(none given)</span>')
     + '</table>'
-    + '<p style="margin:0 0 18px"><a href="' + esc(link) + '" data-testid="request-link" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">Open ' + esc(email) + ' in Users</a></p>'
+    + '<p style="margin:0 0 18px"><a href="' + esc(link) + '" data-testid="request-link" style="display:inline-block;max-width:100%;box-sizing:border-box;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px;text-align:center;word-break:break-word;overflow-wrap:anywhere">Open in Users</a></p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0">' + esc(note) + '</p>'
     + '</td></tr></table>' + footerHtml() + '</td></tr></table></body></html>';
   return { to: OWNER_EMAIL, replyTo: email, subject: "[Express Help] Access request: " + name + " (" + email + ")", text, html };

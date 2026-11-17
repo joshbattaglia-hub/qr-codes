@@ -25,6 +25,10 @@
   --tab-ink:#475467;--tab-on:#101828;--tab-on-line:#1d4ed8;--state-in:#067647;--state-out:#475467;
   --sp-ok-bg:#e7f6ec;--sp-ok-ink:#0b6b2c;--sp-wait-bg:#fff4d6;--sp-wait-ink:#8a5a00;--sp-bad-bg:#fde8e8;--sp-bad-ink:#a31919;--sp-none-bg:#eef0f4;--sp-none-ink:#475467;
   --dot-on:#12b76a;--wh-mini-bg:#f1f5f9;--signin-shadow:0 1px 3px rgba(16,24,40,.08);--footer-ink:#667085;--footer-hover:#1f4bdb;
+  --st-sub-bg:#fde4e4;--st-sub-ink:#7a1515;--st-sub-edge:#e5484d;
+  --st-info-bg:#fff4c2;--st-info-ink:#5c4300;--st-info-edge:#d9a400;
+  --st-prog-bg:#ffe5cc;--st-prog-ink:#6b3000;--st-prog-edge:#f08a24;--st-prog-bolt:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath d='M17 3 8 17h6l-2 10 9-14h-6z' fill='%23e8791a' fill-opacity='.2'/%3E%3C/svg%3E");
+  --st-done-bg:#dcf4e3;--st-done-ink:#0c5a26;--st-done-edge:#2fa862;
 }
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
@@ -40,6 +44,7 @@ a:hover{text-decoration:underline}
 .brand-logo{display:block;height:35px;width:auto;flex:none}
 .brand-logo.on-dark{display:none}
 .signin-logo{display:block;height:46px;width:auto;max-width:100%}
+.signin-logo.on-dark{display:none}
 .boot,.login{min-height:100vh;display:grid;place-items:center;padding:24px}
 .login-card,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
 .login-card{width:min(400px,100%);padding:28px 24px}
@@ -53,7 +58,10 @@ a:hover{text-decoration:underline}
 .create-btn:hover{background:var(--navy-hover)}
 .nav{display:flex;flex-direction:column;gap:2px;margin-top:6px}
 .nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;color:var(--nav-ink);border-radius:8px;padding:8px 10px}
-.nav button svg{width:18px;height:18px;flex:none}
+.nav-ico{width:24px;flex:none;text-align:center;font-size:17px;line-height:1;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;font-style:normal}
+.nav-label{min-width:0;overflow-wrap:anywhere}
+.brand-mark{display:none;width:36px;height:36px;flex:none}
+.cn-plus{display:none}
 .nav button:hover{background:var(--nav-hover)}
 .nav button.active{background:var(--soft);color:var(--nav-active-ink);font-weight:600}
 .workspace{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -72,7 +80,7 @@ a:hover{text-decoration:underline}
 .create-wrap .pop{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:15}
 .pop button,.pop a,.search-results button{display:flex;flex-direction:column;align-items:flex-start;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:10px 12px;text-decoration:none;color:inherit;gap:2px}
 .pop button:hover,.pop a:hover,.search-results button:hover{background:var(--pop-hover)}
-.view{padding:8px 28px 72px;max-width:1120px;width:100%}
+.view{padding:8px 28px 72px;max-width:2400px;width:100%}
 .page-head{display:flex;align-items:center;gap:10px;margin:6px 0 16px}
 .page-head h1{margin:0;font-size:22px;font-weight:600;flex:1;min-width:0;letter-spacing:-.02em}
 h2{font-size:16px;margin:0}
@@ -333,6 +341,7 @@ tr.clickable:hover{background:var(--surface-hover)}
 .other-list button{opacity:.78}
 .other-list button.active{opacity:1}
 .req-card{max-width:560px}
+.req-emoji{font-size:36px;line-height:1;margin:0 0 8px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
 .req-card textarea{width:100%;min-height:96px;resize:vertical}
 .req-count{display:block;text-align:right}
 .req-sent{background:var(--sp-ok-bg);color:var(--sp-ok-ink);border-radius:10px;padding:12px 14px;font-weight:600}
@@ -356,6 +365,61 @@ dialog::backdrop{background:var(--modal-back)}
 .theme-swatch.crazy{background:conic-gradient(#ff2d95,#ffd400,#00e676,#00b0ff,#b388ff,#ff2d95);border-color:#1c2434}
 .theme-pop button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
 
+/* ---- Collapsible sidebar (desktop icon rail) and drawer (mobile) ---- */
+.menu-btn{display:inline-flex}
+@media(min-width:861px){
+  .sidebar{position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;overflow-x:hidden}
+  html[data-nav="collapsed"]{--sidebar:68px}
+  html[data-nav="collapsed"] .sidebar{padding:0 10px 24px;overflow:visible}
+  html[data-nav="collapsed"] .brand{justify-content:center;padding:0}
+  html[data-nav="collapsed"] .brand-logo{display:none !important}
+  html[data-nav="collapsed"] .brand-mark.on-light{display:block}
+  html[data-nav="collapsed"] .brand-mark.on-dark{display:none}
+  html[data-nav="collapsed"] .cn-label,html[data-nav="collapsed"] .nav-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  html[data-nav="collapsed"] .cn-plus{display:inline}
+  html[data-nav="collapsed"] .create-btn{text-align:center;padding:9px 0;font-size:18px;line-height:1.2}
+  html[data-nav="collapsed"] .create-wrap .pop{right:auto;width:200px;z-index:50}
+  html[data-nav="collapsed"] .nav button,html[data-nav="collapsed"] .other-tools summary{justify-content:center;padding:8px 0}
+  html[data-nav="collapsed"] .other-tools summary::after{display:none}
+  html[data-nav="collapsed"] .nav button.active{box-shadow:none;outline:2px solid var(--blue);outline-offset:-2px}
+}
+@media(max-width:860px){
+  /* the drawer ignores the collapsed state: always full width with labels */
+  .sidebar[inert]{visibility:hidden}
+}
+.page-head h1{overflow-wrap:anywhere}
+/* ---- Wide layouts: forms and long text keep a readable line, tables and boards use the width ---- */
+.view p,.view .muted.small{max-width:96ch}
+.view .field{max-width:900px}
+.view .url-row{max-width:900px}
+.view .card>form,.view .card>.asset-dims:not(.ticket-filters),.view .card>.color-row{max-width:980px}
+.view .card>form.wide,.view .card>.wide{max-width:none}
+.view .chart{max-width:1200px}
+
+/* ---- Support board: compact cards, coloured status tabs ---- */
+.ticket-board{display:grid;grid-template-columns:repeat(4,minmax(210px,1fr));gap:12px;margin-top:10px;overflow-x:auto;align-items:start}
+.ticket-col{--st-bg:var(--code-bg);--st-ink:var(--ink);--st-edge:var(--line);background:var(--code-bg);background:color-mix(in srgb,var(--st-bg) 38%,var(--card));border:1px solid var(--st-edge);border-radius:12px;padding:0 6px 6px;min-height:120px;overflow:hidden}
+.ticket-col.st-submitted{--st-bg:var(--st-sub-bg);--st-ink:var(--st-sub-ink);--st-edge:var(--st-sub-edge)}
+.ticket-col.st-needs-info{--st-bg:var(--st-info-bg);--st-ink:var(--st-info-ink);--st-edge:var(--st-info-edge)}
+.ticket-col.st-in-progress{--st-bg:var(--st-prog-bg);--st-ink:var(--st-prog-ink);--st-edge:var(--st-prog-edge)}
+.ticket-col.st-done{--st-bg:var(--st-done-bg);--st-ink:var(--st-done-ink);--st-edge:var(--st-done-edge)}
+.ticket-col.drop{outline:2px dashed var(--blue)}
+.ticket-col-tab{margin:0 -6px 6px;padding:7px 10px;font-size:13.5px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--st-bg);color:var(--st-ink);border-bottom:2px solid var(--st-edge)}
+.ticket-col.st-in-progress .ticket-col-tab{background-color:var(--st-bg);background-image:var(--st-prog-bolt);background-size:30px 30px}
+.ticket-col-count{min-width:22px;text-align:center;padding:0 7px;border-radius:999px;background:var(--card);color:var(--st-ink);border:1px solid var(--st-edge);font-size:12px;font-weight:700}
+.ticket-card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--st-edge);border-radius:8px;padding:6px 8px;margin-bottom:6px;cursor:grab;font-size:13px}
+.ticket-card p{margin:2px 0 0;font-size:12px;line-height:1.35}
+.ticket-card-open{text-align:left;font-size:13px;line-height:1.3;padding:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ticket-card .ticket-meta{display:flex;flex-wrap:wrap;gap:3px 5px;align-items:center}
+.ticket-card .badge{padding:0 6px;font-size:11px}
+.ticket-card .ticket-who{overflow-wrap:anywhere}
+.ticket-move{display:flex;gap:4px;margin-top:5px}
+.ticket-move select{flex:1;min-width:0;height:26px;font-size:12px;padding:0 4px}
+.ticket-move .btn{padding:0 8px;height:26px;font-size:12px}
+.ticket-dialog{border:1px solid var(--line);border-radius:12px;max-width:440px;width:92vw}.ticket-dialog textarea{width:100%;min-height:110px}
+.ticket-filters{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+@media (max-width:760px){.ticket-board{grid-template-columns:1fr}.ticket-card{cursor:default}}
+
 @media screen{
   html[data-theme="dark"]{
     --scheme:dark;
@@ -377,11 +441,21 @@ dialog::backdrop{background:var(--modal-back)}
     --tab-ink:#a3adc0;--tab-on:#e7ebf3;--tab-on-line:#8eaaff;--state-in:#4ade80;--state-out:#a3adc0;
     --sp-ok-bg:#12351f;--sp-ok-ink:#7be3a0;--sp-wait-bg:#3a2d12;--sp-wait-ink:#f3c969;--sp-bad-bg:#4a1d1a;--sp-bad-ink:#ffb3ac;--sp-none-bg:#232b3c;--sp-none-ink:#a3adc0;
     --dot-on:#067647;--wh-mini-bg:#10151f;--signin-shadow:0 1px 3px rgba(0,0,0,.5);--footer-ink:#a3adc0;--footer-hover:#b9ccff;
+    --st-sub-bg:#4a2024;--st-sub-ink:#ffd2d2;--st-sub-edge:#ff6b6b;
+    --st-info-bg:#443a14;--st-info-ink:#ffeaa6;--st-info-edge:#e0b83a;
+    --st-prog-bg:#4a2f14;--st-prog-ink:#ffd6aa;--st-prog-edge:#ff9a3d;--st-prog-bolt:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath d='M17 3 8 17h6l-2 10 9-14h-6z' fill='%23ff9a3d' fill-opacity='.22'/%3E%3C/svg%3E");
+    --st-done-bg:#17402a;--st-done-ink:#c2f2d2;--st-done-edge:#3ccf7a;
   }
   html[data-theme="dark"] .empty-mark{box-shadow:0 0 0 1px #3a4560}
   /* Logo variant per theme: the Light and Crazy sidebars are light surfaces (navy lockup); Dark swaps to the white-ring lockup. */
   html[data-theme="dark"] .brand-logo.on-light{display:none}
   html[data-theme="dark"] .brand-logo.on-dark{display:block}
+  html[data-theme="dark"] .signin-logo.on-light{display:none}
+  html[data-theme="dark"] .signin-logo.on-dark{display:block}
+  @media(min-width:861px){
+    html[data-theme="dark"][data-nav="collapsed"] .brand-mark.on-light{display:none}
+    html[data-theme="dark"][data-nav="collapsed"] .brand-mark.on-dark{display:block}
+  }
   html[data-theme="dark"] .btn:disabled,html[data-theme="dark"] .create-btn:disabled{opacity:.55}
   html[data-theme="dark"] input:disabled,html[data-theme="dark"] select:disabled,html[data-theme="dark"] textarea:disabled{background:#141926;color:#8f9ab0;border-color:#2b3447;cursor:not-allowed}
   html[data-theme="dark"] ::placeholder{color:#8f9ab0;opacity:1}
@@ -407,6 +481,9 @@ dialog::backdrop{background:var(--modal-back)}
   html[data-theme="crazy"] .nav button.active{box-shadow:inset 5px 0 var(--c1)}
   html[data-theme="crazy"] .sidebar.open{background:var(--card)}
   html[data-theme="crazy"] .toast{border:2px solid var(--c3)}
+  /* Sign-in in Crazy: the logo and the "other ways" heading sit on cards, never straight on the rainbow, so they stay readable. */
+  html[data-theme="crazy"] .signin-brand{background:var(--card);border:2px solid var(--c3);border-radius:14px;box-shadow:4px 4px 0 var(--c1);width:fit-content;max-width:100%;margin:0 auto 18px;padding:10px 18px}
+  html[data-theme="crazy"] .signin-other h2{background:var(--card);color:var(--ink);border:2px solid var(--c3);border-radius:999px;width:fit-content;margin:0 auto 10px;padding:3px 14px}
   html[data-theme="dark"] select,html[data-theme="crazy"] select{background-color:var(--input-bg);color:var(--ink);border:1px solid var(--input-line);border-radius:8px}
   html[data-theme="crazy"] a{text-decoration:underline;text-underline-offset:2px}
   html[data-theme="crazy"] .nav a,html[data-theme="crazy"] .pop a{text-decoration:none}

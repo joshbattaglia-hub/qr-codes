@@ -83,7 +83,23 @@ test("themes in a real browser: toggle, keyboard, per-account memory, early appl
     const bgOf = (p, sel) => p.$eval(sel, (e) => getComputedStyle(e).backgroundColor);
     const rgb = (s) => s.match(/\d+/g).slice(0, 3).map(Number);
 
-    // ---- Light is the default and looks like it always did
+    // ---- Crazy is the default when nothing is saved (and nothing is written by merely loading)
+    const q = await open(OWNER);
+    assert.equal(await themeOf(q), "crazy", "nothing saved: Crazy");
+    assert.equal(await q.$eval("#theme-btn", (b) => b.getAttribute("aria-label")), "Theme: Crazy");
+    assert.equal(await q.evaluate((k) => localStorage.getItem(k), "eh-theme:u:" + JOSHUA), null, "the default is not saved");
+    await q.click("#theme-btn");
+    assert.deepEqual(await q.$$eval("#pop-theme [role=menuitemradio]", (els) => els.map((e) => e.dataset.themeChoice + ":" + e.getAttribute("aria-checked"))), ["light:false", "dark:false", "crazy:true"], "Crazy shows the current tick");
+    assert.equal(await q.evaluate(() => getComputedStyle(document.querySelector('[data-theme-choice="crazy"] .theme-tick')).visibility), "visible");
+    // explicitly choosing Light is saved and survives a reload (the new default never overrides it)
+    await q.click('[data-theme-choice="light"]');
+    assert.equal(await themeOf(q), "light");
+    assert.equal(await q.evaluate((k) => localStorage.getItem(k), "eh-theme:u:" + JOSHUA), "light");
+    await q.reload(); await q.waitForSelector("#shell:not(.hidden)", { timeout: 8000 }); await wait(300);
+    assert.equal(await themeOf(q), "light", "saved Light stays Light after reload");
+    await q.close();
+
+    // ---- a saved Light looks like Light always did
     const p = await open(OWNER);
     assert.equal(await themeOf(p), "light");
     assert.deepEqual(rgb(await bgOf(p, "body")), [243, 244, 248]);
@@ -143,12 +159,12 @@ test("themes in a real browser: toggle, keyboard, per-account memory, early appl
     assert.equal(await themeOf(again), "dark", "remembered after reload");
     const log = await again.evaluate(() => window.__themeLog);
     assert.deepEqual(log[0], ["dark", "loading"], "applied synchronously during load, before first paint");
-    assert.equal(log.some(([t]) => t === "light"), false, "no flash of Light");
+    assert.equal(log.some(([t]) => t === "light" || t === "crazy"), false, "no flash of Light or of the Crazy default before the saved Dark");
 
     // ---- another account on the same device does not inherit it
     const other = await open(PAT);
-    assert.equal(await themeOf(other), "light" , "a different account starts in Light");
-    assert.equal(await other.$eval("#theme-btn", (b) => b.getAttribute("aria-label")), "Theme: Light");
+    assert.equal(await themeOf(other), "crazy", "a different account with nothing saved starts in the Crazy default");
+    assert.equal(await other.$eval("#theme-btn", (b) => b.getAttribute("aria-label")), "Theme: Crazy");
     await other.close();
     const back = await open(OWNER);
     assert.equal(await themeOf(back), "dark", "the owner's choice is still there");

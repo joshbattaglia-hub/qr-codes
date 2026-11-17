@@ -73,14 +73,16 @@ test("every HTML page head carries the favicon links, and none still use the old
 
 test("sidebar logo: the right variant per theme, readable on each sidebar surface", () => {
   const html = read("admin/index.html"), css = read("admin/styles.css");
-  assert.match(html, /<div class="brand">\s*<img class="brand-logo on-light" src="\/brand\/logo-lockup\.svg" alt=""[^>]*>\s*<img class="brand-logo on-dark" src="\/brand\/logo-lockup-dark\.svg" alt=""[^>]*>\s*<span id="brand-name" class="sr-only">Express Help<\/span>/);
+  assert.match(html, /<div class="brand">\s*<img class="brand-logo on-light" src="\/brand\/logo-lockup\.svg" alt=""[^>]*>\s*<img class="brand-logo on-dark" src="\/brand\/logo-lockup-dark\.svg" alt=""[^>]*>\s*<img class="brand-mark on-light" src="\/brand\/logo-mark\.svg"[^>]*>\s*<img class="brand-mark on-dark" src="\/brand\/logo-mark-dark\.svg"[^>]*>\s*<span id="brand-name" class="sr-only">Express Help<\/span>/);
   assert.match(css, /\.brand-logo\.on-dark\{display:none\}/);
   assert.match(css, /html\[data-theme="dark"\] \.brand-logo\.on-light\{display:none\}/);
   assert.match(css, /html\[data-theme="dark"\] \.brand-logo\.on-dark\{display:block\}/);
   assert.equal(/data-theme="crazy"\] \.brand-logo/.test(css), false, "Crazy keeps the navy lockup: its sidebar is a solid light surface");
   assert.match(css, /html\[data-theme="crazy"\] \.sidebar\{background:var\(--card\)/);
   assert.match(html, /<h1 id="signin-title" class="sr-only">Express Help<\/h1>/);
-  assert.match(html, /class="signin-logo" src="\/brand\/logo-lockup\.svg"/);
+  assert.match(html, /class="signin-logo on-light" src="\/brand\/logo-lockup\.svg"/);
+  assert.match(html, /class="signin-logo on-dark" src="\/brand\/logo-lockup-dark\.svg"/);
+  assert.match(css, /html\[data-theme="dark"\] \.signin-logo\.on-dark\{display:block\}/);
   assert.match(read("set-password.html"), /class="signin-logo" src="\/brand\/logo-lockup\.svg"/);
   // Dark sidebar surface vs the ring/white wordmark; Light and Crazy surfaces vs the navy wordmark
 });

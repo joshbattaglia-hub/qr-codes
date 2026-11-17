@@ -1,4 +1,4 @@
-/* Express Help admin theme: Light (default), Dark, Crazy.
+/* Express Help admin theme: Crazy (default), Light, Dark.
  * Loaded as a plain blocking <script> in <head> so the saved theme is on <html> before the first paint (no flash).
  * The same file is loaded by the tests (CommonJS export at the bottom).
  *
@@ -6,10 +6,12 @@
  *   eh-theme:u:<email>  the choice of one signed-in account (email lower-cased)
  *   eh-theme:device     the device-wide choice, used before sign-in and for head office (no email)
  *   eh-theme:last       the account that last signed in on this device, so the early script knows whose choice to apply
- * Light is the default unless the user chose otherwise. The system dark-mode setting is deliberately ignored. */
+ * Crazy is the default when nothing is saved for the account/device. A saved Light or Dark is never overwritten: the default is only ever
+ * *read* when there is no saved value, it is not written back. The system dark-mode setting is deliberately ignored. */
 (function (root) {
   "use strict";
   var THEMES = ["light", "dark", "crazy"];
+  var DEFAULT = "crazy";
   var LABELS = { light: "Light", dark: "Dark", crazy: "Crazy" };
   var DEVICE = "eh-theme:device";
   var LAST = "eh-theme:last";
@@ -25,11 +27,11 @@
   function write(key, value) { try { root.localStorage.setItem(key, value); } catch (e) { /* private mode: the choice just lasts for this page */ } }
   function drop(key) { try { root.localStorage.removeItem(key); } catch (e) { /* ignore */ } }
 
-  /** The theme to use for an account (or the device when there is no account). Light unless chosen otherwise. */
+  /** The theme to use for an account (or the device when there is no account). Crazy unless a choice was saved. */
   function choice(email) {
     var key = accountKey(email);
-    if (key) return valid(read(USER + key)) || "light";
-    return valid(read(DEVICE)) || "light";
+    if (key) return valid(read(USER + key)) || DEFAULT;
+    return valid(read(DEVICE)) || DEFAULT;
   }
 
   /* ---- colour maths (WCAG 2.x) ---- */
@@ -125,7 +127,7 @@
 
   /** Put a theme on <html>. Does not save. Picking Crazy again rolls a new palette. */
   function apply(theme, reroll) {
-    var t = valid(theme) || "light";
+    var t = valid(theme) || DEFAULT;
     var doc = root.document;
     if (!doc || !doc.documentElement) return t;
     doc.documentElement.setAttribute("data-theme", t);
@@ -135,7 +137,7 @@
     return t;
   }
 
-  /** Early apply: whoever signed in last on this device, else the device choice, else Light. */
+  /** Early apply: whoever signed in last on this device, else the device choice, else Crazy. */
   function early() {
     var last = accountKey(read(LAST));
     return apply(choice(last), true);
@@ -156,13 +158,14 @@
   }
   function current() {
     var el = root.document && root.document.documentElement;
-    return (el && valid(el.getAttribute("data-theme"))) || "light";
+    return (el && valid(el.getAttribute("data-theme"))) || DEFAULT;
   }
-  /** Sign-in page and signed-out state always show Light and are not saved. */
-  function signedOut() { account = null; return apply("light", false); }
+  /** Sign-in page and signed-out state: the theme of whoever last signed in on this device (else the device choice, else Crazy). Never saved,
+   *  and the palette already rolled by early() is kept so the page does not change colour a second time. */
+  function signedOut() { account = null; return apply(choice(accountKey(read(LAST))), false); }
 
   var api = {
-    THEMES: THEMES, LABELS: LABELS, keys: { DEVICE: DEVICE, LAST: LAST, USER: USER },
+    THEMES: THEMES, DEFAULT: DEFAULT, LABELS: LABELS, keys: { DEVICE: DEVICE, LAST: LAST, USER: USER },
     accountKey: accountKey, choice: choice, early: early, setAccount: setAccount, choose: choose, apply: apply, current: current,
     signedOut: signedOut, makePalette: makePalette, contrast: contrast, parseHex: parseHex, css: css
   };
