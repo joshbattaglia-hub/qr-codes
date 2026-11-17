@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { promisify } from "node:util";
 import { conditionalIncrement, credStore, publicBase, rateStore } from "./lib.mjs";
 import { deliver, mailAvailable } from "./mail.mjs";
-import { footerHtml, FOOTER_CAR, FOOTER_EMAIL } from "./footer.mjs";
+import { footerHtml, footerText } from "./footer.mjs";
 
 /**
  * Password credentials and set-password / reset links for Users (email-code users).
@@ -216,7 +216,6 @@ export async function passwordStatus(email) {
 /* ---------- email ---------- */
 
 const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-const FOOTER_TEXT = "Built, not bought, by J.Batt " + FOOTER_CAR + " \u2014 need changes? email me here: mailto:" + FOOTER_EMAIL;
 
 export function linkUrl(token) {
   return publicBase() + "/set-password#" + token;
@@ -238,7 +237,7 @@ export function inviteMessage(email, token, kind, exp) {
     "You can also sign in without a password: on the Express Help sign-in page choose \"Email me a code\".",
     reset ? "If you did not ask for this, ignore this message. Your password has not changed." : "If you were not expecting this, ignore this message. Nothing happens until the link is used.",
     "",
-    FOOTER_TEXT,
+    footerText(),
   ].join("\n");
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'

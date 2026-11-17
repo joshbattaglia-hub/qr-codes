@@ -75,9 +75,9 @@ test("adding a user sends exactly one invite to that address; edits and existing
   const m = mail[0];
   assert.equal(m.subject, "Set your Express Help password");
   assert.match(m.text, /works once and expires in 72 hours/);
-  assert.match(m.html, /Built, not bought, by J\.Batt/);
+  assert.match(m.html, /Cowabunga - please hesitate to reach out/);
   assert.match(m.html, /mailto:jbattaglia@libertyretail\.com\.au/);
-  assert.match(m.text, /Built, not bought, by J\.Batt \u{1F3CE}\uFE0E \u2014 need changes\? email me here: mailto:jbattaglia@libertyretail\.com\.au/u);
+  assert.match(m.text, /Cowabunga - please hesitate to reach out email me here: mailto:jbattaglia@libertyretail\.com\.au/);
   assert.match(m.idempotencyKey, /^invite-t[a-f0-9]{24}$/);
   const edit = await usersLib.saveUser(owner, { mode: "edit", email: "invitee.one@libertyretail.com.au", visitor: "view", tickets: [], assets: "none", warehouse: true });
   assert.equal(edit.status, 200);
@@ -309,7 +309,7 @@ test("forgot password: same answer for everyone, mail only for listed users, res
   assert.equal(reset.to, email);
   assert.equal(reset.subject, "Reset your Express Help password");
   assert.match(reset.text, /expires in 1 hour/);
-  assert.match(reset.html, /Built, not bought, by J\.Batt/);
+  assert.match(reset.html, /Cowabunga - please hesitate to reach out/);
   assert.equal((await post(passwordFn, "/api/identity/password/forgot", { email: "" })).status, 400);
   const view = await (await post(passwordFn, "/api/identity/password/link", { token: linkOf(reset) })).json();
   assert.deepEqual([view.valid, view.kind, view.email], [true, "reset", email]);

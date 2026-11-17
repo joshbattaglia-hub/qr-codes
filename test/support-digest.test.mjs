@@ -69,7 +69,8 @@ test("digest content: open Signage jobs only, most overdue then due soonest then
   assert.match(d.text, /Submitted by Test Person/);
   assert.match(d.text, /https:\/\/expresshelp\.site\/admin\/#\/tickets\/t0000000000000001/);
   assert.match(d.text, /Support: https:\/\/expresshelp\.site\/admin\/#\/tickets/);
-  assert.match(d.text, /Built, not bought, by J\.Batt \u{1F3CE}\uFE0E — need changes\? email me here: mailto:jbattaglia@libertyretail\.com\.au/u);
+  assert.match(d.text, /Cowabunga - please hesitate to reach out email me here: mailto:jbattaglia@libertyretail\.com\.au/);
+  assert.match(d.html, /Cowabunga - please hesitate to reach out <a href="mailto:jbattaglia@libertyretail\.com\.au"[^>]*>email me here<\/a>/);
   assert.match(d.html, /<a href="mailto:jbattaglia@libertyretail\.com\.au"[^>]*>email me here<\/a>/);
   assert.doesNotMatch(d.text, /Done job|Screens job/);
   assert.match(digest.buildDigest({ jobs, queues: ["signage"], date: "2026-11-17", test: true }).subject, /^\[TEST\] /);
