@@ -193,7 +193,7 @@ test("area manager with Warehouse Stickers only: sees one tab, generates and rep
   assert.equal(again.status, 200);
   assert.equal((await whFn(req("POST", "/api/warehouse/settings", { cookie: areaCookie, body: { next: 5000 } }))).status, 403);
   assert.equal((await wh.readCounter()).next, 1000 + 21);
-  assert.equal(sentMail.length, 0);
+  assert.equal(sentMail.filter((m) => !/^Set your Express Help password$/.test(m.subject)).length, 0);
 });
 
 test("every other API refuses the warehouse-only manager (same answer as signed out for protected endpoints)", async () => {

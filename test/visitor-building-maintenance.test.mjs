@@ -128,7 +128,7 @@ test("only Joshua can list, add and remove building maintenance users; exact @li
   assert.equal(rows.length, 1);
   assert.equal(rows[0].detail, MAINT);
   assert.match(rows[0].actorId, /^otp:[a-f0-9]{16}$/);
-  assert.equal(mail.length, 0, "no notification mail");
+  assert.equal(mail.filter((m) => !/^Set your Express Help password$/.test(m.subject)).length, 0, "no notification mail");
 });
 
 test("a building maintenance user signs in with an email code and can only view visits, records and ID photos", async () => {
@@ -191,7 +191,7 @@ test("a building maintenance user signs in with an email code and can only view 
   const visit = await lib.visitorStore().get("visit/" + visitId, { type: "json" });
   assert.equal(visit.deleted, undefined);
   assert.equal(await lib.visitorStore().get("notify/settings", { type: "json" }), null);
-  assert.equal(mail.length, 0);
+  assert.equal(mail.filter((m) => !/^Set your Express Help password$/.test(m.subject)).length, 0);
 });
 
 test("removing a user revokes access immediately and is logged; Neil keeps his own role if added", async () => {

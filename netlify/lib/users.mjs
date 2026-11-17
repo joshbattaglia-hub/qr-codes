@@ -4,6 +4,7 @@ import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
 import { BUILDING_MAINTENANCE_ROLE, readBuildingMaintenance } from "./building-maintenance.mjs";
 import { allowlist, normalizeEmail, OTP_EXPLICIT_SITE_CAP } from "./otp.mjs";
 import { ASSET_LEVELS, effectiveAssets, tabsFor, warehouseGenerateOk, warehouseReprintOk } from "../../public/admin/permissions.mjs";
+import { clearCredentials, inviteAllowed, passwordStatus, sendLinkEmail } from "./credentials.mjs";
 import { QUEUES, readSettings as readTicketSettings, setTicketStaffQueues, TICKET_ADMIN_EMAIL } from "./tickets.mjs";
 
 /**
@@ -257,7 +258,7 @@ export async function listUsers(actor) {
   return {
     status: 200,
     body: {
-      users: users.map((row) => publicUser(row, settings)),
+      users: await Promise.all(users.map(async (row) => ({ ...publicUser(row, settings), password: await passwordStatus(row.email) }))),
       sites: await siteNames(),
       options: { approvers: Object.values(APPROVER_FACTS).map((f) => ({ key: f.key, email: f.email, name: f.name })), preparerClasses: PREPARER_CLASSES, visitorLevels: VISITOR_LEVELS, queues: QUEUES, domain: USERS_DOMAIN, owner: OWNER_EMAIL },
       migration: await usersStore().get(MIGRATION_KEY, { type: "json" }),
@@ -278,7 +279,7 @@ function describe(user, queues) {
   ].join(" ");
 }
 
-async function endSessions(email) {
+export async function endSessions(email) {
   const { blobs } = await otpStore().list({ prefix: "sess/" });
   let ended = 0;
   for (const blob of blobs) {
@@ -347,7 +348,13 @@ export async function saveUser(actor, body) {
     const newQueues = isOwnerRow ? oldQueues : QUEUES.filter((q) => tickets.includes(q));
     if (!isOwnerRow && newQueues.join(",") !== [...oldQueues].sort().join(",")) await setTicketStaffQueues(email, newQueues);
     await audit(actor, mode === "add" ? "user-add" : "user-edit", email, (before ? describe(before, oldQueues) : "none") + " > " + describe(next, newQueues));
-    return { status: 200, body: { user: publicUser(next, await readTicketSettings()) } };
+    // A newly added user (never an edit) gets an invite email with a set-password link. A failed send does not undo the add.
+    let invite;
+    if (mode === "add") {
+      invite = await sendLinkEmail(email, "invite").catch(() => ({ status: "failed" }));
+      await audit(actor, "user-invite", email, "new user; invite " + invite.status);
+    }
+    return { status: 200, body: { user: publicUser(next, await readTicketSettings()), ...(invite ? { invite: { status: invite.status } } : {}) } };
   }
   return { status: 409, error: "The list changed. Try again." };
 }
@@ -370,6 +377,7 @@ export async function removeUser(actor, body) {
     const settings = await readTicketSettings();
     const oldQueues = publicUser(before, settings).tickets;
     await setTicketStaffQueues(email, []);
+    await clearCredentials(email);
     const ended = await endSessions(email);
     await audit(actor, "user-remove", email, describe(before, oldQueues) + " > removed; sessions ended " + ended);
     return { status: 200, body: { removed: email, sessionsEnded: ended } };
@@ -389,4 +397,19 @@ export async function setVisitorLevel(actor, email, level) {
   const queues = publicUser(user, settings).tickets;
   if (level === "none" && !user.approverKey && !user.preparerClass && !queues.length && !user.warehouse) return removeUser(actor, { email });
   return saveUser(actor, { mode: "edit", email, approverKey: user.approverKey, preparerClass: user.preparerClass, siteIds: user.siteIds, visitor: level, tickets: queues, warehouse: user.warehouse === true });
+}
+
+/** Owner: send a fresh invite (set-password link) to an existing user. Older links stop working. Never sends to anyone who is not on the list. */
+export async function resendInvite(actor, body) {
+  if (!isOwner(actor)) return { status: 403, error: "Only the owner can manage users." };
+  const email = normalizeEmail(body?.email);
+  if (!email) return { status: 400, error: "Choose a user." };
+  const user = await userFor(email);
+  if (!user) return { status: 404, error: "User not found." };
+  if (!(await inviteAllowed(email))) return { status: 429, error: "Too many invites for that address. Try again in an hour." };
+  const result = await sendLinkEmail(email, "invite").catch(() => ({ status: "failed" }));
+  await audit(actor, "user-invite", email, "resend; invite " + result.status);
+  if (result.status === "not-configured") return { status: 503, error: "Email is not configured, so no invite was sent." };
+  if (result.status !== "sent") return { status: 502, error: "The invite could not be sent. Try again shortly." };
+  return { status: 200, body: { invite: { status: "sent" }, password: await passwordStatus(email) } };
 }

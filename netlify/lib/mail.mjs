@@ -17,6 +17,11 @@ export function mailConfigured() {
   return mailMode() !== "disabled";
 }
 
+/** True when a message can leave this process: a provider is configured, or a test transport is injected. */
+export function mailAvailable() {
+  return transport != null || mailMode() !== "disabled";
+}
+
 export function mailSetupMessage() {
   return "Email is not configured. Set RESEND_API_KEY and RESEND_FROM on the site. Nothing is sent until both are present. No other mailbox is used.";
 }

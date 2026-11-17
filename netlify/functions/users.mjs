@@ -1,7 +1,7 @@
 import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
-import { listUsers, removeUser, saveUser } from "../lib/users.mjs";
+import { listUsers, removeUser, resendInvite, saveUser } from "../lib/users.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
 
@@ -25,7 +25,11 @@ export default async (req) => {
     const result = await removeUser(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
+  if (path === "/api/users/invite") {
+    const result = await resendInvite(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
   return json(404, { error: "Not found" }, PRIVATE);
 };
 
-export const config = { path: ["/api/users", "/api/users/save", "/api/users/remove"] };
+export const config = { path: ["/api/users", "/api/users/save", "/api/users/remove", "/api/users/invite"] };
