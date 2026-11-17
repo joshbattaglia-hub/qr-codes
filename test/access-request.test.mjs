@@ -114,7 +114,7 @@ test("request access: one email to Joshua with the requester, tool, escaped reas
   assert.equal(m.subject, "[Express Help] Access request: Visitor Log (" + email + ")");
   assert.match(m.idempotencyKey, /^arq-[a-f0-9]{16}-visitors-\d+$/);
   assert.match(m.html, /&lt;img src=x onerror=alert\(1\)&gt; &amp; &quot;quotes&quot;/);
-  assert.equal(m.html.includes("<img"), false);
+  assert.equal(m.html.replace(/<img src="https:\/\/expresshelp\.site\/brand\/logo-lockup-email\.png"[^>]*>/, "").includes("<img"), false, "only the logo is an image; the user text is escaped");
   assert.match(m.text, /Reason: <img src=x/);
   for (const part of [m.html, m.text]) {
     assert.match(part, /Requester/ );
