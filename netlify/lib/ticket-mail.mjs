@@ -177,26 +177,29 @@ export function ticketToken(subject, hash) {
 
 export function routeRecipients(settings, recipients) {
   const addresses = settings?.inbound?.addresses || {};
-  const configured = {};
+  const aliases = settings?.inbound?.aliases || {};
+  const rows = [];
   for (const queue of ["screens", "signage"]) {
-    const full = emailOf(addresses[queue] || "");
-    if (full) configured[queue] = { full, base: baseEmail(full) };
+    for (const value of [addresses[queue] || "", ...(Array.isArray(aliases[queue]) ? aliases[queue] : [])]) {
+      const full = emailOf(value);
+      if (full) rows.push({ queue, full, base: baseEmail(full) });
+    }
   }
   const list = [...new Set((recipients || []).map(emailOf).filter(Boolean))];
   for (const address of list) {
-    for (const [queue, row] of Object.entries(configured)) {
-      if (row.full === address) return { queue, known: true };
-    }
+    const row = rows.find((one) => one.full === address);
+    if (row) return { queue: row.queue, known: true };
   }
   let known = false;
   for (const address of list) {
     const base = baseEmail(address);
-    const hits = Object.entries(configured).filter(([, row]) => row.base === base);
+    const hits = rows.filter((row) => row.base === base);
     if (!hits.length) continue;
     known = true;
-    const plain = hits.filter(([, row]) => row.full === row.base);
-    if (hits.length === 1 && (plain.length === 1 || !plusHash(address))) return { queue: hits[0][0], known };
-    if (plain.length === 1 && !/^t\d+$/i.test(plusHash(address))) return { queue: plain[0][0], known };
+    const queues = [...new Set(hits.map((row) => row.queue))];
+    const plainQueues = [...new Set(hits.filter((row) => row.full === row.base).map((row) => row.queue))];
+    if (queues.length === 1 && (plainQueues.length === 1 || !plusHash(address))) return { queue: queues[0], known };
+    if (plainQueues.length === 1 && !/^t\d+$/i.test(plusHash(address))) return { queue: plainQueues[0], known };
   }
   return { queue: "", known };
 }
