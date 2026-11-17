@@ -3,6 +3,7 @@ import { otpStore, sitesStore, usersStore } from "./lib.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
 import { BUILDING_MAINTENANCE_ROLE, readBuildingMaintenance } from "./building-maintenance.mjs";
 import { allowlist, normalizeEmail, OTP_EXPLICIT_SITE_CAP } from "./otp.mjs";
+import { ASSET_LEVELS, effectiveAssets, tabsFor, warehouseGenerateOk, warehouseReprintOk } from "../../public/admin/permissions.mjs";
 import { QUEUES, readSettings as readTicketSettings, setTicketStaffQueues, TICKET_ADMIN_EMAIL } from "./tickets.mjs";
 
 /**
@@ -69,6 +70,10 @@ function cleanUser(row) {
     ticketsEnabled: row.ticketsEnabled === true,
     // Warehouse Stickers tool (sequential WH sticker sheets). Users with only this see only that tool.
     warehouse: row.warehouse === true,
+    // Finer rights. Left out when never set, so older records keep the rule they had (see public/admin/permissions.mjs).
+    ...(ASSET_LEVELS.includes(row.assets) ? { assets: row.assets } : {}),
+    ...(row.warehouse === true && row.warehouseGenerate === false ? { warehouseGenerate: false } : {}),
+    ...(row.warehouse === true && row.warehouseReprint === false ? { warehouseReprint: false } : {}),
     addedAt: typeof row.addedAt === "string" ? row.addedAt : "",
     updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : "",
   };
@@ -113,6 +118,9 @@ export function userActorFields(user) {
     visitor: user.visitor,
     ticketsEnabled: user.ticketsEnabled === true,
     warehouse: user.warehouse === true,
+    warehouseGenerate: user.warehouse === true && warehouseGenerateOk(user),
+    warehouseReprint: user.warehouse === true && warehouseReprintOk(user),
+    assets: effectiveAssets(user),
     owner: user.owner === true,
   };
 }
@@ -234,7 +242,8 @@ async function siteNames() {
 function publicUser(user, settings) {
   const limited = !user.approverKey && !user.preparerClass && !user.owner;
   const queues = user.email === TICKET_ADMIN_EMAIL ? [...QUEUES] : limited && !user.ticketsEnabled ? [] : QUEUES.filter((q) => settings.staff[q].includes(user.email));
-  return { ...user, tickets: queues, ticketAdmin: user.email === TICKET_ADMIN_EMAIL, posRole: user.approverKey ? "approver" : user.preparerClass ? "preparer" : "none" };
+  const fields = { ...user, assets: effectiveAssets(user), warehouseGenerate: user.warehouse === true && warehouseGenerateOk(user), warehouseReprint: user.warehouse === true && warehouseReprintOk(user) };
+  return { ...fields, tickets: queues, ticketAdmin: user.email === TICKET_ADMIN_EMAIL, posRole: user.approverKey ? "approver" : user.preparerClass ? "preparer" : "none", tabs: tabsFor(user, queues) };
 }
 
 export async function listUsers(actor) {
@@ -264,7 +273,8 @@ function describe(user, queues) {
     "sites=" + user.siteIds.length,
     "visitor=" + (user.owner ? "owner" : user.visitor),
     "tickets=" + (queues.length ? queues.join(",") : "none"),
-    ...(user.warehouse ? ["warehouse=yes"] : []),
+    ...(user.warehouse ? ["warehouse=" + (warehouseGenerateOk(user) && warehouseReprintOk(user) ? "yes" : [warehouseGenerateOk(user) ? "generate" : "", warehouseReprintOk(user) ? "reprint" : ""].filter(Boolean).join("+") || "view-only")] : []),
+    ...(ASSET_LEVELS.includes(user.assets) ? ["assets=" + user.assets] : []),
   ].join(" ");
 }
 
@@ -299,6 +309,10 @@ export async function saveUser(actor, body) {
   if (body?.tickets != null && !Array.isArray(body.tickets)) return { status: 400, error: "Ticket areas must be a list." };
   const tickets = [...new Set(body?.tickets || [])];
   if (tickets.some((q) => !QUEUES.includes(q))) return { status: 400, error: "Unknown ticket area." };
+  if (body?.assets !== undefined && !ASSET_LEVELS.includes(body.assets)) return { status: 400, error: "Unknown Asset Barcodes level." };
+  for (const flag of ["warehouse", "warehouseGenerate", "warehouseReprint"]) {
+    if (body?.[flag] !== undefined && typeof body[flag] !== "boolean") return { status: 400, error: "Warehouse Stickers options must be on or off." };
+  }
   for (let attempt = 0; attempt < 5; attempt++) {
     const meta = await usersStore().getWithMetadata(REGISTRY_KEY, { type: "json", consistency: "strong" });
     if (!meta?.etag) return { status: 409, error: "Users list is not ready. Try again." };
@@ -318,9 +332,9 @@ export async function saveUser(actor, body) {
     if (isOwnerRow && before && (approverKey !== before.approverKey || preparerClass !== before.preparerClass)) {
       return { status: 400, error: "The owner's own roles cannot be changed here." };
     }
-    const next = cleanUser({ email, approverKey, preparerClass, siteIds, visitor: isOwnerRow ? "none" : visitor, ticketsEnabled: tickets.length > 0, warehouse: body?.warehouse === true, addedAt: before?.addedAt || nowIso(), updatedAt: nowIso() });
+    const next = cleanUser({ email, approverKey, preparerClass, siteIds, visitor: isOwnerRow ? "none" : visitor, ticketsEnabled: tickets.length > 0, warehouse: body?.warehouse === true, assets: body?.assets !== undefined ? body.assets : before?.assets, warehouseGenerate: body?.warehouse === true ? (body.warehouseGenerate !== undefined ? body.warehouseGenerate : before?.warehouseGenerate) : undefined, warehouseReprint: body?.warehouse === true ? (body.warehouseReprint !== undefined ? body.warehouseReprint : before?.warehouseReprint) : undefined, addedAt: before?.addedAt || nowIso(), updatedAt: nowIso() });
     if (!next) return { status: 400, error: "That combination is not allowed." };
-    if (!isOwnerRow && !next.approverKey && !next.preparerClass && next.visitor === "none" && !tickets.length && !next.warehouse) {
+    if (!isOwnerRow && !next.approverKey && !next.preparerClass && next.visitor === "none" && !tickets.length && !next.warehouse && effectiveAssets(next) === "none") {
       return { status: 400, error: "Give at least one permission, or remove the user." };
     }
     const settings = await readTicketSettings();

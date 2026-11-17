@@ -84,7 +84,8 @@ function previewHtml(sheet, codes) {
 function render(data, last) {
   const box = document.getElementById("warehouse-body");
   if (!box) return;
-  const rows = (data.sheets || []).map((s) => '<tr data-testid="wh-row"><td><strong>' + esc(s.first) + " – " + esc(s.last) + '</strong><div class="muted small">' + esc(s.count) + ' stickers</div></td><td>' + esc(s.by) + '</td><td>' + esc(when(s.at)) + '</td><td>' + (s.reprints ? esc(s.reprints) + "× (last " + esc(when(s.lastReprintAt)) + ")" : "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="wh-reprint" data-id="' + esc(s.id) + '">Reprint</button></td></tr>').join("");
+  const can = data.can || { generate: true, reprint: true, admin: !!data.canAdmin };
+  const rows = (data.sheets || []).map((s) => '<tr data-testid="wh-row"><td><strong>' + esc(s.first) + " – " + esc(s.last) + '</strong><div class="muted small">' + esc(s.count) + ' stickers</div></td><td>' + esc(s.by) + '</td><td>' + esc(when(s.at)) + '</td><td>' + (s.reprints ? esc(s.reprints) + "× (last " + esc(when(s.lastReprintAt)) + ")" : "—") + '</td><td>' + (can.reprint ? '<button class="btn ghost btn-xs" type="button" data-act="wh-reprint" data-id="' + esc(s.id) + '">Reprint</button>' : "") + '</td></tr>').join("");
   const admin = data.canAdmin ? '<div class="card" data-testid="wh-admin"><h2>Settings (admin)</h2><p class="muted small">Next number to issue. It can only move forward. Moving it back could reprint codes already on stickers, so that needs the override and a confirmation. Every change is logged.</p>'
     + '<div class="wh-admin-row"><label class="field"><span>Next number</span><input id="wh-next" inputmode="numeric" autocomplete="off" value="' + esc(data.next) + '" data-testid="wh-next"></label>'
     + '<label class="check"><input type="checkbox" id="wh-override"> Override: allow moving back</label>'
@@ -92,8 +93,11 @@ function render(data, last) {
     + '<p id="wh-admin-note" class="small"></p>'
     + ((data.changes || []).length ? '<h3>Change log</h3><ul class="user-history" data-testid="wh-changes">' + data.changes.map((c) => "<li>" + esc(when(c.at)) + " · " + esc(c.by) + " · " + (c.action === "set-next" ? "next number " + esc(c.fromCode) + " → " + esc(c.toCode) + (c.override ? " (override)" : "") : c.action === "reprint" ? "reprinted " + esc(c.first) + " – " + esc(c.last) : esc(c.action)) + "</li>").join("") + "</ul>" : "")
     + "</div>" : "";
-  box.innerHTML = '<div class="card wh-main" data-testid="wh-main"><p class="wh-next-label muted">Next sheet starts at</p><p class="wh-next-code" data-testid="wh-next-code">' + esc(data.nextCode) + '</p>'
-    + '<button class="btn wh-go" type="button" data-act="wh-generate" data-testid="wh-generate">Generate next sheet of stickers</button>'
+  const main = can.generate
+    ? '<p class="wh-next-label muted">Next sheet starts at</p><p class="wh-next-code" data-testid="wh-next-code">' + esc(data.nextCode) + '</p>'
+      + '<button class="btn wh-go" type="button" data-act="wh-generate" data-testid="wh-generate">Generate next sheet of stickers</button>'
+    : '<p class="muted" data-testid="wh-no-generate">You can reprint earlier sheets below. Making new sheets is not turned on for you.</p>';
+  box.innerHTML = '<div class="card wh-main" data-testid="wh-main">' + main
     + '<p id="wh-status" class="small" role="status" aria-live="polite"></p>'
     + '<p class="small muted">' + esc(L7160.name) + " · 21 per A4 sheet · Code 39 · print at 100% (no scaling)</p></div>"
     + (last ? previewHtml(last.sheet, last.codes) : "")

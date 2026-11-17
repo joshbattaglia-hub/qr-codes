@@ -225,6 +225,6 @@ test("UI: one main button with loading state, history with Reprint, admin settin
   assert.match(index, /data-go="assets"[^]*Asset Barcodes<\/button>\s*<button type="button" data-go="warehouse"/);
   assert.match(index, /\/footer\.js/);
   const app = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
-  assert.match(app, /if \(state\.actor\?\.warehouse === true\) out\.push\("warehouse"\)/);
-  assert.match(app, /id="user-warehouse"/);
+  assert.match(app, /tabsFor\(a, /);
+  assert.match(app, /id="perm-" + key|id="user-wh-generate"/);
 });
