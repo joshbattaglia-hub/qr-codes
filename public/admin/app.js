@@ -1,4 +1,5 @@
 import { CODE39_DEFAULTS, readLayout, validatePayload, parseBatch, code39Svg, safeAssetName, zipStore, printHtml } from "./code39.mjs";
+import { warehousePage, paintWarehouse, warehouseAction } from "./warehouse-ui.mjs";
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 
@@ -1843,7 +1844,7 @@ function posOptions(email, options) {
 }
 function userForm(data) {
   const editing = state.userEdit && state.userEdit !== "new" ? data.users.find((u) => u.email === state.userEdit) : null;
-  const u = editing || { email: "", approverKey: "", preparerClass: "", siteIds: [], visitor: "none", tickets: [] };
+  const u = editing || { email: "", approverKey: "", preparerClass: "", siteIds: [], visitor: "none", tickets: [], warehouse: false };
   const owner = !!editing?.owner;
   const opts = data.options;
   const posValue = (u.approverKey || "") + "|" + (u.preparerClass || "");
@@ -1858,6 +1859,7 @@ function userForm(data) {
     + '<h3>Sites</h3><p class="muted small">Sites this person can see in POS setup and Sites. Only used with a POS role.</p><label class="field"><span>Filter sites</span><input id="user-site-filter" autocomplete="off" placeholder="Type to filter"></label><div class="user-sites" data-testid="user-sites">' + sites + '</div>'
     + '<h3>Visitor Log</h3>' + visitor
     + '<h3>Support Tickets</h3><p class="muted small">Areas (queues) this person works on as ticket staff.</p>' + tickets
+    + '<h3>Warehouse Stickers</h3>' + (owner ? '<p class="muted">Owner: full Warehouse Stickers access, including the next-number setting.</p>' : '<label class="check"><input type="checkbox" id="user-warehouse" data-testid="user-warehouse"' + (u.warehouse ? " checked" : "") + '> Can print Warehouse Stickers (sequential WH sticker sheets). With no other permission, this person sees only that tool.</label>')
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-save" data-mode="' + (editing ? "edit" : "add") + '" data-testid="user-save">Save</button><button class="btn ghost" type="button" data-act="user-cancel">Cancel</button></div><p id="user-note" class="small err"></p></div>';
 }
 async function paintUsers() {
@@ -1868,11 +1870,11 @@ async function paintUsers() {
   if (!response.ok) { box.innerHTML = '<p data-testid="users-denied">' + esc(data.error || "Only the owner can manage users.") + '</p><p class="muted">Users is managed with your email code sign-in.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>'; return; }
   state.usersData = data;
   const mig = data.migration;
-  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
+  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + (u.owner ? "Admin" : u.warehouse ? "Yes" : "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
   const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
   box.innerHTML = (mig ? '<p class="muted small" data-testid="users-migration">Moved from the previous sign-in list on ' + esc(new Date(mig.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + ': ' + esc(String(mig.users)) + ' users, effective access ' + (mig.same ? "identical" : "NOT identical") + ' (' + esc(String(mig.checked)) + ' addresses checked).</p>' : "")
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-add-open" data-testid="user-add-open">Add user</button></div>'
-    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + '<div class="table-wrap"><table class="visitor-sheet" data-testid="users-table"><thead><tr><th>Email</th><th>POS role</th><th>Sites</th><th>Visitor Log</th><th>Support areas</th><th>Warehouse Stickers</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
     + (state.userEdit ? userForm(data) : "")
     + '<h2>History</h2><ul class="user-history" data-testid="users-history">' + (history || '<li class="muted">No changes yet.</li>') + '</ul>'
     + '<p class="muted small">Not managed here: the head-office password (QR codes, links, pages, competitions, vouchers, templates, domains and workspace settings) and site-manager password logins.</p>';
@@ -2007,6 +2009,7 @@ async function visitorAction(button) {
       siteIds: [...document.querySelectorAll('input[name="user-site"]:checked')].map((el) => el.value),
       visitor: document.querySelector('input[name="user-visitor"]:checked')?.value || "none",
       tickets: [...document.querySelectorAll('input[name="user-ticket"]:checked')].map((el) => el.value),
+      warehouse: !!document.getElementById("user-warehouse")?.checked,
     };
     const response = await fetch("/api/users/save", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     const body = await response.json().catch(() => ({}));
@@ -2088,6 +2091,7 @@ function pageFor(r) {
   if (r.name === "sites") return sitesPage();
   if (r.name === "pos") return posList();
   if (r.name === "assets") return assetPage();
+  if (r.name === "warehouse") return warehousePage();
   if (r.name === "visitors") return visitorPage();
   if (r.name === "users") return usersPage();
   if (r.name === "tickets") return ticketShell();
@@ -2289,6 +2293,7 @@ async function render(opts = {}) {
     if (r.name !== "pages") state.pageDraft = state.pageDraft;
     view.innerHTML = pageFor(r);
     if (r.name === "assets") paintAsset();
+    if (r.name === "warehouse") paintWarehouse().catch((err) => { const box = document.getElementById("warehouse-body"); if (box) box.textContent = err.message; });
     if (r.name === "visitors") paintVisitor();
     if (r.name === "users") paintUsers();
     if (r.name === "settings") paintTvSettings();
@@ -2732,6 +2737,10 @@ document.body.addEventListener("click", (e) => {
     Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("visitor-note"); if (note) note.textContent = err.message; });
     return;
   }
+  if (actEl && actEl.closest("#warehouse-page")) {
+    Promise.resolve(warehouseAction(actEl)).catch((err) => toast(err.message || "Warehouse Stickers failed"));
+    return;
+  }
   if (actEl && actEl.closest("#asset-page")) {
     Promise.resolve(assetAction(actEl.dataset.act)).catch((err) => assetStatus(err.message || "Asset label failed"));
     return;
@@ -2922,6 +2931,7 @@ function limitedRoutes() {
   const out = [];
   if (state.actor?.visitor && state.actor.visitor !== "none") out.push("visitors");
   if (state.limitedTickets) out.push("tickets");
+  if (state.actor?.warehouse === true) out.push("warehouse");
   return out;
 }
 async function enter() {
@@ -2936,7 +2946,7 @@ async function enter() {
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
     const allowed = limitedRoutes();
     document.querySelectorAll("#nav [data-go]").forEach((btn) => { if (!allowed.includes(btn.dataset.go)) btn.hidden = true; });
-    const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : "Support";
+    const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : state.limitedTickets ? "Support" : state.actor?.warehouse ? "Warehouse Stickers" : "Support";
     $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Email code user") + "</strong><div class='muted small'>" + esc(label) + " · email code</div>";
     paintAvatar();
     ensureRanges();
@@ -2982,6 +2992,8 @@ async function enter() {
   document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = false; });
   const usersNav = document.querySelector('#nav [data-go="users"]');
   if (usersNav) usersNav.hidden = !state.actor?.owner;
+  const warehouseNav = document.querySelector('#nav [data-go="warehouse"]');
+  if (warehouseNav && identity) warehouseNav.hidden = !(state.actor?.owner || state.actor?.warehouse === true);
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
 }
