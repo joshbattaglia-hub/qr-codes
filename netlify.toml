@@ -68,6 +68,15 @@
   to = "/tv/truckies-lounge.html"
   status = 200
 
+[[redirects]]
+  from = "/tv/support-tickets"
+  to = "/tv/support-tickets.html"
+  status = 200
+[[redirects]]
+  from = "/tv/support-tickets/"
+  to = "/tv/support-tickets.html"
+  status = 200
+
 [[headers]]
   for = "/tv/*"
   [headers.values]

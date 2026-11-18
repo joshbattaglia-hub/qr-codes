@@ -385,6 +385,16 @@ function digestCard(d) {
     + '<p id="digest-note" class="small" role="status"></p></div>';
 }
 
+function tvLinkCard(status) {
+  const on = !!status?.configured;
+  return '<div class="field-card" data-testid="ticket-tv-link"><h2>Work TV link</h2>'
+    + '<p class="small muted">Shows the open tickets on the work TV (Fire TV). It is read-only: only ticket numbers, titles, site, area, first name, days open and status are sent, never emails, phone numbers, descriptions or messages. The key is shown once when you make it. Making a new one switches the old link off.</p>'
+    + '<p class="small" data-testid="tv-link-state">' + (on ? "A TV link is on (made " + esc(status.createdAt ? new Date(status.createdAt).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" }) : "earlier") + ")." : "No TV link yet.") + "</p>"
+    + '<p><button class="btn" type="button" data-act="ticket-tv-link-make">' + (on ? "Make a new TV link (switches the old one off)" : "Make a TV link") + "</button> "
+    + (on ? '<button class="btn ghost" type="button" data-act="ticket-tv-link-off">Turn the TV link off</button>' : "") + "</p>"
+    + '<div id="tv-link-out" role="status"></div></div>';
+}
+
 async function paintSettings(box, access) {
   if (access.role !== "admin") {
     box.innerHTML = denied();
@@ -394,6 +404,7 @@ async function paintSettings(box, access) {
   const sites = await api("/api/tickets/sites").then((body) => body.sites || []).catch(() => []);
   const held = await api("/api/tickets/quarantine").catch(() => ({ quarantine: [] }));
   const digest = await api("/api/tickets/digest").catch(() => null);
+  const tvLink = await api("/api/tickets/tv-link").catch(() => null);
   const siteRef = sites.map((site) => esc(site.id) + " — " + esc(site.name) + (site.area ? " · " + esc(site.area) : "")).join("<br>");
   const origin = (location.origin || "https://expresshelp.site").replace(/\/+$/, "");
   const postmarkUrl = origin + "/api/support/inbound/postmark?token=";
@@ -434,6 +445,7 @@ async function paintSettings(box, access) {
     + '<p>Docs: <a href="https://resend.com/docs/dashboard/receiving/" target="_blank" rel="noopener">Receiving emails</a>, <a href="https://resend.com/docs/webhooks/emails/received" target="_blank" rel="noopener">email.received</a>, <a href="https://resend.com/docs/webhooks/verify-webhooks-requests" target="_blank" rel="noopener">Verify webhooks</a>, <a href="https://resend.com/docs/dashboard/receiving/custom-domains" target="_blank" rel="noopener">Custom receiving domains</a>.</p>'
     + "<p class=\"muted small\">Inbound mail is not accepted until the secret, at least one queue address, and the inbound switch are set. There are no auto-replies. Failed authentication or an unknown sender is held for review.</p></div>"
     + digestCard(digest)
+    + tvLinkCard(tvLink)
     + "<h2>Quarantine</h2>"
     + '<div class="table-wrap"><table><thead><tr><th>When</th><th>From</th><th>Subject</th><th>Reason</th><th></th></tr></thead><tbody>'
     + (quarantine || '<tr><td colspan="5">No held mail.</td></tr>') + "</tbody></table></div>"
@@ -566,6 +578,28 @@ export async function ticketAction(button, state, go) {
   if (act === "ticket-close") {
     const photo = (await filesFromInput("ticket-close-photo", { photoOnly: true }))[0];
     await api("/api/tickets/" + id + "/close", { method: "POST", body: JSON.stringify({ notes: document.getElementById("ticket-close").value, photo: photo?.data || "" }) });
+  }
+  if (act === "ticket-tv-link-make" || act === "ticket-tv-link-off") {
+    const out = document.getElementById("tv-link-out");
+    try {
+      if (act === "ticket-tv-link-off") {
+        if (!window.confirm("Turn the work TV link off? The TV will stop showing tickets.")) return;
+        await api("/api/tickets/tv-link", { method: "DELETE" });
+        go("tickets/settings");
+        return;
+      }
+      if (document.querySelector('[data-testid="tv-link-state"]')?.textContent.indexOf("is on") >= 0 && !window.confirm("Make a new TV link? The TV will stop showing tickets until you use the new address.")) return;
+      const made = await api("/api/tickets/tv-link", { method: "POST", body: JSON.stringify({}) });
+      const origin = (location.origin || "https://expresshelp.site").replace(/\/+$/, "");
+      const rotating = origin + "/tv/truckies-lounge?key=" + made.key + "&rotate=30";
+      const only = origin + "/tv/support-tickets?key=" + made.key;
+      if (out) out.innerHTML = '<p class="small"><b>Copy these now. They are not shown again.</b></p>'
+        + '<label class="field"><span>Lounge screen plus tickets (rotates every 30 seconds; change rotate=30)</span><input type="text" readonly size="60" value="' + esc(rotating) + '" data-testid="tv-link-rotating"></label>'
+        + '<label class="field"><span>Tickets only</span><input type="text" readonly size="60" value="' + esc(only) + '" data-testid="tv-link-only"></label>';
+      const stateEl = document.querySelector('[data-testid="tv-link-state"]');
+      if (stateEl) stateEl.textContent = "A TV link is on (made just now).";
+    } catch (err) { if (out) out.textContent = err.message; }
+    return;
   }
   if (act === "ticket-save-digest" || act === "ticket-digest-test") {
     const out = document.getElementById("digest-note");

@@ -5,6 +5,7 @@ import {
   addFile, addInternalNote, addPublicReply, assignTicket, closeTicket, createTicket, editTicket, listAudit, listSiteChoices, listTickets, moveTicket, readFile, readSettings, readTicket, saveSettings, setStatus, summary, ticketAccess,
 } from "../lib/tickets.mjs";
 import { approveQuarantine, discardQuarantine, listQuarantine, notifyTicket } from "../lib/ticket-mail.mjs";
+import { createTvLink, removeTvLink, tvLinkStatus } from "../lib/tv-tickets.mjs";
 import { DIGEST_WINDOW_MINUTES, readDigestSettings, saveDigestSettings, sendTestDigest } from "../lib/support-digest.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -32,6 +33,17 @@ export default async (req) => {
     const body = await req.json().catch(() => ({}));
     const result = await saveSettings(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/tickets/tv-link") {
+    // Admin only. POST makes or replaces the TV link key (shown once, only a hash is stored); DELETE turns it off.
+    const access = await ticketAccess(actor);
+    if (access.role !== "admin") return json(403, { error: "The TV link is limited to the ticket admin." }, PRIVATE);
+    if (req.method === "GET") return json(200, await tvLinkStatus(), PRIVATE);
+    if (req.method === "POST" || req.method === "DELETE") {
+      const result = req.method === "POST" ? await createTvLink(actor) : await removeTvLink(actor);
+      return json(result.status, result.body || { error: result.error }, PRIVATE);
+    }
+    return json(405, { error: "Method not allowed" }, PRIVATE);
   }
   if (path === "/api/tickets/sites" && req.method === "GET") {
     const access = await ticketAccess(actor);
