@@ -66,13 +66,12 @@
       return max;
     }
     function cardHtml(t) {
-      var chips = "";
+      var chips = t.queue ? '<span class="tt-chip">' + esc(String(t.queue).toUpperCase()) + "</span>" : "";
       if (t.overdue) chips += '<span class="tt-chip tt-bad">OVERDUE</span>';
       if (t.priority === "urgent") chips += '<span class="tt-chip tt-bad">URGENT</span>';
       else if (t.priority === "high") chips += '<span class="tt-chip tt-hi">HIGH</span>';
       var bits = [];
       if (t.site) bits.push(esc(t.site));
-      if (t.queue) bits.push(esc(t.queue));
       if (t.firstName) bits.push(esc(t.firstName));
       if (t.column === "done") bits.push(t.doneHoursAgo < 1 ? "done just now" : "done " + t.doneHoursAgo + "h ago");
       else bits.push(t.daysOpen < 1 ? "opened today" : t.daysOpen + (t.daysOpen === 1 ? " day open" : " days open"));
