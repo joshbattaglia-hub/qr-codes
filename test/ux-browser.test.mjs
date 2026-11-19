@@ -52,7 +52,7 @@ test("hit areas: every listed control is at least 44px, on desktop and on a phon
   }
   const u = await open("users");
   await u.waitForSelector('[data-act="user-edit"]');
-  assert.deepEqual(await small(u, 'td [data-act="user-edit"], td [data-act="user-invite"], td [data-act="user-remove"]'), [], "users table row actions");
+  assert.deepEqual(await small(u, 'td [data-act="user-edit"], td .row-more > summary'), [], "users table row actions");
   await u.evaluate(() => document.querySelector('[data-act="user-add-open"]').click());
   await u.waitForSelector(".perm-head");
   assert.deepEqual(await small(u, ".perm-head:not(.perm-locked)"), [], "permission rows are full-width tap targets");
