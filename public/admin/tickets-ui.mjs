@@ -190,6 +190,11 @@ async function paintBoard(box, access, state) {
 
 function wireDrag(box, state) {
   for (const card of box.querySelectorAll(".ticket-card")) {
+    // The whole card opens the ticket (a big, familiar tap target); its menus and buttons keep their own jobs.
+    card.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.target.closest("select,button,a,label,input,textarea")) return;
+      window.location.hash = "#/tickets/" + card.dataset.id;
+    });
     card.addEventListener("dragstart", (event) => {
       event.dataTransfer.setData("text/plain", card.dataset.id);
       event.dataTransfer.effectAllowed = "move";
