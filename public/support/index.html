@@ -82,6 +82,9 @@
 </div>
 <script type="module">
 import { prepareTicketFile } from "/admin/ticket-file.mjs";
+import { formatPhone, normaliseEmail, wireTidyInputs } from "/admin/ux.mjs";
+/* Forgiving input only: email and phone tidy themselves when the person leaves the field. The server still validates everything. */
+wireTidyInputs(document.body);
 
 const PRIORITY_LABEL = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
 const app = document.getElementById("app");
@@ -114,7 +117,7 @@ function signIn() {
   document.getElementById("support-in").addEventListener("submit", async (event) => {
     event.preventDefault();
     error.textContent = "";
-    const email = document.getElementById("support-email").value.trim();
+    const email = normaliseEmail(document.getElementById("support-email").value);
     if (!/@libertyretail\.com\.au$/i.test(email)) { error.textContent = "Use your @libertyretail.com.au email address."; return; }
     try {
       const started = await api("/api/support/start", { method: "POST", body: JSON.stringify({ email }) });
@@ -127,7 +130,7 @@ function signIn() {
   document.getElementById("support-verify").addEventListener("click", async () => {
     error.textContent = "";
     try {
-      await api("/api/support/verify", { method: "POST", body: JSON.stringify({ email: document.getElementById("support-email").value, code: document.getElementById("support-code").value }) });
+      await api("/api/support/verify", { method: "POST", body: JSON.stringify({ email: normaliseEmail(document.getElementById("support-email").value), code: document.getElementById("support-code").value }) });
       location.href = "/support";
     } catch (err) { error.textContent = err.message; }
   });
@@ -214,7 +217,7 @@ async function form(session) {
         formToken: meta.formToken,
         website: document.getElementById("support-website").value,
         name: document.getElementById("support-name").value,
-        phone: document.getElementById("support-phone").value,
+        phone: formatPhone(document.getElementById("support-phone").value) || document.getElementById("support-phone").value,
         siteId: document.getElementById("support-site").value,
         siteOther: document.getElementById("support-other").value,
         queue,

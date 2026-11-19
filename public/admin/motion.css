@@ -168,3 +168,43 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 .err-note::before{content:"! ";font-weight:800}
 .btn.btn-xs,.warehouse-page .btn-xs{min-height:var(--hit-min)}
 .btn.btn-xs{min-width:var(--hit-min)}
+
+/* ---- Fewer choices at once: rare row actions tucked behind "More" ---- */
+.row-actions{white-space:nowrap}
+.row-more{display:inline-block;vertical-align:top}
+.row-more>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.row-more>summary::-webkit-details-marker{display:none}
+.row-more>summary::after{content:"\25BE";margin-left:4px;font-size:11px}
+.row-more[open]>summary{background:var(--surface-hover)}
+.row-more-body{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--pop-bg);box-shadow:var(--elev-2)}
+.danger-text{color:var(--red) !important}
+.perm-group{margin:16px 0 4px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.perm-list>.perm-group:first-child{margin-top:4px}
+
+/* ---- Chunked ticket details ---- */
+.detail-group{border:1px solid var(--line);border-radius:12px;margin:10px 0;background:var(--card)}
+.detail-group>summary{display:flex;align-items:center;gap:8px;min-height:var(--hit-min);padding:0 14px;font-weight:700;cursor:pointer;list-style:none}
+.detail-group>summary::-webkit-details-marker{display:none}
+.detail-group>summary::before{content:"\25B8";font-size:12px;color:var(--muted);transition:none}
+.detail-group[open]>summary::before{content:"\25BE"}
+.detail-group>summary .count{margin-left:auto;font-weight:600;color:var(--muted);font-size:12px}
+.detail-group>.detail-body{padding:0 14px 12px}
+.detail-group>.detail-body>p:first-child,.detail-group>.detail-body>h3:first-child{margin-top:4px}
+
+/* ---- Filters fold away on a phone (the person can still see how many are active) ---- */
+.filter-fold>summary{display:flex;align-items:center;gap:8px;min-height:var(--hit-min);font-weight:700;cursor:pointer;list-style:none}
+.filter-fold>summary::-webkit-details-marker{display:none}
+.filter-fold>summary::after{content:"\25BE";margin-left:auto;color:var(--muted)}
+.filter-fold[open]>summary::after{content:"\25B4"}
+@media (min-width:861px){.filter-fold>summary{display:none}}
+
+/* ---- PR B follow-ups from the screenshots ---- */
+/* Users table: the Edit / More cell stays in view at the right edge instead of hiding off-screen in a wide table (Fitts: the action is always reachable). */
+.visitor-sheet td.row-actions,.visitor-sheet thead th:last-child{position:sticky;right:0;background:var(--card);box-shadow:-8px 0 8px -8px rgba(16,24,40,.25)}
+.visitor-sheet thead th:last-child{background:var(--th-bg);z-index:var(--z-base)}
+.visitor-sheet tbody tr:nth-child(even) td.row-actions{background:var(--row-alt)}
+/* Ticket page "Move to column": label, select and button line up and use the room. */
+.detail-group .ticket-move{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:0}
+.detail-group .ticket-move .field{flex:1 1 220px;margin:0}
+.detail-group .ticket-move select{width:100%;height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 8px}
+.detail-group .ticket-move .btn{height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 18px}

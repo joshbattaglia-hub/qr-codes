@@ -4,7 +4,7 @@ import { ASSET_LABELS, HEAD_ONLY_TABS, effectiveAssets, tabsFor } from "./permis
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 import { TOOL_ICONS } from "./tool-icons.mjs";
-import { anticipate, reducedMotion, showNote, trapTab } from "./ux.mjs";
+import { anticipate, normaliseEmail, optimistic, reducedMotion, showNote, skeleton, trapTab, wireTidyInputs } from "./ux.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const DEVICE_OPTIONS = [
@@ -1825,10 +1825,10 @@ function assetPage() {
   const lock = state.actor?.kind === "verified-identity" && state.actor?.provider === "otp" && !state.actor?.owner && effectiveAssets(state.actor) === "view";
   const ro = lock ? " readonly" : "";
   return '<div class="asset-page" id="asset-page" data-testid="asset-page"><div class="page-head"><div><p class="asset-kicker">Asset labels</p><h1>Asset Barcodes</h1><p class="muted">Equipment stickers use standard Code 39. This tab does not create POS vouchers, offers, or claim links.</p></div></div>'
-    + '<form id="asset-form" class="asset-layout"><div class="card"><h2>Single ID</h2><label class="field"><span>Asset ID</span><input name="payload" data-testid="asset-id" value="' + esc(d.payload) + '" autocomplete="off" spellcheck="false" maxlength="40"></label>'
+    + '<form id="asset-form" class="asset-layout"><div class="card"><h2>Single ID</h2><label class="field"><span>Asset ID</span><input name="payload" data-testid="asset-id" data-tidy="barcode" value="' + esc(d.payload) + '" autocomplete="off" spellcheck="false" maxlength="40"></label>'
     + '<label class="check"><input type="checkbox" name="uppercase" value="on"> Convert lower-case letters to uppercase. I confirm this change.</label>'
     + '<label class="field"><span>Label heading</span><input name="heading"' + ro + ' data-testid="asset-heading" value="' + esc(d.heading) + '" maxlength="80"></label>'
-    + '<h2>Batch</h2><label class="field"><span>One ID per line</span><textarea name="batch" data-testid="asset-batch" maxlength="4000" placeholder="LOC50924&#10;TEST-1"></textarea></label>'
+    + '<h2>Batch</h2><label class="field"><span>One ID per line</span><textarea name="batch" data-testid="asset-batch" data-tidy="barcodes" maxlength="4000" placeholder="LOC50924&#10;TEST-1"></textarea></label>'
     + '<p class="small muted">Empty lines are skipped. Up to 40 IDs, 40 characters each. Interior spaces stay in the ID.</p>'
     + '<h2>Label size</h2><div class="asset-dims">'
     + '<label class="field"><span>Label width (mm)</span><input name="labelWidthMm"' + ro + ' type="number" min="20" max="150" step="1" value="' + d.labelWidthMm + '"></label>'
@@ -1991,6 +1991,7 @@ function userForm(data) {
       + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="user-cancel">Close</button></div></div>';
   }
   const tools = [
+    '<h4 class="perm-group">Business tools</h4>',
     permTool("pos", "POS setup and Sites", "Draft and approve POS offers for the sites chosen below.", hasPos,
       '<label class="field"><span>POS role</span><select id="user-pos" data-testid="user-pos">' + pos + '</select></label><p class="muted small">Approver roles are tied to their own address.</p>'
       + '<p class="muted small">Sites this person can see in POS setup and Sites.</p><label class="field"><span>Filter sites</span><input id="user-site-filter" autocomplete="off" placeholder="Type to filter"></label><div class="user-sites" data-testid="user-sites">' + sites + "</div>"),
@@ -2001,10 +2002,12 @@ function userForm(data) {
       '<label class="check"><input type="checkbox" id="user-wh-generate" data-testid="user-wh-generate"' + (u.warehouseGenerate !== false ? " checked" : "") + '> Generate new sheets</label>'
       + '<label class="check"><input type="checkbox" id="user-wh-reprint" data-testid="user-wh-reprint"' + (u.warehouseReprint !== false ? " checked" : "") + '> Reprint earlier sheets (does not use new numbers)</label>'
       + '<label class="check perm-locked"><input type="checkbox" disabled> Change the next number <span class="muted small">Admins only (Joshua and the head-office sign-in). Not available to other users.</span></label>'),
+    '<h4 class="perm-group">Logs and helpdesk</h4>',
     permTool("visitors", "Visitor Log", "Visitor sign-ins and records.", !!visitorOn,
       vLevels.map((level) => '<label class="check"><input type="radio" name="user-visitor" value="' + level + '"' + ((visitorOn ? u.visitor : "view") === level ? " checked" : "") + '> ' + esc(VISITOR_LEVEL_LABELS[level] || level) + '</label>').join("")),
     permTool("tickets", "Support", "Support tickets for the areas ticked. Support admin (all areas, settings) stays with Joshua.", queuesOn,
       (opts.queues || []).map((q) => '<label class="check"><input type="checkbox" name="user-ticket" value="' + q + '"' + ((u.tickets || []).includes(q) ? " checked" : "") + '> ' + esc(q === "screens" ? "Screens" : q === "signage" ? "Signage" : q) + '</label>').join("")),
+    '<h4 class="perm-group">Owner only</h4>',
     '<section class="perm-tool perm-locked" data-testid="perm-users"><label class="perm-head"><input type="checkbox" disabled><span><strong>Users</strong><span class="muted small">Owner only. Cannot be given to anyone else.</span></span></label></section>',
   ].join("");
   return '<div class="card user-form" data-testid="user-form">' + head
@@ -2012,7 +2015,7 @@ function userForm(data) {
     + '<div class="perm-list">' + tools + '</div>'
     + '<p class="muted small" data-testid="perm-head-only">Head-office password only, not available to email-code users: ' + HEAD_ONLY_TABS.join(", ") + '.</p>'
     + '<p class="perm-summary" id="perm-summary" data-testid="perm-summary" role="status">' + esc(permSummary(editing ? (editing.tabs || []) : [])) + '</p>'
-    + '<div class="asset-actions"><button class="btn" type="button" data-act="user-save" data-mode="' + (editing ? "edit" : "add") + '" data-testid="user-save">Save</button><button class="btn ghost" type="button" data-act="user-cancel">Cancel</button></div><p id="user-note" class="small err"></p></div>';
+    + '<div class="asset-actions form-actions"><button class="btn primary-cta" type="button" data-act="user-save" data-mode="' + (editing ? "edit" : "add") + '" data-testid="user-save">Save</button><button class="btn ghost" type="button" data-act="user-cancel">Cancel</button></div><p id="user-note" class="small err" role="alert"></p></div>';
 }
 /** Read the checklist into the save payload. Unticked tools send "off" values so the server removes that access. */
 function collectUserPerms() {
@@ -2064,7 +2067,7 @@ async function paintUsers() {
     try { window.history.replaceState(null, "", "#/users"); } catch { /* ignore */ }
   }
   const mig = data.migration;
-  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td data-testid="user-invite-status">' + inviteBadge(u.password) + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button> <button class="btn ghost btn-xs" type="button" data-act="user-invite" data-testid="user-invite" data-email="' + esc(u.email) + '">' + (u.password?.state === "active" ? "Send new link" : "Resend invite") + '</button>' + (u.owner ? "" : ' <button class="btn ghost btn-xs" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</td></tr>').join("");
+  const rows = data.users.map((u) => '<tr data-testid="user-row"><td>' + esc(u.email) + (u.owner ? ' <span class="pill">Owner</span>' : "") + '</td><td data-testid="user-invite-status">' + inviteBadge(u.password) + '</td><td>' + esc(posLabel(u)) + '</td><td>' + (u.posRole === "none" ? "—" : esc(String(u.siteIds.length))) + '</td><td>' + esc(u.owner ? "Owner (full)" : VISITOR_LEVEL_LABELS[u.visitor] || u.visitor) + '</td><td>' + esc(u.ticketAdmin ? "Admin (all)" : (u.tickets || []).join(", ") || "—") + '</td><td>' + esc(u.owner ? "All" : (u.tabs || []).filter((t) => t !== "sites").map((t) => TAB_NAMES[t]).join(", ") || "—") + '</td><td class="row-actions"><button class="btn ghost btn-xs" type="button" data-act="user-edit" data-email="' + esc(u.email) + '">Edit</button> <details class="row-more"><summary class="btn ghost btn-xs" aria-label="More actions for ' + esc(u.email) + '">More</summary><div class="row-more-body"><button class="btn ghost btn-xs" type="button" data-act="user-invite" data-testid="user-invite" data-email="' + esc(u.email) + '">' + (u.password?.state === "active" ? "Send new link" : "Resend invite") + '</button>' + (u.owner ? "" : '<button class="btn ghost btn-xs danger-text" type="button" data-act="user-remove" data-email="' + esc(u.email) + '">Remove</button>') + '</div></details></td></tr>').join("");
   const history = (data.history || []).map((h) => '<li><span class="muted small">' + esc(new Date(h.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + '</span> ' + esc(h.actorEmail || "system") + ' · ' + esc(h.action) + (h.target ? ' · ' + esc(h.target) : "") + (h.detail ? '<div class="muted small">' + esc(h.detail) + '</div>' : "") + '</li>').join("");
   box.innerHTML = (mig ? '<p class="muted small" data-testid="users-migration">Moved from the previous sign-in list on ' + esc(new Date(mig.at).toLocaleString("en-AU", { timeZone: "Australia/Melbourne" })) + ': ' + esc(String(mig.users)) + ' users, effective access ' + (mig.same ? "identical" : "NOT identical") + ' (' + esc(String(mig.checked)) + ' addresses checked).</p>' : "")
     + '<div class="asset-actions"><button class="btn" type="button" data-act="user-add-open" data-testid="user-add-open">Add user</button></div>'
@@ -2178,7 +2181,7 @@ async function visitorAction(button) {
     return;
   }
   if (act === "nr-add" || act === "nr-remove") {
-    const email = act === "nr-add" ? (document.getElementById("visitor-recipient")?.value || "") : (button.dataset.email || "");
+    const email = act === "nr-add" ? normaliseEmail(document.getElementById("visitor-recipient")?.value || "") : (button.dataset.email || "");
     if (act === "nr-remove" && !confirm("Stop visitor log notifications to " + email + "?")) return;
     const response = await fetch("/api/visitor-log/notify-recipients", {
       method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
@@ -2205,7 +2208,7 @@ async function visitorAction(button) {
     const note = document.getElementById("user-note");
     const perms = collectUserPerms();
     if (perms.error) { if (note) note.textContent = perms.error; return; }
-    const payload = { mode: button.dataset.mode, email: document.getElementById("user-email")?.value || "", ...perms };
+    const payload = { mode: button.dataset.mode, email: normaliseEmail(document.getElementById("user-email")?.value || ""), ...perms };
     const label = button.textContent;
     button.disabled = true;
     button.textContent = "Saving…";
@@ -2258,7 +2261,7 @@ async function visitorAction(button) {
     return paintUsers();
   }
   if (act === "bm-add" || act === "bm-remove") {
-    const email = act === "bm-add" ? (document.getElementById("bm-email")?.value || "") : (button.dataset.email || "");
+    const email = act === "bm-add" ? normaliseEmail(document.getElementById("bm-email")?.value || "") : (button.dataset.email || "");
     if (act === "bm-remove" && !confirm("Remove building maintenance access for " + email + "?")) return;
     const response = await fetch("/api/visitor-log/building-maintenance", {
       method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
@@ -2471,7 +2474,7 @@ async function render(opts = {}) {
   }
   if ((r.name === "qrcodes" || r.name === "links") && r.id) {
     if (!(opts.refetch === false && state.detail?.code?.slug === r.id)) {
-      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      if (!keep) view.innerHTML = '<div class="card" aria-busy="true">' + skeleton(3) + "</div>";
       try {
         const data = await api("/api/codes/" + encodeURIComponent(r.id));
         if (gen !== renderGen) return;
@@ -2491,7 +2494,7 @@ async function render(opts = {}) {
     view.innerHTML = pageEditor();
   } else if (r.name === "pages" && r.id) {
     if (!(opts.refetch === false && state.pageDraft?.slug === r.id)) {
-      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      if (!keep) view.innerHTML = '<div class="card" aria-busy="true">' + skeleton(3) + "</div>";
       try {
         const data = await api("/api/pages/" + encodeURIComponent(r.id));
         if (gen !== renderGen) return;
@@ -2510,7 +2513,7 @@ async function render(opts = {}) {
     view.innerHTML = competitionEditor();
   } else if (r.name === "competitions" && r.id) {
     if (!(opts.refetch === false && state.compDraft?.slug === r.id)) {
-      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      if (!keep) view.innerHTML = '<div class="card" aria-busy="true">' + skeleton(3) + "</div>";
       try {
         const data = await api("/api/competitions/" + encodeURIComponent(r.id));
         if (gen !== renderGen) return;
@@ -2528,7 +2531,7 @@ async function render(opts = {}) {
     if (r.id === "new") {
       if (routeChanged) state.posDraft = blankPos();
     } else if (!(opts.refetch === false && state.posDraft?.id === r.id)) {
-      if (!keep) view.innerHTML = '<div class="card muted">Loading…</div>';
+      if (!keep) view.innerHTML = '<div class="card" aria-busy="true">' + skeleton(3) + "</div>";
       try {
         state.posDraft = await api("/api/pos-drafts/" + encodeURIComponent(r.id));
         state.identityStatus = await api("/api/identity/status").catch(() => null);
@@ -2889,7 +2892,13 @@ async function handleAction(el) {
   if (act === "edit") return openEdit();
   if (act === "customize") return openCustomize();
   if (act === "copy-link") return copyText(shortUrl(code.slug));
-  if (act === "pause") { await patchCode(code.slug, { paused: !code.paused }); toast(code.paused ? "Resumed" : "Paused"); render({ refetch: false, keepScroll: true }); return; }
+  if (act === "pause") {
+    // Optimistic: the page shows the new state at once; if the server refuses, it goes back and an error toast says why.
+    const slug = code.slug, was = !!code.paused, next = !was;
+    const show = (paused) => { if (state.detail?.code?.slug === slug) state.detail.code = { ...state.detail.code, paused }; const i = state.codes.findIndex((c) => c.slug === slug); if (i >= 0) state.codes[i] = { ...state.codes[i], paused }; render({ refetch: false, keepScroll: true }); };
+    await optimistic({ apply: () => { show(next); toast(next ? "Paused" : "Resumed"); }, request: () => patchCode(slug, { paused: next }), rollback: () => show(was), onError: (err) => toast.error(err.message || "That did not save, so it went back.") });
+    return;
+  }
   if (act === "del") {
     openModal("<h2>Delete this code?</h2><p>Printed QR codes and the short link /r/" + esc(code.slug) + ' will stop working.</p><div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="button" data-act="confirm-del">Delete</button></div>');
     return;
@@ -3173,6 +3182,7 @@ $("#identity-form")?.addEventListener("submit", async (e) => {
   } catch (ex) { err.textContent = ex.message; }
 });
 window.addEventListener("hashchange", () => { if (!$("#shell").classList.contains("hidden")) render(); });
+wireTidyInputs(document.body);
 document.addEventListener("keydown", trapDrawerTab);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && isMobileNav() && drawerOpen()) { setSidebar(false, true); return; } });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePops(); document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden")); } });
