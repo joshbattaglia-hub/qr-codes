@@ -4,6 +4,7 @@ import { ASSET_LABELS, HEAD_ONLY_TABS, effectiveAssets, tabsFor } from "./permis
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 import { TOOL_ICONS } from "./tool-icons.mjs";
+import { anticipate, reducedMotion, showNote, trapTab } from "./ux.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const DEVICE_OPTIONS = [
@@ -47,14 +48,25 @@ const state = {
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
-let toastTimer;
-function toast(msg) {
+let toastTimer, toastLeave;
+/** Toast: kind is success (default), copied, info or error. Announced politely (errors assertively), settles in, errors shake. */
+function toast(msg, kind = "success") {
   const t = $("#toast");
-  t.textContent = msg;
-  t.classList.remove("hidden");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add("hidden"), 2400);
+  clearTimeout(toastLeave);
+  t.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+  t.dataset.kind = kind;
+  t.textContent = msg;
+  t.classList.remove("hidden", "leaving", "show");
+  void t.offsetWidth; // restart the entrance animation when a toast replaces another
+  t.classList.add("show");
+  toastTimer = setTimeout(() => {
+    t.classList.add("leaving");
+    toastLeave = setTimeout(() => { t.classList.add("hidden"); t.classList.remove("leaving", "show"); }, reducedMotion() ? 0 : 160);
+  }, kind === "error" ? 4800 : 2400);
 }
+toast.error = (msg) => toast(msg, "error");
+document.addEventListener("eh:toast", (e) => toast(e.detail?.message || "Done", e.detail?.kind || "success"));
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (opts.body) headers["content-type"] = "application/json";
@@ -384,7 +396,7 @@ async function copyText(text) {
     document.execCommand("copy");
     t.remove();
   }
-  toast("Copied");
+  toast("Copied", "copied");
 }
 function downloadBlob(name, blob) {
   const a = document.createElement("a");
@@ -2359,16 +2371,30 @@ async function patchCode(slug, body) {
   }
   return code;
 }
+let modalReturnFocus = null;
 function openModal(html) {
   const root = $("#modal");
+  modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   root.classList.remove("hidden");
-  root.innerHTML = '<div class="modal-back" data-act="close-modal"></div><div class="modal-card" role="dialog">' + html + "</div>";
+  root.innerHTML = '<div class="modal-back" data-act="close-modal"></div><div class="modal-card" role="dialog" aria-modal="true" tabindex="-1">' + html + "</div>";
+  const card = root.querySelector(".modal-card");
+  const heading = card.querySelector("h2");
+  if (heading) { heading.id = "modal-title"; card.setAttribute("aria-labelledby", "modal-title"); }
+  // Staging: everything behind the modal is inert, so focus and clicks stay inside it.
+  for (const id of ["shell", "login", "boot"]) { const el = document.getElementById(id); if (el) el.inert = true; }
+  const first = card.querySelector("input:not([type=hidden]),textarea,select") || card.querySelector("button");
+  (first || card).focus({ preventScroll: true });
 }
 function closeModal() {
   const root = $("#modal");
+  const wasOpen = !root.classList.contains("hidden");
   root.classList.add("hidden");
   root.innerHTML = "";
+  for (const id of ["shell", "login", "boot"]) { const el = document.getElementById(id); if (el) el.inert = false; }
+  if (wasOpen && modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus({ preventScroll: true });
+  modalReturnFocus = null;
 }
+document.addEventListener("keydown", (e) => { const card = document.querySelector("#modal:not(.hidden) .modal-card"); if (card) trapTab(e, card); });
 function openEdit() {
   const c = state.detail.code;
   openModal('<h2>Edit destination</h2><form data-act="save-edit"><p class="muted small break">' + esc(shortUrl(c.slug)) + "</p>" +
@@ -2927,6 +2953,15 @@ function paintSearch() {
   box.innerHTML = buttons.join("") || '<div class="muted pad">No matches</div>';
 }
 
+/* Anticipation: big, rare actions get a ~100ms wind-up (a small squash) before they run. Frequent actions never do. Skipped under reduced motion. */
+const WIND_ACTS = new Set(["wh-generate", "ticket-create", "ticket-close", "confirm-del", "confirm-del-page", "confirm-del-comp", "user-remove", "visitor-delete"]);
+document.body.addEventListener("click", (e) => {
+  const el = e.target.closest && e.target.closest("[data-act]");
+  if (!el || !WIND_ACTS.has(el.dataset.act) || el.dataset.winded || reducedMotion() || !e.isTrusted) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  anticipate(el, () => { el.dataset.winded = "1"; el.click(); delete el.dataset.winded; });
+}, true);
 document.body.addEventListener("click", (e) => {
   const themeEl = e.target.closest("[data-theme-choice]");
   if (themeEl) { chooseTheme(themeEl.dataset.themeChoice); closePops(); $("#theme-btn")?.focus(); return; }
@@ -2949,11 +2984,11 @@ document.body.addEventListener("click", (e) => {
   }
   if (actEl && (actEl.dataset.act === "email-signin" || actEl.dataset.act === "visitor-email-signin")) {
     e.preventDefault();
-    switchToEmailSignin().catch((err) => toast(err.message));
+    switchToEmailSignin().catch((err) => toast.error(err.message));
     return;
   }
   if (actEl && actEl.closest("#ticket-page")) {
-    Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) note.textContent = err.message; else toast(err.message); });
+    Promise.resolve(ticketAction(actEl, state, go)).catch((err) => { const note = document.getElementById("ticket-note-msg"); if (note) showNote(note, err.message, "error"); toast.error(err.message); });
     return;
   }
   if (actEl && actEl.closest("#request-page")) {
@@ -2961,7 +2996,7 @@ document.body.addEventListener("click", (e) => {
     return;
   }
   if (actEl && actEl.closest("#users-page")) {
-    Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("user-note"); if (note) note.textContent = err.message; else toast(err.message); });
+    Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("user-note"); if (note) note.textContent = err.message; else toast.error(err.message); });
     return;
   }
   if (actEl && actEl.closest("#visitor-page")) {
@@ -2969,14 +3004,14 @@ document.body.addEventListener("click", (e) => {
     return;
   }
   if (actEl && actEl.closest("#warehouse-page")) {
-    Promise.resolve(warehouseAction(actEl)).catch((err) => toast(err.message || "Warehouse Stickers failed"));
+    Promise.resolve(warehouseAction(actEl)).catch((err) => toast.error(err.message || "Warehouse Stickers failed"));
     return;
   }
   if (actEl && actEl.closest("#asset-page")) {
     Promise.resolve(assetAction(actEl.dataset.act)).catch((err) => assetStatus(err.message || "Asset label failed"));
     return;
   }
-  if (actEl) handleAction(actEl).catch((err) => toast(err.message));
+  if (actEl) handleAction(actEl).catch((err) => toast.error(err.message));
 });
 document.body.addEventListener("submit", (e) => {
   const form = e.target;
@@ -2984,7 +3019,7 @@ document.body.addEventListener("submit", (e) => {
   e.preventDefault();
   const act = form.dataset.act;
   const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-tv" ? () => saveTvLocation(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
-  if (run) Promise.resolve(run()).catch((err) => toast(err.message));
+  if (run) Promise.resolve(run()).catch((err) => toast.error(err.message));
 });
 document.body.addEventListener("input", (e) => {
   if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
@@ -3003,7 +3038,7 @@ document.body.addEventListener("change", (e) => {
   if (e.target.id === "c-fg" || e.target.id === "c-fg-text") { syncColorPair("#c-fg", "#c-fg-text", e.target); paintCustomize(); }
   if (e.target.id === "c-bg" || e.target.id === "c-bg-text") { syncColorPair("#c-bg", "#c-bg-text", e.target); paintCustomize(); }
   if (e.target.id === "c-file" && e.target.files?.[0]) {
-    fileToLogo(e.target.files[0]).then((url) => { $("#c-logo-data").value = url; paintCustomize(); }).catch((err) => { const box = $("#c-error"); if (box) box.textContent = err.message; else toast(err.message); });
+    fileToLogo(e.target.files[0]).then((url) => { $("#c-logo-data").value = url; paintCustomize(); }).catch((err) => { const box = $("#c-error"); if (box) box.textContent = err.message; else toast.error(err.message); });
   }
   if (e.target.name === "defaultFg" || e.target.name === "defaultFgText") syncColorPair("[name=defaultFg]", "[name=defaultFgText]", e.target);
   if (e.target.name === "defaultBg" || e.target.name === "defaultBgText") syncColorPair("[name=defaultBg]", "[name=defaultBgText]", e.target);
@@ -3021,7 +3056,7 @@ document.body.addEventListener("change", (e) => {
       const hidden = document.querySelector('#comp-editor [name="' + name + '"]');
       if (hidden) hidden.value = url;
       paintCompPreview();
-    }).catch((err) => { const box = $("#comp-error"); if (box) box.textContent = err.message; else toast(err.message); });
+    }).catch((err) => { const box = $("#comp-error"); if (box) box.textContent = err.message; else toast.error(err.message); });
   }
   if (e.target.id === "hero-file" && e.target.files?.[0]) {
     fileToLogo(e.target.files[0]).then((url) => {
@@ -3029,7 +3064,7 @@ document.body.addEventListener("change", (e) => {
       if (hidden) hidden.value = url;
       const preview = $("#hero-preview");
       if (preview) { preview.hidden = false; preview.src = url; }
-    }).catch((err) => { const box = $("#page-error"); if (box) box.textContent = err.message; else toast(err.message); });
+    }).catch((err) => { const box = $("#page-error"); if (box) box.textContent = err.message; else toast.error(err.message); });
   }
 });
 document.body.addEventListener("input", (e) => {
