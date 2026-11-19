@@ -167,3 +167,4 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 .err-note{color:var(--red);font-weight:700}
 .err-note::before{content:"! ";font-weight:800}
 .btn.btn-xs,.warehouse-page .btn-xs{min-height:var(--hit-min)}
+.btn.btn-xs{min-width:var(--hit-min)}
