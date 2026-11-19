@@ -1,5 +1,5 @@
 import { prepareTicketFile } from "./ticket-file.mjs";
-import { arcIn, flip, pulse, showNote, snapshotRects } from "./ux.mjs";
+import { arcIn, flip, normaliseDate, normaliseEmail, optimistic, pulse, showNote, skeleton, snapshotRects } from "./ux.mjs";
 
 const STATUS_LABEL = {
   new: "New",
@@ -40,7 +40,7 @@ async function api(path, opts = {}) {
 }
 
 export function ticketShell() {
-  return '<div id="ticket-page" data-testid="ticket-page"><div class="page-head"><div><p class="asset-kicker">Helpdesk</p><h1>Support tickets</h1><p class="muted">Screens and signage. This is separate from the visitor log and POS.</p></div></div><div id="ticket-body" class="card">Loading…</div></div>';
+  return '<div id="ticket-page" data-testid="ticket-page"><div class="page-head"><div><p class="asset-kicker">Helpdesk</p><h1>Support tickets</h1><p class="muted">Screens and signage. This is separate from the visitor log and POS.</p></div></div><div id="ticket-body" class="card" aria-busy="true">' + skeleton(3) + "</div></div>";
 }
 
 function denied() {
@@ -64,20 +64,8 @@ function setNote(text, kind = "error") {
   showNote(document.getElementById("ticket-note-msg"), text, kind);
 }
 
-/* Pose to pose: before a card changes column, remember where every card is and how many each column holds; paintBoard slides the cards
-   from their old pose to the new one and pulses the count that grew. Only after a move or a new ticket: filters and tabs stay instant. */
-function rememberBoard(state) {
-  state.ticketFx = { at: Date.now(), rects: snapshotRects(document, ".ticket-card"), counts: Object.fromEntries([...document.querySelectorAll(".ticket-col")].map((col) => [col.dataset.column, col.querySelectorAll(".ticket-card").length])) };
-}
+/* Arc: a ticket that was just created lands in its column when the board is next shown. */
 function playBoardFx(box, state) {
-  const fx = state.ticketFx;
-  state.ticketFx = null;
-  if (fx && Date.now() - fx.at < 10000) {
-    flip(box, ".ticket-card", fx.rects);
-    for (const col of box.querySelectorAll(".ticket-col")) {
-      if (col.querySelectorAll(".ticket-card").length > (fx.counts[col.dataset.column] ?? Infinity)) pulse(col.querySelector(".ticket-col-count"));
-    }
-  }
   if (state.ticketArc) {
     const card = box.querySelector('.ticket-card[data-id="' + CSS.escape(state.ticketArc) + '"]');
     state.ticketArc = "";
@@ -143,6 +131,12 @@ function sharedFilters(access, state, sites, queue) {
     + '<label class="field"><span>Request type</span><select id="ticket-type-filter">' + typeOptionsFor(access, queue, state.ticketType || "") + "</select></label>";
 }
 
+function foldOpen(state) {
+  const active = ["ticketQuery", "ticketPriority", "ticketSite", "ticketType"].filter((key) => state[key]).length;
+  const phone = !!(window.matchMedia && window.matchMedia("(max-width:860px)").matches);
+  return '<details class="filter-fold"' + (!phone || active ? " open" : "") + "><summary>Filters" + (active ? ' <span class="badge ok">' + active + " on</span>" : "") + "</summary>";
+}
+
 function filterParams(state, queue) {
   const params = new URLSearchParams({ queue });
   if (state.ticketPriority) params.set("priority", state.ticketPriority);
@@ -179,7 +173,7 @@ async function paintBoard(box, access, state) {
       + (cards.map(boardCard).join("") || '<p class="muted small">No tickets.</p>') + "</section>";
   }).join("");
   box.innerHTML = viewToggle("board") + queueTabs(queue, access.queues, true)
-    + '<div class="asset-dims ticket-filters">' + sharedFilters(access, state, sites, queue) + "</div>"
+    + foldOpen(state) + '<div class="asset-dims ticket-filters">' + sharedFilters(access, state, sites, queue) + "</div></details>"
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="ticket-filter">Apply filters</button><button class="btn" type="button" data-go="tickets/new">Submit ticket</button>'
     + (access.role === "admin" ? '<button class="btn ghost" type="button" data-go="tickets/settings">Settings</button><button class="btn ghost" type="button" data-go="tickets/audit">Audit log</button>' : "") + "</div>"
     + '<p class="muted small">Drag a card to another column, or use its Move menu. Moving to Needs more info asks for a public reply.</p>'
@@ -209,8 +203,7 @@ function wireDrag(box, state) {
       const id = event.dataTransfer.getData("text/plain");
       const card = box.querySelector('.ticket-card[data-id="' + CSS.escape(id) + '"]');
       if (!id || !card || card.dataset.column === col.dataset.column) return;
-      rememberBoard(state);
-      moveFlow(id, col.dataset.column).then((moved) => { if (moved) return paintTickets("", state); state.ticketFx = null; }).catch((err) => setNote(err.message));
+      moveOnBoard(id, col.dataset.column, state).catch((err) => setNote(err.message));
     });
   }
 }
@@ -237,6 +230,50 @@ function askReply() {
     if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
     dialog.querySelector("#ticket-needs-info-text").focus();
   });
+}
+
+/** Doherty: the card lands in its new column at once (and the count pulses); the server is asked in the background.
+ *  If it says no the card slides back and an error toast says why. Returns true when the move stuck. */
+async function moveOnBoard(id, column, state) {
+  if (!column) throw new Error("Choose a column to move to.");
+  let reply = "";
+  if (column === "needs-info") {
+    reply = await askReply();
+    if (reply === null) return false;
+  }
+  const card = document.querySelector('.ticket-card[data-id="' + CSS.escape(id) + '"]');
+  const target = document.querySelector('.ticket-col[data-column="' + column + '"]');
+  const source = card && card.closest(".ticket-col");
+  const post = () => api("/api/tickets/" + encodeURIComponent(id) + "/move", { method: "POST", body: JSON.stringify({ column, reply }) });
+  if (!card || !target || !source) { await post(); return true; }
+  const parent = source, before = card.nextElementSibling, fromColumn = card.dataset.column;
+  const syncColumn = (col) => {
+    const cards = col.querySelectorAll(".ticket-card").length;
+    const count = col.querySelector(".ticket-col-count");
+    if (count) count.textContent = String(cards);
+    const empty = col.querySelector(":scope > p.muted.small");
+    if (cards && empty) empty.remove();
+    if (!cards && !empty) col.insertAdjacentHTML("beforeend", '<p class="muted small">No tickets.</p>');
+  };
+  const place = (into, ref, value) => {
+    const rects = snapshotRects(document, ".ticket-card");
+    if (ref && ref.parentElement === into) into.insertBefore(card, ref);
+    else if (into.querySelector(".ticket-card")) into.insertBefore(card, into.querySelector(".ticket-card"));
+    else into.appendChild(card);
+    card.dataset.column = value;
+    syncColumn(source); syncColumn(target);
+    flip(document, ".ticket-card", rects);
+  };
+  const done = await optimistic({
+    apply: () => { place(target, null, column); pulse(target.querySelector(".ticket-col-count")); },
+    request: post,
+    rollback: () => place(parent, before, fromColumn),
+    onError: (err) => say(err.message || "That move did not work, so the ticket went back.", "error"),
+  });
+  if (!done) return false;
+  say("Ticket moved");
+  paintTickets("", state).catch(() => {}); // quiet re-sync of counts and the card's Move menu
+  return true;
 }
 
 async function moveFlow(id, column) {
@@ -281,12 +318,12 @@ async function paintList(box, access, state) {
     + '<div><div class="metric-label">Closed 60 / 90</div><div class="metric-value">' + summary.closed60 + " / " + summary.closed90 + "</div></div>"
     + (summary.overdue ? '<div><div class="metric-label">Overdue</div><div class="metric-value">' + summary.overdue + "</div></div>" : "")
     + "</div>"
-    + '<div class="asset-dims ticket-filters">'
+    + foldOpen(state) + '<div class="asset-dims ticket-filters">'
     + sharedFilters(access, state, sites, queue)
     + '<label class="field"><span>Status</span><select id="ticket-status">' + options(STATUS_LABEL, status, true) + "</select></label>"
     + '<label class="field"><span>Updated from</span><input id="ticket-updated-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>Updated to</span><input id="ticket-updated-to" type="date" value="' + esc(to) + '"></label>'
-    + "</div>"
+    + "</div></details>"
     + '<div class="asset-actions">'
     + '<button class="btn ghost" type="button" data-act="ticket-filter">Apply filters</button>'
     + '<button class="btn" type="button" data-go="tickets/new">Submit ticket</button>'
@@ -325,10 +362,16 @@ async function paintSubmit(box, access, state) {
     + '<label class="field"><span>Needed by</span><input id="ticket-new-needed" type="date"></label>'
     + '<label class="field"><span>Subject</span><input id="ticket-new-subject" maxlength="140"></label>'
     + '<label class="field"><span>Description</span><textarea id="ticket-new-description" rows="5"></textarea></label>'
-    + '<label class="field"><span>Requester email</span><input id="ticket-new-requester" type="email"></label>'
+    + '<label class="field"><span>Requester email</span><input id="ticket-new-requester" type="email" data-tidy="email" autocomplete="off" placeholder="name@libertyretail.com.au"></label>'
     + '<label class="field"><span>Attachments (images or PDFs)</span><input id="ticket-new-files" type="file" accept="image/*,application/pdf" multiple></label>'
-    + '<button class="btn" type="button" data-act="ticket-create">Create ticket</button>'
+    + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="ticket-create">Create ticket</button><button class="btn ghost" type="button" data-go="tickets">Cancel</button></div>'
     + note("ticket-note-msg");
+  // Enter in a single-line field submits, like any other form.
+  box.onkeydown = (event) => {
+    if (event.key !== "Enter" || event.target.tagName !== "INPUT" || event.target.type === "file" || event.isComposing) return;
+    event.preventDefault();
+    box.querySelector('[data-act="ticket-create"]')?.click();
+  };
 }
 
 async function paintTicket(box, id, access, state) {
@@ -350,38 +393,45 @@ async function paintTicket(box, id, access, state) {
   const files = (ticket.files || []).map((file) =>
     '<li><button class="text-btn" type="button" data-act="ticket-download" data-id="' + esc(ticket.id) + '" data-file="' + esc(file.id) + '">' + esc(file.name) + "</button></li>"
   ).join("");
-  box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
-    + '<div data-testid="ticket-record"><h2>' + esc(ticket.number) + " · " + esc(ticket.subject) + "</h2>"
-    + "<p>" + esc(QUEUE_LABEL[ticket.queue] || ticket.queue) + " · " + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge" data-testid="ticket-site-free-text">Free-text site (not in site list)</span>' : "") + " · " + esc(ticket.requestType)
+  const group = (title, body, { open = true, count = "" } = {}) => '<details class="detail-group"' + (open ? " open" : "") + '><summary>' + title + (count ? '<span class="count">' + count + "</span>" : "") + '</summary><div class="detail-body">' + body + "</div></details>";
+  const summaryBody = "<p>" + esc(QUEUE_LABEL[ticket.queue] || ticket.queue) + " · " + esc(ticket.siteLabel) + (ticket.siteFreeText ? ' <span class="badge" data-testid="ticket-site-free-text">Free-text site (not in site list)</span>' : "") + " · " + esc(ticket.requestType)
     + " · " + esc(PRIORITY_LABEL[ticket.priority] || ticket.priority) + " · " + esc(ticket.statusLabel)
     + (ticket.overdue ? ' <span class="badge" data-testid="ticket-overdue">Overdue</span>' : "") + "</p>"
     + '<p data-testid="ticket-submitter">Submitter ' + (ticket.requesterName ? esc(ticket.requesterName) + " · " : "") + esc(ticket.requesterEmail) + (ticket.requesterPhone ? " · " + esc(ticket.requesterPhone) : "") + (ticket.source === "web-form" ? " · via web form" : "") + "</p>"
     + ((ticket.assignee || ticket.neededBy) ? "<p>" + [ticket.assignee ? "Assignee " + esc(ticket.assignee) : "", ticket.neededBy ? "Needed by " + esc(ticket.neededBy) : ""].filter(Boolean).join(" · ") + "</p>" : "")
-    + "<p>" + esc(ticket.description) + "</p>"
-    + (history ? "<h3>Status history</h3><ul>" + history + "</ul>" : "")
-    + (edits ? '<h3>Edits</h3><ul data-testid="ticket-edit-history">' + edits + "</ul>" : "")
-    + (notes || "")
-    + (ticket.closeOut ? "<p>Close-out: " + esc(ticket.closeOut.notes) + (ticket.closeOut.photoId ? " · photo attached" : "") + "</p>" : "")
-    + (files ? "<h3>Attachments</h3><ul>" + files + "</ul>" : "")
-    + '<p>Board column: <strong data-testid="ticket-column-label">' + esc(ticket.columnLabel || "") + "</strong></p>"
+    + "<p>" + esc(ticket.description) + "</p>";
+  const updateBody = '<p>Board column: <strong data-testid="ticket-column-label">' + esc(ticket.columnLabel || "") + "</strong></p>"
     + '<div class="ticket-move"><label class="field"><span>Move to column</span><select id="move-' + esc(ticket.id) + '">' + COLUMNS.filter((col) => col.id !== ticket.column).map((col) => '<option value="' + col.id + '">' + esc(col.label) + "</option>").join("") + '</select></label><button class="btn" type="button" data-act="ticket-move" data-id="' + esc(ticket.id) + '">Move</button></div>'
+    + '<label class="field"><span>Detailed status</span><select id="ticket-next-status">' + options(STATUS_LABEL, ticket.status) + "</select></label>"
+    + '<button class="btn" type="button" data-act="ticket-status" data-id="' + esc(ticket.id) + '">Update status</button>'
+    + '<label class="field"><span>Assignee</span><input id="ticket-assignee" type="email" data-tidy="email" value="' + esc(ticket.assignee) + '" placeholder="Staff email"></label>'
+    + '<button class="btn ghost" type="button" data-act="ticket-assign" data-id="' + esc(ticket.id) + '">Assign</button>'
     + '<div class="ticket-edit" data-testid="ticket-edit"><label class="field"><span>Site</span><select id="ticket-edit-site">' + siteOptions(sites, ticket.siteId) + "</select></label>"
     + '<label class="field"><span>Other site</span><input id="ticket-edit-site-other" value="' + esc(ticket.siteFreeText ? ticket.siteLabel : "") + '" placeholder="Describe the site if you chose Other"></label>'
     + '<label class="field"><span>Request type</span><select id="ticket-edit-type">' + typeChoices + "</select></label>"
-    + '<button class="btn ghost" type="button" data-act="ticket-edit" data-id="' + esc(ticket.id) + '">Save site and type</button></div>'
-    + '<label class="field"><span>Detailed status</span><select id="ticket-next-status">' + options(STATUS_LABEL, ticket.status) + "</select></label>"
-    + '<button class="btn" type="button" data-act="ticket-status" data-id="' + esc(ticket.id) + '">Update status</button>'
-    + '<label class="field"><span>Assignee</span><input id="ticket-assignee" value="' + esc(ticket.assignee) + '" placeholder="Staff email"></label>'
-    + '<button class="btn ghost" type="button" data-act="ticket-assign" data-id="' + esc(ticket.id) + '">Assign</button>'
+    + '<button class="btn ghost" type="button" data-act="ticket-edit" data-id="' + esc(ticket.id) + '">Save site and type</button></div>';
+  const talkBody = (notes || '<p class="muted small">No notes or replies yet.</p>')
     + '<label class="field"><span>Internal note</span><textarea id="ticket-note"></textarea></label>'
     + '<button class="btn ghost" type="button" data-act="ticket-note" data-id="' + esc(ticket.id) + '">Save internal note</button>'
     + '<label class="field"><span>Public reply</span><textarea id="ticket-reply"></textarea></label>'
-    + '<button class="btn ghost" type="button" data-act="ticket-reply" data-id="' + esc(ticket.id) + '">Send public reply</button>'
+    + '<button class="btn ghost" type="button" data-act="ticket-reply" data-id="' + esc(ticket.id) + '">Send public reply</button>';
+  const filesBody = (files ? "<ul>" + files + "</ul>" : '<p class="muted small">No attachments.</p>')
     + '<label class="field"><span>Add attachment</span><input id="ticket-file" type="file" accept="image/*,application/pdf"></label>'
-    + '<button class="btn ghost" type="button" data-act="ticket-file" data-id="' + esc(ticket.id) + '">Upload</button>'
+    + '<button class="btn ghost" type="button" data-act="ticket-file" data-id="' + esc(ticket.id) + '">Upload</button>';
+  const historyBody = (history ? "<h3>Status history</h3><ul>" + history + "</ul>" : '<p class="muted small">No status changes yet.</p>')
+    + (edits ? '<h3>Edits</h3><ul data-testid="ticket-edit-history">' + edits + "</ul>" : "");
+  const closeBody = (ticket.closeOut ? "<p>Close-out: " + esc(ticket.closeOut.notes) + (ticket.closeOut.photoId ? " · photo attached" : "") + "</p>" : "")
     + '<label class="field"><span>Close-out notes</span><textarea id="ticket-close"></textarea></label>'
     + '<label class="field"><span>Close-out photo</span><input id="ticket-close-photo" type="file" accept="image/*"></label>'
-    + '<button class="btn" type="button" data-act="ticket-close" data-id="' + esc(ticket.id) + '">Close ticket</button>'
+    + '<button class="btn" type="button" data-act="ticket-close" data-id="' + esc(ticket.id) + '">Close ticket</button>';
+  box.innerHTML = '<p><button class="btn ghost" type="button" data-go="tickets">Back</button></p>'
+    + '<div data-testid="ticket-record"><h2>' + esc(ticket.number) + " · " + esc(ticket.subject) + "</h2>"
+    + group("Summary", summaryBody)
+    + group("Move, status and owner", updateBody)
+    + group("Notes and replies", talkBody, { count: String((ticket.messages || []).length) })
+    + group("Attachments", filesBody, { open: !!files, count: String((ticket.files || []).length) })
+    + group("History", historyBody, { open: false, count: String((ticket.statusHistory || []).length) })
+    + group("Close out", closeBody, { open: false })
     + note("ticket-note-msg") + "</div>";
 }
 
@@ -498,6 +548,8 @@ async function paintAudit(box, access) {
     + (rows || '<tr><td colspan="5">No audit rows yet.</td></tr>') + "</tbody></table></div>";
 }
 
+/** Staff lists: tidy lines that are plain email addresses; leave anything else exactly as typed for the server to judge. */
+function tidyEmailLine(line) { const email = normaliseEmail(line); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : line; }
 function lines(id) {
   return (document.getElementById(id)?.value || "").split(/\n/).map((row) => row.trim()).filter(Boolean);
 }
@@ -534,9 +586,11 @@ export async function ticketAction(button, state, go) {
   }
   if (act === "ticket-move") {
     const select = document.getElementById("move-" + button.dataset.id);
-    if (document.querySelector(".ticket-board")) rememberBoard(state);
+    if (document.querySelector(".ticket-board") && !location.hash.includes("tickets/" + button.dataset.id)) {
+      await moveOnBoard(button.dataset.id, select?.value || "", state);
+      return;
+    }
     const moved = await moveFlow(button.dataset.id, select?.value || "");
-    if (!moved) state.ticketFx = null;
     if (moved) say("Ticket moved");
     if (moved) go(location.hash.includes("tickets/" + button.dataset.id) ? "tickets/" + button.dataset.id : "tickets");
     return;
@@ -571,10 +625,10 @@ export async function ticketAction(button, state, go) {
       siteOther: document.getElementById("ticket-new-site-other")?.value,
       requestType: document.getElementById("ticket-new-type")?.value,
       priority: document.getElementById("ticket-new-priority")?.value,
-      neededBy: document.getElementById("ticket-new-needed")?.value,
+      neededBy: normaliseDate(document.getElementById("ticket-new-needed")?.value) || document.getElementById("ticket-new-needed")?.value,
       subject: document.getElementById("ticket-new-subject")?.value,
       description: document.getElementById("ticket-new-description")?.value,
-      requesterEmail: document.getElementById("ticket-new-requester")?.value,
+      requesterEmail: normaliseEmail(document.getElementById("ticket-new-requester")?.value),
     }) });
     const ticketId = created.ticket?.id;
     try {
@@ -642,7 +696,7 @@ export async function ticketAction(button, state, go) {
         await api("/api/tickets/digest", { method: "PUT", body: JSON.stringify({
           enabled: !!document.getElementById("digest-enabled")?.checked,
           time: document.getElementById("digest-time")?.value || "",
-          recipients: lines("digest-recipients"),
+          recipients: lines("digest-recipients").map(tidyEmailLine),
           queues: [...document.querySelectorAll(".digest-queue:checked")].map((el) => el.value),
           emptyDay: document.getElementById("digest-empty")?.value || "skip",
         }) });
@@ -658,7 +712,7 @@ export async function ticketAction(button, state, go) {
     const current = state.ticketAccess?.settings || await api("/api/tickets/settings");
     await api("/api/tickets/settings", { method: "PUT", body: JSON.stringify({
       ...current,
-      staff: { screens: lines("ticket-staff-screens"), signage: lines("ticket-staff-signage") },
+      staff: { screens: lines("ticket-staff-screens").map(tidyEmailLine), signage: lines("ticket-staff-signage").map(tidyEmailLine) },
       types: { screens: lines("ticket-types-screens"), signage: lines("ticket-types-signage") },
       requesters: parseMapping(lines("ticket-requesters"), "email"),
       domains: parseMapping(lines("ticket-domains"), "domain"),

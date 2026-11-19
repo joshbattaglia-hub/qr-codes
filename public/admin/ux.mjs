@@ -126,23 +126,41 @@ export function normaliseDate(value) {
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) return "";
   return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
 }
-/** A pasted Code 39 barcode: "*abc 123*", with line breaks, tabs or stray spaces -> "ABC123". */
-export function normaliseBarcode(value) {
-  return String(value ?? "").replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "").replace(/^\*+|\*+$/g, "").replace(/\*{2,}/g, "*").toUpperCase();
+/** A pasted barcode: "*abc 123*", with line breaks, tabs, zero-width characters or stray spaces.
+ *  Default: "ABC123" (all whitespace and the start/stop asterisks dropped, upper case).
+ *  { inner: true } keeps single interior spaces (Code 39 allows them); { upper: false } leaves the case alone, for places where changing case needs the person's say-so. */
+export function normaliseBarcode(value, { upper = true, inner = false } = {}) {
+  let text = String(value ?? "").replace(/[\u00a0\u200b-\u200d\ufeff]/g, " ").replace(/[\r\n\t]+/g, " ").trim();
+  text = text.replace(/^[\s*]+|[\s*]+$/g, "");
+  text = inner ? text.replace(/\s{2,}/g, " ") : text.replace(/\s+/g, "");
+  return upper ? text.toUpperCase() : text;
 }
-/** Multi-line pasted barcodes: one per line, trimmed, with blank lines and asterisks removed. */
-export function normaliseBarcodeLines(value) {
-  return String(value ?? "").split(/\r?\n|,|;/).map(normaliseBarcode).filter(Boolean);
+/** Multi-line pasted barcodes: one per line, trimmed, with blank lines removed. */
+export function normaliseBarcodeLines(value, opts) {
+  return String(value ?? "").split(/\r\n|\r|\n/).map((line) => normaliseBarcode(line, opts)).filter(Boolean);
+}
+/** Australian phone numbers, any way they are typed -> one tidy form.
+ *  0412345678 / 04-1234 5678 / (04) 1234 5678 / +61 412 345 678 / 61412345678 / 0061412345678 -> "0412 345 678"; landlines -> "03 9123 4567";
+ *  13/1300/1800 numbers keep their digits; anything unrecognised just loses punctuation and keeps a leading +. */
+export function formatPhone(value) {
+  let digits = normalisePhone(value);
+  if (!digits) return "";
+  if (/^\+?61[2-478]\d{8}$/.test(digits)) digits = "0" + digits.replace(/^\+?61/, "");
+  if (/^04\d{8}$/.test(digits)) return digits.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3");
+  if (/^0[2378]\d{8}$/.test(digits)) return digits.replace(/^(\d{2})(\d{4})(\d{4})$/, "$1 $2 $3");
+  if (/^1[38]00\d{6}$/.test(digits)) return digits.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3");
+  return digits;
 }
 /** Attach a normaliser to inputs that should tidy themselves when the person leaves the field (never while typing). */
 export function wireTidyInputs(root) {
   const tidy = (el) => {
     if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return;
     const kind = el.dataset.tidy || (el.type === "email" ? "email" : el.type === "tel" ? "phone" : "");
-    const fn = kind === "email" ? normaliseEmail : kind === "phone" ? normalisePhone : kind === "barcode" ? normaliseBarcode : kind === "barcodes" ? (v) => normaliseBarcodeLines(v).join("\n") : kind === "date" ? (v) => normaliseDate(v) || v : null;
+    const ASSET = { upper: false, inner: true }; // asset IDs: case is only changed when the person confirms it
+    const fn = kind === "email" ? normaliseEmail : kind === "phone" ? formatPhone : kind === "barcode" ? (v) => normaliseBarcode(v, ASSET) : kind === "barcodes" ? (v) => normaliseBarcodeLines(v, ASSET).join("\n") : kind === "date" ? (v) => normaliseDate(v) || v : null;
     if (!fn || !el.value) return;
     const next = fn(el.value);
-    if (next !== el.value && (next || kind === "email")) el.value = next;
+    if (next !== el.value && (next || kind === "email")) { el.value = next; el.dispatchEvent(new Event("input", { bubbles: true })); }
   };
   root.addEventListener("focusout", (event) => tidy(event.target));
   root.addEventListener("paste", (event) => {
@@ -151,7 +169,7 @@ export function wireTidyInputs(root) {
     const text = (event.clipboardData || window.clipboardData)?.getData("text");
     if (!text) return;
     event.preventDefault();
-    el.value = el.dataset.tidy === "barcode" ? normaliseBarcode(text) : normaliseEmail(text);
+    el.value = el.dataset.tidy === "barcode" ? normaliseBarcode(text, { upper: false, inner: true }) : normaliseEmail(text);
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
@@ -165,4 +183,11 @@ export function showNote(el, text, kind = "error") {
   if (!text) return;
   if (kind === "ok") { el.classList.add("saved-tick"); tick(el); }
   else { el.classList.add("err-note"); shake(el); }
+}
+
+/** Skeleton placeholder shown while a page loads (no spinner): same rough size as the content so nothing jumps. */
+export function skeleton(cards = 3) {
+  let html = '<span class="skeleton skeleton-line short" aria-hidden="true"></span>';
+  for (let i = 0; i < cards; i++) html += '<span class="skeleton skeleton-card" aria-hidden="true"></span>';
+  return html + '<span class="sr-only" role="status">Loading</span>';
 }
