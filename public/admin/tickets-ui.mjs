@@ -1,4 +1,5 @@
 import { prepareTicketFile } from "./ticket-file.mjs";
+import { arcIn, flip, pulse, showNote, snapshotRects } from "./ux.mjs";
 
 const STATUS_LABEL = {
   new: "New",
@@ -58,9 +59,30 @@ function note(id) {
   return '<p id="' + id + '" class="small" data-testid="ticket-note-msg"></p>';
 }
 
-function setNote(text) {
-  const el = document.getElementById("ticket-note-msg");
-  if (el) el.textContent = text || "";
+function say(message, kind = "success") { document.dispatchEvent(new CustomEvent("eh:toast", { detail: { message, kind } })); }
+function setNote(text, kind = "error") {
+  showNote(document.getElementById("ticket-note-msg"), text, kind);
+}
+
+/* Pose to pose: before a card changes column, remember where every card is and how many each column holds; paintBoard slides the cards
+   from their old pose to the new one and pulses the count that grew. Only after a move or a new ticket: filters and tabs stay instant. */
+function rememberBoard(state) {
+  state.ticketFx = { at: Date.now(), rects: snapshotRects(document, ".ticket-card"), counts: Object.fromEntries([...document.querySelectorAll(".ticket-col")].map((col) => [col.dataset.column, col.querySelectorAll(".ticket-card").length])) };
+}
+function playBoardFx(box, state) {
+  const fx = state.ticketFx;
+  state.ticketFx = null;
+  if (fx && Date.now() - fx.at < 10000) {
+    flip(box, ".ticket-card", fx.rects);
+    for (const col of box.querySelectorAll(".ticket-col")) {
+      if (col.querySelectorAll(".ticket-card").length > (fx.counts[col.dataset.column] ?? Infinity)) pulse(col.querySelector(".ticket-col-count"));
+    }
+  }
+  if (state.ticketArc) {
+    const card = box.querySelector('.ticket-card[data-id="' + CSS.escape(state.ticketArc) + '"]');
+    state.ticketArc = "";
+    if (card) { arcIn(card); pulse(card.closest(".ticket-col")?.querySelector(".ticket-col-count")); }
+  }
 }
 
 export async function paintTickets(id, state) {
@@ -163,6 +185,7 @@ async function paintBoard(box, access, state) {
     + '<p class="muted small">Drag a card to another column, or use its Move menu. Moving to Needs more info asks for a public reply.</p>'
     + '<div class="ticket-board" data-testid="ticket-board">' + columns + "</div>" + note("ticket-note-msg");
   wireDrag(box, state);
+  playBoardFx(box, state);
 }
 
 function wireDrag(box, state) {
@@ -181,7 +204,8 @@ function wireDrag(box, state) {
       const id = event.dataTransfer.getData("text/plain");
       const card = box.querySelector('.ticket-card[data-id="' + CSS.escape(id) + '"]');
       if (!id || !card || card.dataset.column === col.dataset.column) return;
-      moveFlow(id, col.dataset.column).then((moved) => { if (moved) return paintTickets("", state); }).catch((err) => setNote(err.message));
+      rememberBoard(state);
+      moveFlow(id, col.dataset.column).then((moved) => { if (moved) return paintTickets("", state); state.ticketFx = null; }).catch((err) => setNote(err.message));
     });
   }
 }
@@ -505,7 +529,10 @@ export async function ticketAction(button, state, go) {
   }
   if (act === "ticket-move") {
     const select = document.getElementById("move-" + button.dataset.id);
+    if (document.querySelector(".ticket-board")) rememberBoard(state);
     const moved = await moveFlow(button.dataset.id, select?.value || "");
+    if (!moved) state.ticketFx = null;
+    if (moved) say("Ticket moved");
     if (moved) go(location.hash.includes("tickets/" + button.dataset.id) ? "tickets/" + button.dataset.id : "tickets");
     return;
   }
@@ -553,6 +580,8 @@ export async function ticketAction(button, state, go) {
     } catch (err) {
       setNote(err.message || "The ticket was created, but a file was not accepted.");
     }
+    state.ticketArc = ticketId;
+    say("Ticket created");
     go("tickets/" + ticketId);
     return;
   }
@@ -640,8 +669,10 @@ export async function ticketAction(button, state, go) {
         aliases: { screens: lines("ticket-inbound-aliases-screens"), signage: lines("ticket-inbound-aliases-signage") },
       },
     }) });
-    setNote("Settings saved.");
+    setNote("Settings saved.", "ok");
   }
+  const SAID = { "ticket-status": "Status updated", "ticket-edit": "Site and type saved", "ticket-assign": "Assigned", "ticket-note": "Note saved", "ticket-reply": "Reply sent", "ticket-file": "File uploaded", "ticket-close": "Ticket closed" };
+  if (SAID[act]) say(SAID[act]);
   if (id) go("tickets/" + id);
   else if (act === "ticket-save-settings") go("tickets/settings");
 }

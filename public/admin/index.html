@@ -13,6 +13,7 @@
 <meta name="theme-color" content="#f3f4f8">
 <script src="/admin/theme.js"></script>
 <link rel="stylesheet" href="/admin/styles.css">
+<link rel="stylesheet" href="/admin/motion.css">
 </head>
 <body>
 <div id="boot" class="boot">Loading…</div>
@@ -151,7 +152,7 @@
   </div>
 </div>
 <div id="modal" class="hidden"></div>
-<div id="toast" class="toast hidden" role="status"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 <script src="/admin/qrcode.js"></script>
 <script type="module" src="/admin/app.js"></script>
 <script src="/footer.js" defer></script>

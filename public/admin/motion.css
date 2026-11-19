@@ -1,0 +1,162 @@
+/* Express Help admin: motion, depth and touch tokens, plus the shared behaviour that uses them.
+   Loaded after styles.css. Rules of thumb (see the UX principles):
+   - Most UI motion is 150-250ms and eases out (never linear; spinners and shimmer are the only linear things).
+   - The more often something is done, the less it animates: tab switches, filters, the theme menu, row selection and typing are instant.
+   - Big, rare moments (opening a modal or drawer, a toast, a ticket landing in a column, saving) get a little follow-through.
+   - prefers-reduced-motion: no transforms or animations, only instant state changes. Colour, ticks and focus rings still show. */
+:root{
+  /* durations */
+  --dur-instant:0ms;--dur-press:90ms;--dur-fast:150ms;--dur-base:200ms;--dur-slow:250ms;--dur-wind:100ms;
+  /* easings: ease-out for everything; settle adds a small overshoot for follow-through */
+  --ease-out:cubic-bezier(.2,.8,.2,1);--ease-settle:cubic-bezier(.34,1.45,.64,1);
+  /* z-index scale */
+  --z-base:1;--z-dropdown:12;--z-sticky:20;--z-pop:30;--z-pop-top:31;--z-scrim:35;--z-drawer:40;--z-modal:50;--z-toast:70;
+  /* elevation scale: 1 cards and rows, 2 menus and toasts, 3 modals and drawers */
+  --elev-1:0 1px 2px rgba(16,24,40,.08),0 1px 3px rgba(16,24,40,.06);
+  --elev-2:0 4px 8px rgba(16,24,40,.08),0 12px 28px rgba(16,24,40,.14);
+  --elev-3:0 12px 24px rgba(16,24,40,.14),0 28px 64px rgba(0,0,0,.28);
+  /* touch */
+  --hit-min:44px;
+  --shadow:var(--elev-1);--pop-shadow:var(--elev-2);--modal-shadow:var(--elev-3);--drawer-shadow-full:var(--elev-3);
+}
+html[data-theme="dark"]{
+  --elev-1:0 1px 2px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.04);
+  --elev-2:0 6px 12px rgba(0,0,0,.45),0 14px 32px rgba(0,0,0,.5);
+  --elev-3:0 14px 28px rgba(0,0,0,.5),0 30px 70px rgba(0,0,0,.65);
+  --shadow:var(--elev-1);--pop-shadow:var(--elev-2);--modal-shadow:var(--elev-3);
+}
+html[data-theme="crazy"]{
+  --elev-1:4px 4px 0 var(--c1);--elev-2:6px 6px 0 var(--c1);--elev-3:8px 8px 0 var(--c1);
+  --shadow:var(--elev-1);--pop-shadow:var(--elev-2);--modal-shadow:var(--elev-3);
+}
+
+/* ---- Focus: always visible, in every theme ---- */
+:focus-visible{outline:3px solid var(--focus-ring);outline-offset:2px}
+.sr-only:focus-visible{outline:0}
+
+/* ---- Hit areas: at least 44px for the controls people tap ---- */
+.btn,.create-btn{min-height:var(--hit-min)}
+.icon-btn,.avatar,.menu-btn{width:var(--hit-min);height:var(--hit-min);min-width:var(--hit-min)}
+.search input{height:var(--hit-min)}
+.search-ico{top:calc((var(--hit-min) - 18px) / 2)}
+.tabs button{min-height:var(--hit-min);padding:0 14px;display:inline-flex;align-items:center}
+.seg button,.mode-toggle button{min-height:var(--hit-min);display:inline-flex;align-items:center}
+.text-btn{min-height:var(--hit-min);display:inline-flex;align-items:center}
+.pop button,.pop a,.search-results button{min-height:var(--hit-min)}
+.field input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),.field select,input[type="date"],.modal-card input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),.modal-card select,.url-row input{min-height:var(--hit-min)}
+input[type="color"]{min-height:var(--hit-min)}
+td .btn,td button,td .text-btn,td a.btn,.rule .btn,.rule button{min-height:var(--hit-min)}
+.check{min-height:var(--hit-min);gap:10px}
+.check input,.perm-tool input[type="checkbox"],.perm-grid input[type="checkbox"]{width:22px;height:22px;flex:none}
+.perm-head{min-height:var(--hit-min);align-items:center}
+.perm-head input{width:22px;height:22px;margin-top:0}
+.user-sites .check,.perm-body .check{min-height:var(--hit-min)}
+label.check,label.perm-tool{cursor:pointer}
+.chip button{position:relative;min-width:24px}
+.chip button::after{content:"";position:absolute;inset:-10px}
+.nav button{min-height:40px}
+@media (max-width:860px),(pointer:coarse){
+  .nav button{min-height:var(--hit-min)}
+  .nav .other-tools summary{min-height:var(--hit-min)}
+}
+
+/* ---- Press feedback: a slight squash on tap. Not on tabs, the menu or segmented switches, which are used all the time. ---- */
+.btn,.create-btn,.icon-btn,.avatar,.menu-btn,.pill,.metric-card,.ticket-card,.text-btn,.stat-box{transition:transform var(--dur-press) var(--ease-out),background-color var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out)}
+.btn:active:not(:disabled),.create-btn:active,.icon-btn:active,.avatar:active,.menu-btn:active,.pill:active,.metric-card:active,.text-btn:active{transform:scale(.96)}
+.ticket-card:active{transform:scale(.985)}
+.btn:active:not(:disabled),.create-btn:active,.pill:active{filter:brightness(.94)}
+
+/* ---- Anticipation: a tiny wind-up before a big action (class added by ux.mjs for about 100ms) ---- */
+.winding{transform:scale(.95) translateY(1px) !important;filter:brightness(.92);transition:transform var(--dur-wind) var(--ease-out)}
+
+/* ---- Staging: one focal point. Modals and drawers dim what is behind them. ---- */
+#modal{z-index:var(--z-modal)}
+.modal-back{background:var(--modal-back);animation:eh-fade var(--dur-fast) var(--ease-out)}
+.modal-card{box-shadow:var(--elev-3);animation:eh-modal-in var(--dur-slow) var(--ease-settle)}
+.modal-card:focus{outline:0}
+.modal-card .row.end{position:sticky;bottom:-20px;margin:12px -20px -20px;padding:12px 20px;background:var(--card);border-top:1px solid var(--line-soft)}
+.modal-card .row.end .btn:not(.ghost){min-width:110px}
+.overlay.show{z-index:var(--z-scrim);animation:eh-fade var(--dur-fast) var(--ease-out)}
+.ticket-dialog::backdrop,dialog::backdrop{background:var(--modal-back)}
+dialog{box-shadow:var(--elev-3);border-radius:16px}
+dialog[open]{animation:eh-modal-in var(--dur-slow) var(--ease-settle)}
+@keyframes eh-fade{from{opacity:0}to{opacity:1}}
+@keyframes eh-modal-in{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes eh-pop-in{from{opacity:0;transform:translateY(-6px) scale(.97)}to{opacity:1;transform:none}}
+
+/* ---- Follow through: dropdowns, menus and the drawer settle instead of stopping dead. The theme menu and search results stay instant. ---- */
+.help-pop:not(.hidden),.account-pop:not(.hidden),.menu:not(.hidden),.date-pop:not(.hidden),.create-wrap .pop:not(.hidden){transform-origin:top right;animation:eh-pop-in var(--dur-base) var(--ease-settle)}
+.create-wrap .pop:not(.hidden){transform-origin:top left}
+.theme-pop,.search-results{animation:none}
+@media (max-width:860px){
+  .sidebar{left:-14px;width:calc(min(280px,86vw) + 14px);padding-left:26px;transition:transform var(--dur-base) var(--ease-out),box-shadow var(--dur-base) var(--ease-out)}
+  .sidebar.open{transition:transform var(--dur-slow) var(--ease-settle),box-shadow var(--dur-slow) var(--ease-out);box-shadow:var(--elev-3)}
+}
+
+/* ---- Depth: one shadow scale ---- */
+.login-card,.card,.metric-card,.stat-box,.field-card{box-shadow:var(--elev-1)}
+.search-results,.pop,.menu,.date-pop{box-shadow:var(--elev-2)}
+.topbar{box-shadow:0 1px 0 var(--line)}
+html[data-theme="crazy"] .topbar{box-shadow:none}
+.ticket-card{box-shadow:var(--elev-1)}
+html[data-theme="crazy"] .field-card,html[data-theme="crazy"] .stat-box,html[data-theme="crazy"] .metric-card{box-shadow:none}
+html[data-theme="crazy"] .ticket-card{box-shadow:2px 2px 0 var(--c1)}
+
+/* ---- Toast: unmistakable, announced to screen readers, settles in ---- */
+.toast{z-index:var(--z-toast);box-shadow:var(--elev-2);display:flex;align-items:center;gap:10px;padding:12px 18px;font-weight:600;max-width:min(92vw,520px);min-height:var(--hit-min)}
+.toast.show{animation:eh-toast-in var(--dur-slow) var(--ease-settle)}
+.toast.leaving{animation:eh-toast-out var(--dur-fast) var(--ease-out) forwards}
+.toast::before{content:"";flex:none;width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;font-size:15px;line-height:24px;text-align:center;font-weight:800;background:#12b76a;color:#fff}
+.toast[data-kind="success"]::before,.toast[data-kind="copied"]::before{content:"\2713"}
+.toast[data-kind="error"]{background:#b42318;color:#fff}
+.toast[data-kind="error"]::before{content:"!";background:#fff;color:#b42318}
+.toast[data-kind="info"]::before{content:"i";background:#1f4bdb}
+.toast[data-kind="copied"]{font-size:16px;padding:14px 22px}
+.toast[data-kind="copied"]::before{width:32px;height:32px;line-height:32px;font-size:20px}
+.toast.show[data-kind="error"]{animation:eh-toast-in var(--dur-slow) var(--ease-settle),eh-shake 380ms var(--ease-out) 120ms}
+.toast.show::before{animation:eh-tick-pop 420ms var(--ease-settle) 80ms both}
+html[data-theme="crazy"] .toast{box-shadow:4px 4px 0 var(--c1)}
+html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff;border-color:#fff}
+@keyframes eh-toast-in{from{opacity:0;transform:translate(-50%,16px) scale(.94)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes eh-toast-out{to{opacity:0;transform:translate(-50%,8px) scale(.97)}}
+@keyframes eh-tick-pop{from{transform:scale(0) rotate(-40deg)}to{transform:none}}
+@keyframes eh-shake{0%,100%{translate:0 0}20%{translate:-7px 0}40%{translate:6px 0}60%{translate:-4px 0}80%{translate:3px 0}}
+
+/* ---- Secondary cues: tick after Save, badge pulse, shake on error ---- */
+.pulse{animation:eh-pulse 650ms var(--ease-out)}
+.shake{animation:eh-shake 420ms var(--ease-out)}
+.tick-pop{animation:eh-tick-pop 420ms var(--ease-settle)}
+@keyframes eh-pulse{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(31,75,219,.55)}35%{transform:scale(1.35);box-shadow:0 0 0 8px rgba(31,75,219,0)}100%{transform:scale(1);box-shadow:0 0 0 0 rgba(31,75,219,0)}}
+.saved-tick{display:inline-flex;align-items:center;gap:6px;color:var(--green);font-weight:700}
+.saved-tick::before{content:"\2713";display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--green);color:#fff;font-size:12px}
+.btn.is-saved{background:var(--green) !important;background-image:none !important;color:#fff}
+.btn.is-saved::after{content:" \2713";margin-left:6px}
+.field-error,input.invalid,select.invalid,textarea.invalid{border-color:var(--red) !important;outline:2px solid rgba(217,45,32,.35)}
+.err:not(:empty),.err[role="alert"]:not(:empty){font-weight:600}
+
+/* ---- Sticky primary actions near the form (Fitts) ---- */
+.form-actions{position:sticky;bottom:0;z-index:var(--z-base);display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 0;background:linear-gradient(to top,var(--card) 70%,transparent)}
+.btn.primary-cta{min-height:48px;padding:12px 22px;font-size:15.5px}
+
+/* ---- Skeleton loaders instead of spinners ---- */
+.skeleton{display:block;border-radius:10px;background:linear-gradient(90deg,var(--mute-bg) 0%,var(--line-soft) 45%,var(--mute-bg) 90%);background-size:220% 100%;animation:eh-shimmer 1.2s linear infinite;color:transparent;min-height:1em}
+.skeleton-card{height:78px;margin:0 0 10px}
+.skeleton-line{height:14px;margin:10px 0}
+.skeleton-line.short{width:42%}
+@keyframes eh-shimmer{from{background-position:120% 0}to{background-position:-100% 0}}
+
+/* ---- Frequent actions are instant ---- */
+.tabs button,.seg button,.mode-toggle button,.nav button,.theme-pop button,.pop button,.search-results button,tr.clickable,.ticket-col,select,input,textarea{transition:none}
+.tabs button:active,.seg button:active,.mode-toggle button:active,.nav button:active{transform:none}
+
+/* ---- Reduced motion: instant state changes only. Colour, ticks and focus rings stay. ---- */
+@media (prefers-reduced-motion:reduce){
+  :root{--dur-press:0ms;--dur-fast:0ms;--dur-base:0ms;--dur-slow:0ms;--dur-wind:0ms}
+  *,*::before,*::after{animation:none !important;transition:none !important;scroll-behavior:auto !important}
+  .btn:active:not(:disabled),.create-btn:active,.icon-btn:active,.avatar:active,.menu-btn:active,.pill:active,.metric-card:active,.text-btn:active,.ticket-card:active,.winding{transform:none !important}
+  .toast.show,.toast.leaving{opacity:1}
+  .skeleton{background:var(--mute-bg)}
+  .sidebar{transition:none !important}
+}
+.err-note{color:var(--red);font-weight:700}
+.err-note::before{content:"! ";font-weight:800}
