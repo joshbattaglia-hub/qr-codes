@@ -197,3 +197,14 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 .filter-fold>summary::after{content:"\25BE";margin-left:auto;color:var(--muted)}
 .filter-fold[open]>summary::after{content:"\25B4"}
 @media (min-width:861px){.filter-fold>summary{display:none}}
+
+/* ---- PR B follow-ups from the screenshots ---- */
+/* Users table: the Edit / More cell stays in view at the right edge instead of hiding off-screen in a wide table (Fitts: the action is always reachable). */
+.visitor-sheet td.row-actions,.visitor-sheet thead th:last-child{position:sticky;right:0;background:var(--card);box-shadow:-8px 0 8px -8px rgba(16,24,40,.25)}
+.visitor-sheet thead th:last-child{background:var(--th-bg);z-index:var(--z-base)}
+.visitor-sheet tbody tr:nth-child(even) td.row-actions{background:var(--row-alt)}
+/* Ticket page "Move to column": label, select and button line up and use the room. */
+.detail-group .ticket-move{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:0}
+.detail-group .ticket-move .field{flex:1 1 220px;margin:0}
+.detail-group .ticket-move select{width:100%;height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 8px}
+.detail-group .ticket-move .btn{height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 18px}
