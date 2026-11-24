@@ -2165,7 +2165,8 @@ async function paintVisitorRecord(id) {
   }
   const visit = body.visit;
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="visitors">Back</button></p>'
-    + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + '</h2>'
+    + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + siteChip(visit) + '</h2>'
+    + (visit.siteType === "commission_agent" || visit.siteType === "company" ? '<p class="muted small" data-testid="visitor-record-site">' + esc([visit.siteType === "commission_agent" ? "Commission agent site" : "Company site", visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ")) + ' (as shown when they signed in)</p>' : '<p class="muted small" data-testid="visitor-record-site">Typed site (not picked from the list).</p>')
     + '<p>' + esc(visit.name) + ' · ' + esc(visit.phone) + ' · ' + esc(visit.company) + '</p>'
     + '<p>Signed in ' + esc(visit.signedInMelbourne) + '</p>'
     + '<p>Signed out ' + esc(visit.signedOutMelbourne || "Still on site") + '</p>'
