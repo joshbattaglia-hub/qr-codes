@@ -3,7 +3,7 @@ import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
-  , importSiteDetails, saveCompanyDetails, siteDetailCsv, siteDetailSettings,
+  importSiteDetails, saveCompanyDetails, siteDetailCsv, siteDetailSettings,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
