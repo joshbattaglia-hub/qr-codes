@@ -1969,7 +1969,7 @@ async function paintSiteDetails() {
     + '<div class="row"><button class="btn ghost" type="button" data-act="site-details-download">Download current list as CSV</button></div>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
-    + '<div class="row"><button class="btn" type="button" data-act="site-details-preview">Preview changes</button><button class="btn ghost" type="button" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
+    + '<div class="row"><button class="btn" type="button" data-act="site-details-preview">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
     + '<div id="site-details-preview" data-testid="site-details-preview"></div>';
   const file = document.getElementById("site-details-file");
   file?.addEventListener("change", async () => {
