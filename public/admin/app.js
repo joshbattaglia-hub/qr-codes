@@ -1846,7 +1846,7 @@ function visitorDenied() {
   return '<h2>Visitor records are restricted</h2><p data-testid="visitor-denied">Visitor records are restricted. Sign in with your authorised email account to view them.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>';
 }
 function visitorPage() {
-  return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
+  return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor picks their site from the list (search or Use my location), or types it if it is not listed. It is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
 }
 function visitorTabs(active, viewOnly) {
   if (viewOnly) return "";
