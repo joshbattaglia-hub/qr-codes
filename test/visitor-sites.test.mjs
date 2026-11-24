@@ -39,8 +39,8 @@ test("normalisers: ABN checksum, AU phone, site type words, CSV quoting", () => 
   assert.equal(sd.normaliseSitePhone("(03) 9113-7191"), "03 9113 7191");
   assert.equal(sd.normaliseSitePhone("+61 412 345 678"), "0412 345 678");
   assert.equal(sd.normaliseSitePhone("call me"), null);
-  for (const w of ["Commission Agent", "agent", "commission_agent", "CA"]) assert.equal(sd.normaliseSiteType(w), "commission_agent", w);
-  for (const w of ["Liberty", "company", "Company run"]) assert.equal(sd.normaliseSiteType(w), "company", w);
+  for (const w of ["Commission Agent", "agent", "commission_agent", "CA", "LOC CA", "loc-ca"]) assert.equal(sd.normaliseSiteType(w), "commission_agent", w);
+  for (const w of ["Liberty", "company", "Company run", "VEA Retail", "VEA"]) assert.equal(sd.normaliseSiteType(w), "company", w);
   assert.equal(sd.normaliseSiteType("franchise"), null);
   assert.deepEqual(sd.parseCsv('\ufeffloc,trading_name\r\nLOC1,"Smith, Jones ""& Co"""\n\n'), [["loc", "trading_name"], ["LOC1", 'Smith, Jones "& Co"']]);
 });
@@ -216,4 +216,38 @@ test("deploy previews are look-only for the Visitor Log: POSTs are refused befor
   assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), { deploy: { context: "production" } }), false);
   assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), undefined), false);
   assert.deepEqual(await storeDump(), before);
+});
+
+test("sign-out: the picked site narrows duplicate name matches, is optional, is recorded, and never blocks a unique name match", async () => {
+  const photo2 = photo();
+  const signIn = (name, company, siteId, k) => j(H.call("POST", "/api/visit/sign-in", { body: { name, phone: "0400 000 0" + k, company, location: "typed", siteId, photo: photo2, idempotencyKey: "so-" + k + "-aaaaaaaaaaaaaaaaaaaa" } }));
+  assert.equal((await signIn("Dup Synthetic", "Twin Co", "s00000a01", "11")).status, 200);
+  assert.equal((await signIn("Dup Synthetic", "Twin Co", "s00000a03", "12")).status, 200);
+  const out = (body) => j(H.call("POST", "/api/visit/sign-out", { body: { cardReturned: true, ...body } }));
+  const amb = await out({ name: "Dup Synthetic", company: "Twin Co" });
+  assert.equal(amb.status, 400, "two open visits, no site: still refused as before");
+  const ok = await out({ name: "Dup Synthetic", company: "Twin Co", siteId: "s00000a03" });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const visits = async () => { const { blobs } = await lib.visitorStore().list({ prefix: "visit/" }); return Promise.all(blobs.map((x) => lib.visitorStore().get(x.key, { type: "json" }))); };
+  let dups = (await visits()).filter((v) => v.name === "Dup Synthetic");
+  assert.equal(dups.find((v) => v.site.siteId === "s00000a03").signedOutAt !== "", true);
+  assert.equal(dups.find((v) => v.site.siteId === "s00000a01").signedOutAt, "", "the other visit stays open");
+  // Unique match with a different (or typed) site: signs out, records what was given, keeps the sign-in snapshot.
+  const last = await out({ name: "Dup Synthetic", company: "Twin Co", location: "Somewhere typed" });
+  assert.equal(last.status, 200);
+  dups = (await visits()).filter((v) => v.name === "Dup Synthetic");
+  const v1 = dups.find((v) => v.site.siteId === "s00000a01");
+  assert.ok(v1.signedOutAt); assert.equal(v1.signOutLocation, "Somewhere typed"); assert.equal(v1.site.from, undefined);
+  const listed = (await j(H.call("GET", "/api/visitor-log/visits", { cookie: owner }))).body.visits.find((v) => v.id === v1.id);
+  assert.equal(listed.signOutSite, "Somewhere typed"); assert.equal(listed.siteFrom, "sign-in");
+  assert.equal(H.mailbox.filter((m) => !/code is \d{8}/.test(m.text || "")).length, 0);
+});
+
+test("labels: visitors and admins see VEA Retail and LOC CA, never the old Liberty site / Commission agent tags", () => {
+  const js = fs.readFileSync("public/visit/site-pick.js", "utf8");
+  assert.match(js, /"LOC CA" : "VEA Retail"/);
+  assert.ok(!js.includes('"Liberty site"') && !js.includes('"Commission agent"'));
+  const app = fs.readFileSync("public/admin/app.js", "utf8");
+  for (const t of ["VEA Retail sites", "All LOC CA sites", "LOC CA sites", ">VEA Retail</span>", "LOC CA site"]) assert.ok(app.includes(t), t);
+  for (const t of [">Company sites<", "All commission agents", ">Liberty</span>", '"Commission agents"']) assert.ok(!app.includes(t), t);
 });

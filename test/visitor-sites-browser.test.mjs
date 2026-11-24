@@ -25,7 +25,8 @@ async function boot() {
 }
 after(async () => { if (browser) await browser.close(); });
 
-async function openPublic(p, { w = 390, h = 900, init = "" } = {}) {
+async function openPublic(p, opts = {}) { return openPublicRaw(p, { ready: "#in-form:not([hidden])", pick: "in", ...opts }); }
+async function openPublicRaw(p, { w = 390, h = 900, init = "", ready, pick } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: w, height: h, deviceScaleFactor: w < 500 ? 2 : 1 });
   if (init) await page.evaluateOnNewDocument(init);
@@ -46,13 +47,17 @@ async function openPublic(p, { w = 390, h = 900, init = "" } = {}) {
   });
   page.on("pageerror", (e) => console.log("pageerror", e.message));
   await page.goto("https://expresshelp.site" + p);
-  await page.waitForSelector("#in-form:not([hidden])", { timeout: 8000 });
-  await page.waitForSelector('[data-site-pick][data-ready="1"]', { timeout: 8000 });
+  await page.waitForSelector(ready, { timeout: 8000 });
+  await page.waitForSelector('[data-site-pick="' + pick + '"][data-ready="1"]', { timeout: 8000 });
+  return page;
+}
+async function openPublicOut(p) {
+  const page = await openPublicRaw(p, { w: 390, h: 900, ready: "#out-form", pick: "out-" });
   return page;
 }
 const GEO_SPY = `window.__geoCalls = 0; (function(){ var g = navigator.geolocation; if (!g) return; var real = g.getCurrentPosition.bind(g); g.getCurrentPosition = function(){ window.__geoCalls++; return real.apply(null, arguments); }; })();`;
 
-test("type-ahead: suggestions as you type, keyboard pick, company card shows Liberty's details and hides blanks", { skip: SKIP, timeout: 60000 }, async () => {
+test("type-ahead: suggestions as you type, keyboard pick, VEA Retail card shows the company details and hides blanks", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   const p = await openPublic("/visit/sign-in", { init: GEO_SPY });
   assert.equal(await p.evaluate(() => window.__geoCalls), 0, "location is not asked for on page load");
@@ -69,7 +74,7 @@ test("type-ahead: suggestions as you type, keyboard pick, company card shows Lib
   const card = await p.$eval("#site-card", (c) => ({ hidden: c.hidden, text: c.innerText, terms: [...c.querySelectorAll("dt")].map((d) => d.textContent), tel: c.querySelector("a[href^='tel:']")?.getAttribute("href") }));
   assert.equal(card.hidden, false);
   assert.deepEqual(card.terms, ["Trading name", "ABN", "Address", "Phone"]);
-  assert.match(card.text, /Synthetic Liberty Trading/); assert.match(card.text, /51 824 753 556/); assert.match(card.text, /Liberty site/);
+  assert.match(card.text, /Synthetic Liberty Trading/); assert.match(card.text, /51 824 753 556/); assert.match(card.text, /VEA Retail/); assert.ok(!/Liberty site/.test(card.text));
   assert.equal(card.tel, "tel:0391137191");
   await p.type("#site-q", "x");
   assert.equal(await p.$eval("input[name=siteId]", (e) => e.value), "", "editing the text drops the pick");
@@ -78,7 +83,7 @@ test("type-ahead: suggestions as you type, keyboard pick, company card shows Lib
   await p.close();
 });
 
-test("use my location: asked only on tap, nearest sites listed, agent card shows its own ABN and trading name, coordinates never sent", { skip: SKIP, timeout: 60000 }, async () => {
+test("use my location: asked only on tap, nearest sites listed, LOC CA card shows its own ABN and trading name, coordinates never sent", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   await browser.defaultBrowserContext().overridePermissions("https://expresshelp.site", ["geolocation"]);
   const p = await openPublic("/visit/sign-in", { init: GEO_SPY });
@@ -91,7 +96,7 @@ test("use my location: asked only on tap, nearest sites listed, agent card shows
   assert.deepEqual(near, ["Synthetic Ballan Agent", "Synthetic Ballarat North", "Synthetic Geelong West"]);
   await p.click(".site-near-item");
   const card = await p.$eval("#site-card", (c) => c.innerText);
-  assert.match(card, /Synthetic Ballan Fuels Pty Ltd/); assert.match(card, /10 000 110 866/); assert.match(card, /0412 345 678/); assert.match(card, /Commission agent/);
+  assert.match(card, /Synthetic Ballan Fuels Pty Ltd/); assert.match(card, /10 000 110 866/); assert.match(card, /0412 345 678/); assert.match(card, /LOC CA/); assert.ok(!/Commission agent\b(?! )/.test(card.split("\n")[0] || ""));
   assert.ok(!card.includes("Synthetic Liberty Trading"));
   // Fill and submit with a synthetic photo, then check the payload and the stored snapshot.
   const img = path.join(os.tmpdir(), "synthetic-id.jpg");
@@ -112,20 +117,20 @@ test("use my location: asked only on tap, nearest sites listed, agent card shows
   await p.close();
 });
 
-test("admin logs: site-type filter offers All, Company sites and each commission agent, and filters the table", { skip: SKIP, timeout: 60000 }, async () => {
+test("admin logs: site-type filter offers All, VEA Retail sites, All LOC CA sites and each LOC CA, and filters the table", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   const p = await H.openPage(browser, owner, "visitors", { w: 1440, h: 900, log: false });
   await p.waitForSelector("#visitor-site-type");
   const options = await p.$$eval("#visitor-site-type option", (o) => o.map((x) => x.textContent));
-  assert.ok(options.includes("All sites") && options.includes("Company sites") && options.some((o) => o.startsWith("Synthetic Ballan Fuels Pty Ltd")), options.join(" | "));
+  assert.ok(options.includes("All sites") && options.includes("VEA Retail sites") && options.includes("All LOC CA sites") && options.some((o) => o.startsWith("Synthetic Ballan Fuels Pty Ltd")), options.join(" | "));
   await p.select("#visitor-site-type", "agent:abn:10000110866");
   await p.click('[data-act="visitor-filter"]');
-  await p.waitForFunction(() => [...document.querySelectorAll('[data-testid="visitor-row"]')].length >= 1 && [...document.querySelectorAll('[data-testid="visitor-row"]')].every((r) => r.textContent.includes("Agent")), { timeout: 5000 });
+  await p.waitForFunction(() => [...document.querySelectorAll('[data-testid="visitor-row"]')].length >= 1 && [...document.querySelectorAll('[data-testid="visitor-row"]')].every((r) => r.textContent.includes("LOC CA")), { timeout: 5000 });
   assert.equal(await p.$eval("#visitor-site-type", (s) => s.value), "agent:abn:10000110866", "the chosen filter stays selected");
   await p.close();
   const s = await H.openPage(browser, owner, "visitors/settings", { w: 1440, h: 900, log: false });
   await s.waitForSelector('[data-testid="site-detail-counts"]', { timeout: 8000 });
-  assert.match(await s.$eval('[data-testid="site-detail-counts"]', (e) => e.textContent), /3 sites: 0 company, 1 commission agent, 2 not set/);
+  assert.match(await s.$eval('[data-testid="site-detail-counts"]', (e) => e.textContent), /3 sites: 0 VEA Retail, 1 LOC CA, 2 not set \(shown as VEA Retail\)/);
   await s.type('[data-testid="site-details-csv"]', "loc,site_type\nLOC0203,company");
   await s.click('[data-act="site-details-preview"]');
   await s.waitForSelector('[data-testid="site-details-summary"]');
@@ -133,4 +138,42 @@ test("admin logs: site-type filter offers All, Company sites and each commission
   assert.equal(await s.$eval('[data-testid="site-details-apply"]', (b) => b.disabled), false);
   assert.equal((await lib.sitesStore().get("s00000b03", { type: "json" })).siteType, undefined, "preview did not write");
   await s.close();
+});
+
+test("sign-out page has the same picker; a picked site goes with the sign-out and tags the record; name + company matching still decides", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  const photo = jpeg.encode({ data: Buffer.alloc(8 * 8 * 4, 190), width: 8, height: 8 }, 80).data.toString("base64");
+  const r = await H.call("POST", "/api/visit/sign-in", { body: { name: "Synthetic Leaver", phone: "0400 000 003", company: "Leave Co", location: "typed at sign-in", photo, idempotencyKey: "out-b-1-aaaaaaaaaaaaaaaaaa" } });
+  assert.equal(r.status, 200);
+  const p = await openPublicOut("/visit/sign-out");
+  await p.type('[data-testid="visit-out-name"]', "Synthetic Leaver");
+  await p.type('[data-testid="visit-out-company"]', "Leave Co");
+  await p.type("#out-site-q", "ballan");
+  await p.waitForSelector("#out-site-options:not([hidden]) .site-option");
+  await p.keyboard.press("Enter");
+  const card = await p.$eval("#out-site-card", (c) => c.innerText);
+  assert.match(card, /LOC CA/); assert.match(card, /Synthetic Ballan Fuels Pty Ltd/);
+  assert.equal(await p.$eval("#out-site-q", (e) => e.required), false, "the site is optional on sign-out");
+  await p.click('[data-testid="visit-card"]');
+  await p.evaluate(() => document.getElementById("out-form").requestSubmit());
+  await p.waitForSelector("#out-done:not([hidden])", { timeout: 8000 });
+  const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
+  const v = (await Promise.all(blobs.map((b) => lib.visitorStore().get(b.key, { type: "json" })))).find((x) => x.name === "Synthetic Leaver");
+  assert.ok(v.signedOutAt); assert.equal(v.signOutSite.siteId, "s00000b02");
+  assert.equal(v.site.from, "sign-out", "a visit typed at sign-in takes its type tag from the sign-out pick");
+  assert.equal(v.location, "typed at sign-in", "the sign-in location text is never rewritten");
+  assert.equal(H.mailbox.filter((m) => !/code is \d{8}/.test(m.text || "")).length, 0);
+  await p.close();
+});
+
+test("combined /visit page: two pickers (sign-in and sign-out) work independently", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  const p = await openPublic("/visit", { w: 1440 });
+  await p.waitForSelector('[data-site-pick="out-"][data-ready="1"]');
+  assert.equal(await p.$$eval("[id]", (els) => { const seen = new Set(); let dup = 0; for (const e of els) { if (seen.has(e.id)) dup++; seen.add(e.id); } return dup; }), 0, "no duplicate ids");
+  await p.type("#out-site-q", "geelong"); await p.waitForSelector("#out-site-options .site-option"); await p.keyboard.press("Enter");
+  assert.equal(await p.$eval('#out-form input[name=siteId]', (e) => e.value), "s00000b03");
+  assert.equal(await p.$eval('#in-form input[name=siteId]', (e) => e.value), "", "the sign-in picker is untouched");
+  assert.match(await p.$eval("#out-site-card", (c) => c.innerText), /VEA Retail/);
+  await p.close();
 });
