@@ -208,3 +208,15 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 .detail-group .ticket-move .field{flex:1 1 220px;margin:0}
 .detail-group .ticket-move select{width:100%;height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 8px}
 .detail-group .ticket-move .btn{height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 18px}
+
+/* ---- Visitor Log: site type chips and the site-details import preview ---- */
+.site-chip{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle;white-space:nowrap}
+.site-chip.company{background:#e7ecfb;color:#1f3a9e}
+.site-chip.agent{background:#fdead7;color:#93370d}
+html[data-theme="dark"] .site-chip.company{background:#1e2a4d;color:#c7d4ff}
+html[data-theme="dark"] .site-chip.agent{background:#4a2a12;color:#ffd7b0}
+.site-preview td{white-space:normal;vertical-align:top}
+.site-preview tr.bad td{background:rgba(217,45,32,.08)}
+.site-preview tr.chg td:first-child{box-shadow:inset 3px 0 0 #12b76a}
+.err-text{color:#d92d20;font-weight:600}
+html[data-theme="dark"] .err-text{color:#ff8a80}
