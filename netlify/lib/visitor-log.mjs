@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, detailCsv, previewDetailImport, publicSiteDirectory, readCompany, saveCompany, siteLabel, siteSnapshot, visitSiteType } from "./site-details.mjs";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
@@ -152,6 +153,11 @@ export function publicVisit(visit) {
   return {
     id: visit.id,
     location: visit.location,
+    siteId: visit.site?.siteId || "",
+    siteLoc: visit.site?.loc || "",
+    siteType: visitSiteType(visit),
+    tradingName: visit.site?.tradingName || "",
+    abn: visit.site?.abn || "",
     name: visit.name,
     phone: visit.phone,
     company: visit.company,
@@ -326,6 +332,9 @@ export async function signIn(req, body) {
   const fieldError = [location, name, phone, company, issues].find((item) => item.error);
   if (fieldError) return { status: 400, error: fieldError.error };
   if (phone.text && !/^[0-9+() .\-]{6,40}$/.test(phone.text)) return { status: 400, error: "Phone is not valid." };
+  // A site picked from the list is stored as a snapshot (name, LOC, type, trading name, ABN at that moment).
+  // Free text still works for a site that is not on the list; an unknown id just falls back to the text.
+  const site = body?.siteId ? await siteSnapshot(body.siteId, { readFirstMaintenance }).catch(() => null) : null;
   let bytes;
   try { bytes = Buffer.from(String(body?.photo || "").replace(/^data:[^,]+,/, ""), "base64"); }
   catch { return { status: 400, error: "A photo of the ID is required." }; }
@@ -336,7 +345,7 @@ export async function signIn(req, body) {
   const receipt = crypto.randomBytes(32).toString("base64url");
   const signedInAt = new Date(now()).toISOString();
   const visit = {
-    id, location: location.text, name: name.text, phone: phone.text, company: company.text, issues: issues.text,
+    id, location: site ? siteLabel(site).slice(0, 120) : location.text, ...(site ? { site } : {}), name: name.text, phone: phone.text, company: company.text, issues: issues.text,
     signedInAt, signedOutAt: "", cardReturned: false, receiptHash: hashReceipt(receipt),
     photoStatus: "stored", sheetRow: null, sheetSync: "pending",
   };
@@ -576,7 +585,19 @@ export async function listVisits(actor, query) {
   const to = String(query.get("to") || "");
   const status = String(query.get("status") || "all");
   const location = String(query.get("location") || "").trim().toLowerCase();
+  const siteType = String(query.get("siteType") || "all");
+  const agent = String(query.get("agent") || "");
+  // Agents to filter by: every commission agent in the site list, plus any seen in older sign-ins.
+  const agents = new Map();
+  const directory = await publicSiteDirectory({ readFirstMaintenance }).catch(() => ({ sites: [] }));
+  for (const s of directory.sites || []) if (s.type === "commission_agent") { const snap = { siteId: s.id, name: s.name, tradingName: s.tradingName, abn: s.abn }; const key = agentKey(snap); if (key && !agents.has(key)) agents.set(key, { key, label: agentLabel(snap), abn: s.abn || "", count: 0 }); }
+  for (const row of rows) if (visitSiteType(row) === "commission_agent") { const key = agentKey(row.site); if (!key) continue; if (!agents.has(key)) agents.set(key, { key, label: agentLabel(row.site), abn: row.site.abn || "", count: 0 }); agents.get(key).count += 1; }
   const filtered = rows.filter((row) => {
+    const type = visitSiteType(row);
+    if (siteType === "company" && type === "commission_agent") return false;
+    if (siteType === "untagged" && type !== "untagged") return false;
+    if (siteType === "agents" && type !== "commission_agent") return false;
+    if (siteType === "agent" && (type !== "commission_agent" || agentKey(row.site) !== agent)) return false;
     if (status === "in" && row.signedOutAt) return false;
     if (status === "out" && !row.signedOutAt) return false;
     const day = melbourneDay(row.signedInAt);
@@ -585,7 +606,7 @@ export async function listVisits(actor, query) {
     if (location && !String(row.location || "").toLowerCase().includes(location)) return false;
     return true;
   }).sort((a, b) => String(b.signedInAt).localeCompare(String(a.signedInAt)));
-  return { status: 200, body: { visits: filtered.slice(0, 500).map(publicVisit) } };
+  return { status: 200, body: { visits: filtered.slice(0, 500).map(publicVisit), agents: [...agents.values()].sort((a, b) => a.label.localeCompare(b.label)) } };
 }
 
 export async function readVisit(actor, id) {
@@ -642,12 +663,12 @@ export function csvEscape(value) {
 export async function exportVisits(actor) {
   if (!visitorCapability(actor)) return { status: 403, error: "Visitor log access is not granted." };
   const listed = await listVisits(actor, new URLSearchParams());
-  const header = ["id", "location", "name", "phone", "company", "issues", "sign_out_issues", "signed_in_melbourne", "signed_out_melbourne", "card_returned", "photo_status"];
+  const header = ["id", "location", "name", "phone", "company", "issues", "sign_out_issues", "signed_in_melbourne", "signed_out_melbourne", "card_returned", "photo_status", "site_type", "trading_name", "abn"];
   const lines = [header.join(",")];
   for (const visit of listed.body.visits) {
     lines.push([
       visit.id, visit.location, visit.name, visit.phone, visit.company, visit.issues, visit.signOutIssues,
-      visit.signedInMelbourne, visit.signedOutMelbourne, visit.cardReturned ? "yes" : "", visit.photoStatus,
+      visit.signedInMelbourne, visit.signedOutMelbourne, visit.cardReturned ? "yes" : "", visit.photoStatus, visit.siteType, visit.tradingName, visit.abn,
     ].map(csvEscape).join(","));
   }
   await audit("export", actor.id || "", "");
@@ -744,6 +765,10 @@ async function readMaintenanceNumbers() {
     const phone = maintenancePhone(numbers[i]);
     return phone.error || phone.blank ? "" : phone.display;
   });
+}
+
+export async function readFirstMaintenance() {
+  return (await readMaintenanceNumbers())[0] || "";
 }
 
 /** Public: only labels, display text and tel: links for the slots that are set. Same for every site and form. */
@@ -928,3 +953,37 @@ export async function runVisitorCleanup(at = now()) {
   return { purged, orphans, idPhotoColumn };
 }
 
+
+/* ---------- site details for the sign-in form (Visitor Log settings) ---------- */
+
+export async function siteDetailSettings(actor) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  return { status: 200, body: await adminSiteDetails({ readFirstMaintenance }) };
+}
+
+export async function saveCompanyDetails(actor, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const before = await readCompany();
+  const result = await saveCompany(body);
+  if (result.status === 200) await audit("company-details", actor.id || actor.email || "", "", "abn " + (before.abn ? "set" : "blank") + " > " + (result.body.abn ? "set" : "blank") + "; trading name " + (before.tradingName ? "set" : "blank") + " > " + (result.body.tradingName ? "set" : "blank"));
+  return result;
+}
+
+/** Dry run unless the body says dryRun:false and confirm:"APPLY". Rows with problems are never written. */
+export async function importSiteDetails(actor, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const csv = String(body?.csv || "");
+  if (!csv.trim()) return { status: 400, error: "Paste or choose a CSV first." };
+  if (csv.length > 400000) return { status: 400, error: "The CSV is too large." };
+  const apply = body?.dryRun === false;
+  if (apply && body?.confirm !== "APPLY") return { status: 400, error: "Preview first, then confirm to apply." };
+  const report = apply ? await applyDetailImport(csv) : await previewDetailImport(csv);
+  if (report.error) return { status: 400, error: report.error };
+  if (apply) await audit("site-details-import", actor.id || actor.email || "", "", "rows " + report.summary.rows + ", written " + report.written + ", errors " + report.summary.errors);
+  return { status: 200, body: { dryRun: !apply, written: report.written || 0, summary: report.summary, ignoredColumns: report.ignoredColumns, rows: report.plan.map(({ patch, ...row }) => row) } };
+}
+
+export async function siteDetailCsv(actor) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  return { status: 200, body: await detailCsv() };
+}

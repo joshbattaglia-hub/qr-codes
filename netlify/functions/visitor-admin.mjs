@@ -3,6 +3,7 @@ import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
+  , importSiteDetails, saveCompanyDetails, siteDetailCsv, siteDetailSettings,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -58,6 +59,15 @@ export default async (req) => {
     const result = await maintenanceSettings(actor);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
+  if (path === "/api/visitor-log/site-details" && req.method === "GET") {
+    const result = await siteDetailSettings(actor);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/site-details.csv" && req.method === "GET") {
+    const result = await siteDetailCsv(actor);
+    if (result.status !== 200) return json(result.status, { error: result.error }, PRIVATE);
+    return new Response(result.body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=\"site-details.csv\"", ...PRIVATE } });
+  }
   if (path === "/api/visitor-log/visits" && req.method === "GET") {
     const result = await listVisits(actor, url.searchParams);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
@@ -89,6 +99,16 @@ export default async (req) => {
   const recover = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})\/recover$/);
   if (recover) {
     const result = await recoverReceipt(actor, recover[1]);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/company" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await saveCompanyDetails(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/site-details/import" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await importSiteDetails(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/maintenance" && req.method === "POST") {
