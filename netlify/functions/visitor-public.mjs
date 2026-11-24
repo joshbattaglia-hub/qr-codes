@@ -12,7 +12,15 @@ async function bodyOf(req) {
   catch { return { error: "Request was rejected" }; }
 }
 
-export default async (req) => {
+// Deploy previews and draft deploys share the live site's data, so on anything that is not the production deploy
+// the Visitor Log is look-only: no sign-ins, sign-outs or settings changes can be saved there.
+export function previewReadOnly(req, context) {
+  const ctx = context?.deploy?.context;
+  return !!ctx && ctx !== "production" && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET");
+}
+
+export default async (req, context) => {
+  if (previewReadOnly(req, context)) return json(403, { error: "This is a preview for review. Nothing can be saved here." }, { "cache-control": "private, no-store" });
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   if (path === "/api/visit/status" && req.method === "GET") return json(200, visitorReadiness(), PRIVATE);

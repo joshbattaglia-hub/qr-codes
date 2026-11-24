@@ -201,3 +201,19 @@ test("privacy: location is only asked for on the button tap, worked out in the b
   }
   assert.ok(!/=>|\bconst\b|\blet\b|`/.test(js), "plain ES5 for older browsers");
 });
+
+test("deploy previews are look-only for the Visitor Log: POSTs are refused before anything runs; production and GETs are unaffected", async () => {
+  const pub = await import("../netlify/functions/visitor-public.mjs");
+  const adm = await import("../netlify/functions/visitor-admin.mjs");
+  const before = await storeDump();
+  const post = (path, body) => new Request("https://preview.example" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const r1 = await pub.default(post("/api/visit/sign-in", { location: "x" }), { deploy: { context: "deploy-preview" } });
+  assert.equal(r1.status, 403); assert.match((await r1.json()).error, /preview/);
+  const r2 = await adm.default(post("/api/visitor-log/company", { abn: "51824753556" }), { deploy: { context: "branch-deploy" } });
+  assert.equal(r2.status, 403);
+  const r3 = await pub.default(new Request("https://preview.example/api/visit/sites"), { deploy: { context: "deploy-preview" } });
+  assert.equal(r3.status, 200, "the site list can still be viewed on a preview");
+  assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), { deploy: { context: "production" } }), false);
+  assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), undefined), false);
+  assert.deepEqual(await storeDump(), before);
+});
