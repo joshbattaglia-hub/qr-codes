@@ -55,7 +55,7 @@
   button.near-btn { background:#fff; color:var(--blue); border:1px solid var(--blue); }
   button.near-btn:disabled { opacity:.6; }
   .small { font-size:14px; }
-  #site-near-note:empty { display:none; }
+  .near-note:empty { display:none; }
   .near-privacy { margin:6px 0 0; }
   .site-near-list { display:flex; flex-direction:column; gap:8px; }
   .site-near-list:empty { display:none; }
@@ -91,17 +91,17 @@
   </section>
   <form class="card" id="in-form" hidden data-testid="visit-form">
     <h2>Sign in</h2>
-    <div class="site-pick" data-site-pick data-testid="site-pick">
+    <div class="site-pick" data-site-pick="in" data-testid="site-pick">
       <p class="site-pick-title">Site</p>
-      <button type="button" class="near-btn" id="site-near" data-testid="site-near"><span aria-hidden="true">📍</span> Use my location</button>
+      <button type="button" class="near-btn" id="site-near" data-sp="near" data-testid="site-near"><span aria-hidden="true">📍</span> Use my location</button>
       <p class="muted small near-privacy">Your location is only used on this phone to find nearby sites. It is not sent or saved.</p>
-      <p class="muted small" id="site-near-note" role="status" data-testid="site-near-note"></p>
-      <div id="site-near-list" class="site-near-list" data-testid="site-near-list"></div>
+      <p class="muted small near-note" id="site-near-note" data-sp="near-note" role="status" data-testid="site-near-note"></p>
+      <div id="site-near-list" class="site-near-list" data-sp="near-list" data-testid="site-near-list"></div>
       <label for="site-q">Or search for your site<span class="muted">Type the site name, number or suburb. Not on the list? Type the site anyway.</span></label>
-      <div class="combo"><input id="site-q" name="location" required maxlength="120" data-testid="visit-location" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-options" autocomplete="off" placeholder="e.g. Ballarat or LOC0123">
-      <ul id="site-options" class="site-options" role="listbox" aria-label="Matching sites" hidden data-testid="site-options"></ul></div>
+      <div class="combo"><input id="site-q" name="location" required maxlength="120" data-sp="q" data-testid="visit-location" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-options" autocomplete="off" placeholder="e.g. Ballarat or LOC0123">
+      <ul id="site-options" class="site-options" data-sp="options" role="listbox" aria-label="Matching sites" hidden data-testid="site-options"></ul></div>
       <input type="hidden" name="siteId" data-testid="visit-site-id">
-      <section id="site-card" class="site-card" hidden aria-live="polite" data-testid="site-card"></section>
+      <section id="site-card" class="site-card" data-sp="card" hidden aria-live="polite" data-testid="site-card"></section>
     </div>
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name"></label>
     <label>Phone<input name="phone" required maxlength="40" inputmode="tel" autocomplete="tel" placeholder="04xx xxx xxx"></label>
@@ -143,6 +143,18 @@
     <p>Return the Shell card to the lockbox before you sign out.</p>
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <div class="site-pick" data-site-pick="out-" data-testid="out-site-pick">
+      <p class="site-pick-title">Site you are leaving</p>
+      <button type="button" class="near-btn" id="out-site-near" data-sp="near" data-testid="out-site-near"><span aria-hidden="true">📍</span> Use my location</button>
+      <p class="muted small near-privacy">Your location is only used on this phone to find nearby sites. It is not sent or saved.</p>
+      <p class="muted small near-note" id="out-site-near-note" data-sp="near-note" role="status" data-testid="out-site-near-note"></p>
+      <div id="out-site-near-list" class="site-near-list" data-sp="near-list" data-testid="out-site-near-list"></div>
+      <label for="out-site-q">Or search for your site<span class="muted">Optional. It helps us find your visit. Type the site name, number or suburb.</span></label>
+      <div class="combo"><input id="out-site-q" name="outLocation" maxlength="120" data-sp="q" data-testid="visit-out-location" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="out-site-options" autocomplete="off" placeholder="e.g. Ballarat or LOC0123">
+      <ul id="out-site-options" class="site-options" data-sp="options" role="listbox" aria-label="Matching sites" hidden data-testid="out-site-options"></ul></div>
+      <input type="hidden" name="siteId" data-testid="out-visit-site-id">
+      <section id="out-site-card" class="site-card" data-sp="card" hidden aria-live="polite" data-testid="out-site-card"></section>
+    </div>
     <label>Any issues to report<span class="muted">Optional</span><textarea name="issues" maxlength="500" data-testid="visit-out-issues"></textarea></label>
     <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
     <details class="details" data-testid="visit-details">
@@ -216,7 +228,7 @@ document.getElementById("out-form").addEventListener("submit", (event) => {
     fallback: "That sign-out could not be completed. Ask the site contact for help.",
     build: async () => {
       const data = new FormData(outForm);
-      return { name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" };
+      return { name: data.get("name"), company: data.get("company"), siteId: data.get("siteId") || "", location: data.get("outLocation") || "", issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" };
     },
     done: () => {
       outForm.hidden = true;

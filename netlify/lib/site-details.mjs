@@ -27,8 +27,8 @@ const clean = (value, max) => String(value ?? "").replace(/[\u0000-\u001f\u007f]
 export function normaliseSiteType(value) {
   const text = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (!text) return "";
-  if (["company", "liberty", "corporate", "company_run", "company_site", "co"].includes(text)) return "company";
-  if (["commission_agent", "agent", "commission", "ca", "commissionagent", "commission_agents"].includes(text)) return "commission_agent";
+  if (["company", "liberty", "corporate", "company_run", "company_site", "co", "vea", "vea_retail", "vea_retail_site"].includes(text)) return "company";
+  if (["commission_agent", "agent", "commission", "ca", "commissionagent", "commission_agents", "loc_ca", "locca", "loc_ca_site"].includes(text)) return "commission_agent";
   return null;
 }
 
@@ -252,8 +252,8 @@ export function planDetailImport(records, csvText) {
     const nextType = "siteType" in patch ? patch.siteType : current.siteType;
     const nextTn = "tradingName" in patch ? patch.tradingName : current.tradingName;
     const nextAbn = "abn" in patch ? patch.abn : current.abn;
-    if (nextType !== "commission_agent" && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push("Company sites show Liberty's ABN and trading name; this row's own ABN / trading name are saved but not shown.");
-    if (nextType === "commission_agent" && (!nextTn || !nextAbn)) warnings.push("Commission agent without " + (!nextTn && !nextAbn ? "trading name or ABN" : !nextTn ? "trading name" : "ABN") + " yet; the missing part is hidden on the form.");
+    if (nextType !== "commission_agent" && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push("VEA Retail sites show the central company ABN and trading name; this row's own ABN / trading name are saved but not shown.");
+    if (nextType === "commission_agent" && (!nextTn || !nextAbn)) warnings.push("LOC CA site without " + (!nextTn && !nextAbn ? "trading name or ABN" : !nextTn ? "trading name" : "ABN") + " yet; the missing part is hidden on the form.");
     if (site) seen.add(site.id);
     plan.push({ line, site: site ? { id: site.id, loc: site.loc || "", name: site.name } : null, changes, patch: errors.length ? {} : patch, errors, warnings });
   });
@@ -335,5 +335,5 @@ export function agentKey(snap) {
   return snap.siteId ? "site:" + snap.siteId : "";
 }
 export function agentLabel(snap) {
-  return clean(snap?.tradingName, 120) || (snap?.name ? snap.name + " (agent, trading name not set)" : "Commission agent");
+  return clean(snap?.tradingName, 120) || (snap?.name ? snap.name + " (LOC CA, trading name not set)" : "LOC CA");
 }

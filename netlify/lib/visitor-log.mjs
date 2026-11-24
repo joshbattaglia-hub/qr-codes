@@ -158,6 +158,8 @@ export function publicVisit(visit) {
     siteType: visitSiteType(visit),
     tradingName: visit.site?.tradingName || "",
     abn: visit.site?.abn || "",
+    siteFrom: visit.site?.from === "sign-out" ? "sign-out" : visit.site ? "sign-in" : "",
+    signOutSite: visit.signOutSite ? siteLabel(visit.signOutSite) : visit.signOutLocation || "",
     name: visit.name,
     phone: visit.phone,
     company: visit.company,
@@ -428,6 +430,27 @@ function readSignOutIssues(body) {
   return textField(body?.issues, 500, "Issues", false);
 }
 
+/** The site picked (or typed) on the sign-out form. Optional: sign-out never fails because of it. */
+async function readSignOutSite(body) {
+  const site = body?.siteId ? await siteSnapshot(body.siteId, { readFirstMaintenance }).catch(() => null) : null;
+  const typed = String(body?.location ?? "").replace(/\u0000/g, "").replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+  return { site, typed: site ? "" : typed };
+}
+/** Several open visits with the same name and company: the picked site narrows it down. One left = that visit. */
+function narrowBySite(hits, picked) {
+  if (hits.length <= 1 || !picked.site) return hits;
+  const same = hits.filter((row) => row.site?.siteId === picked.site.siteId);
+  return same.length === 1 ? same : hits;
+}
+/** Sign-out tags: the sign-out site is recorded; a visit with no site from sign-in takes the picked site for its type tag. */
+function withSignOutSite(next, picked) {
+  if (picked.site) {
+    next.signOutSite = picked.site;
+    if (!next.site) next.site = { ...picked.site, from: "sign-out" };
+  } else if (picked.typed) next.signOutLocation = picked.typed;
+  return next;
+}
+
 async function signOutWithName(req, body) {
   const issues = readSignOutIssues(body);
   if (issues.error) return { status: 400, error: issues.error };
@@ -441,7 +464,8 @@ async function signOutWithName(req, body) {
   if (!wantedName || !wantedCompany) return { status: 400, error: "Visitor name is required." };
   const gate = await limited(req, "match");
   if (gate) return gate;
-  const hits = await activeNameMatches(wantedName, wantedCompany);
+  const picked = await readSignOutSite(body);
+  const hits = narrowBySite(await activeNameMatches(wantedName, wantedCompany), picked);
   if (hits.length !== 1) {
     await audit(hits.length > 1 ? "sign-out-ambiguous" : "sign-out-unmatched", "public", "");
     return { status: 400, error: NEUTRAL_SIGN_OUT };
@@ -453,7 +477,7 @@ async function signOutWithName(req, body) {
     if (meta.data.signedOutAt) {
       return { status: 200, body: { ok: true, alreadySignedOut: true, signedOutAt: meta.data.signedOutAt, signedOutMelbourne: melbourne(meta.data.signedOutAt), cardReturned: meta.data.cardReturned === true } };
     }
-    const active = await activeNameMatches(wantedName, wantedCompany);
+    const active = narrowBySite(await activeNameMatches(wantedName, wantedCompany), picked);
     if (active.length !== 1 || active[0].id !== id) {
       await audit(active.length > 1 ? "sign-out-ambiguous" : "sign-out-unmatched", "public", "");
       return { status: 400, error: NEUTRAL_SIGN_OUT };
@@ -461,7 +485,7 @@ async function signOutWithName(req, body) {
     const atMs = now();
     const signedOutAt = new Date(atMs).toISOString();
     const openExpired = signInPhotoDeadline(meta.data) <= atMs;
-    const next = { ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
+    const next = withSignOutSite({ ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 }, picked);
     if (openExpired || meta.data.photoStatus === "purged") {
       next.photoStatus = "purged";
       next.photoExpiredAt = meta.data.photoExpiredAt || new Date(signInPhotoDeadline(meta.data)).toISOString();
@@ -489,6 +513,7 @@ export async function signOut(req, body) {
   if (gate) return gate;
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(receipt)) return { status: 401, error: "That receipt was not accepted." };
   if (body?.cardReturned !== true) return { status: 400, error: "Confirm that the Shell card was returned to the lockbox." };
+  const picked = await readSignOutSite(body);
   const digest = hashReceipt(receipt);
   const pointer = await visitorStore().get("receipt/" + digest, { type: "json" });
   if (!pointer?.visitId) return { status: 401, error: "That receipt was not accepted." };
@@ -504,7 +529,7 @@ export async function signOut(req, body) {
     const atMs = now();
     const signedOutAt = new Date(atMs).toISOString();
     const openExpired = signInPhotoDeadline(meta.data) <= atMs;
-    const next = { ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 };
+    const next = withSignOutSite({ ...meta.data, signedOutAt, cardReturned: true, signOutIssues: issues.text, sheetSync: "pending", generation: (meta.data.generation || 0) + 1 }, picked);
     if (openExpired || meta.data.photoStatus === "purged") {
       next.photoStatus = "purged";
       next.photoExpiredAt = meta.data.photoExpiredAt || new Date(signInPhotoDeadline(meta.data)).toISOString();

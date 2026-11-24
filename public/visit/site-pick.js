@@ -4,36 +4,49 @@
    and never sent anywhere or stored. Only the chosen site's id goes with the sign-in. */
 (function () {
   "use strict";
-  var root = document.querySelector("[data-site-pick]");
-  if (!root) return;
-  var input = root.querySelector("#site-q");
-  var list = root.querySelector("#site-options");
+  var roots = document.querySelectorAll("[data-site-pick]");
+  if (!roots.length) return;
+  // One shared copy of the site list for every picker on the page (sign-in and sign-out on /visit).
+  var shared = { sites: [], withCoords: 0, ready: false, waiting: [] };
+  function loadShared() {
+    if (!window.fetch) return;
+    fetch("/api/visit/sites", { credentials: "same-origin" }).then(function (res) { return res.json(); }).then(function (data) {
+      shared.sites = (data && data.sites) || [];
+      shared.withCoords = (data && data.withCoordinates) || 0;
+      for (var i = 0; i < shared.sites.length; i++) shared.sites[i]._hay = " " + norm([shared.sites[i].name, shared.sites[i].loc, shared.sites[i].suburb, shared.sites[i].address, shared.sites[i].tradingName].join(" "));
+      shared.ready = true;
+      for (var j = 0; j < shared.waiting.length; j++) shared.waiting[j]();
+    })["catch"](function () { for (var r = 0; r < roots.length; r++) roots[r].setAttribute("data-ready", "error"); });
+  }
+  function norm(text) { return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/^\s+|\s+$/g, ""); }
+  for (var r = 0; r < roots.length; r++) init(roots[r]);
+  loadShared();
+
+  function init(root) {
+  var pick = function (name) { return root.querySelector("[data-sp=" + name + "]"); };
+  var input = pick("q");
+  var list = pick("options");
   var hidden = root.querySelector("input[name=siteId]");
-  var card = root.querySelector("#site-card");
-  var nearBtn = root.querySelector("#site-near");
-  var nearNote = root.querySelector("#site-near-note");
-  var nearList = root.querySelector("#site-near-list");
-  var sites = [];
+  var card = pick("card");
+  var nearBtn = pick("near");
+  var nearNote = pick("near-note");
+  var nearList = pick("near-list");
+  var optPrefix = (input.id || "site-q") + "-opt-";
+  var sites = shared.sites;
   var withCoords = 0;
   var shown = [];
   var active = -1;
   var chosen = null;
 
-  function norm(text) { return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/^\s+|\s+$/g, ""); }
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
   function label(site) { return site.name + (site.loc ? " (" + site.loc + ")" : ""); }
   function sub(site) { return [site.loc, site.suburb].filter(Boolean).join(" · "); }
 
-  function load() {
-    if (!window.fetch) return;
-    fetch("/api/visit/sites", { credentials: "same-origin" }).then(function (res) { return res.json(); }).then(function (data) {
-      sites = (data && data.sites) || [];
-      withCoords = (data && data.withCoordinates) || 0;
-      for (var i = 0; i < sites.length; i++) sites[i]._hay = " " + norm([sites[i].name, sites[i].loc, sites[i].suburb, sites[i].address, sites[i].tradingName].join(" "));
-      root.setAttribute("data-ready", "1");
-      if (input.value && !chosen) search();
-    })["catch"](function () { root.setAttribute("data-ready", "error"); });
-  }
+  shared.waiting.push(function () {
+    sites = shared.sites; withCoords = shared.withCoords;
+    root.setAttribute("data-ready", "1");
+    if (input.value && !chosen) search();
+  });
 
   function search() {
     var q = norm(input.value);
@@ -69,7 +82,7 @@
     }
     for (var i = 0; i < shown.length; i++) {
       var li = el("li", "site-option" + (i === active ? " active" : ""));
-      li.id = "site-opt-" + i;
+      li.id = optPrefix + i;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", i === active ? "true" : "false");
       li.setAttribute("data-index", String(i));
@@ -80,7 +93,7 @@
     }
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
-    if (active >= 0) input.setAttribute("aria-activedescendant", "site-opt-" + active); else input.removeAttribute("aria-activedescendant");
+    if (active >= 0) input.setAttribute("aria-activedescendant", optPrefix + active); else input.removeAttribute("aria-activedescendant");
   }
 
   function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); active = -1; }
@@ -101,7 +114,7 @@
     card.innerHTML = "";
     var head = el("div", "site-card-head");
     head.appendChild(el("h3", "", site.name));
-    head.appendChild(el("span", "site-type " + (site.type === "commission_agent" ? "agent" : "company"), site.type === "commission_agent" ? "Commission agent" : "Liberty site"));
+    head.appendChild(el("span", "site-type " + (site.type === "commission_agent" ? "agent" : "company"), site.type === "commission_agent" ? "LOC CA" : "VEA Retail"));
     card.appendChild(head);
     var dl = el("dl");
     row(dl, "Trading name", site.tradingName);
@@ -180,6 +193,5 @@
     }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
   });
 
-  window.visitSiteId = function () { return hidden.value || ""; };
-  load();
+  }
 })();

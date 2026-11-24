@@ -1854,8 +1854,8 @@ function visitorTabs(active, viewOnly) {
   return '<div class="visitor-tabs" role="tablist">' + tab("logs", "Logs", "visitors") + tab("settings", "Settings", "visitors/settings") + '</div>';
 }
 function siteChip(visit) {
-  if (visit.siteType === "commission_agent") return ' <span class="site-chip agent" title="' + esc([visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ") || "Commission agent") + '">Agent' + (visit.tradingName ? " · " + esc(visit.tradingName) : "") + '</span>';
-  if (visit.siteType === "company") return ' <span class="site-chip company">Liberty</span>';
+  if (visit.siteType === "commission_agent") return ' <span class="site-chip agent" title="' + esc([visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ") || "LOC CA") + '">LOC CA' + (visit.tradingName ? " · " + esc(visit.tradingName) : "") + '</span>';
+  if (visit.siteType === "company") return ' <span class="site-chip company">VEA Retail</span>';
   return "";
 }
 async function paintVisitor() {
@@ -1911,8 +1911,8 @@ async function paintVisitor() {
     + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
     + '<label class="field"><span>Site contains</span><input id="visitor-location" value="' + esc(location) + '"></label>'
-    + '<label class="field"><span>Site type</span><select id="visitor-site-type" data-testid="visitor-site-type"><option value="all">All sites</option><option value="company">Company sites</option><option value="agents">All commission agents</option>'
-    + ((listed.agents || []).length ? '<optgroup label="Commission agents">' + listed.agents.map((a) => '<option value="agent:' + esc(a.key) + '">' + esc(a.label) + (a.abn ? " · ABN " + esc(a.abn) : "") + '</option>').join("") + '</optgroup>' : "")
+    + '<label class="field"><span>Site type</span><select id="visitor-site-type" data-testid="visitor-site-type"><option value="all">All sites</option><option value="company">VEA Retail sites</option><option value="agents">All LOC CA sites</option>'
+    + ((listed.agents || []).length ? '<optgroup label="LOC CA sites">' + listed.agents.map((a) => '<option value="agent:' + esc(a.key) + '">' + esc(a.label) + (a.abn ? " · ABN " + esc(a.abn) : "") + '</option>').join("") + '</optgroup>' : "")
     + '<option value="untagged">Older sign-ins (before site tagging)</option></select></label></div>'
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button>' + (viewOnly ? "" : '<button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button>') + '</div>'
     + '<div class="table-wrap visitor-sheet-wrap" data-testid="visitor-list"><table class="visitor-sheet"><thead><tr><th>Time in</th><th>Time out</th><th>Site</th><th>Name</th><th>Company</th><th>Status</th><th>Card returned</th><th>ID photo</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">No visits.</td></tr>') + '</tbody></table></div>'
@@ -1951,7 +1951,7 @@ async function paintVisitorSettings(box, readiness) {
   paintSiteDetails().catch((err) => { const b = document.getElementById("site-details-body"); if (b) b.textContent = err.message; });
 }
 function siteDetailsSection() {
-  return '<h2 id="site-details">Site details on the sign-in form</h2><p class="muted">When a visitor picks their site they see its trading name, ABN, address and phone. Company sites show Liberty\'s details below; commission agents show their own. Empty fields are hidden.</p>'
+  return '<h2 id="site-details">Site details on the sign-in form</h2><p class="muted">When a visitor picks their site they see its trading name, ABN, address and phone. VEA Retail sites show the company details below; LOC CA (commission agent) sites show their own. Empty fields are hidden.</p>'
     + '<div id="site-details-body" data-testid="site-details" aria-busy="true">' + skeleton(2) + '</div>';
 }
 async function paintSiteDetails() {
@@ -1960,12 +1960,12 @@ async function paintSiteDetails() {
   const data = await api("/api/visitor-log/site-details");
   const c = data.counts || {};
   box.removeAttribute("aria-busy");
-  box.innerHTML = '<h3>Liberty company details</h3><p class="muted small">Shown on every company site.</p>'
+  box.innerHTML = '<h3>Company details for VEA Retail sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail site. Leave blank until you have them: blank fields are simply not shown.</p>'
     + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
     + '<label class="field"><span>ABN</span><input id="company-abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn"></label></div>'
     + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="company-save">Save company details</button></div><p id="company-note" class="small" role="status"></p>'
-    + '<h3>Sites</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' company, ' + esc(String(c.agents || 0)) + ' commission agent, ' + esc(String(c.untyped || 0)) + ' not set (treated as company). ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
-    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> or <code>commission_agent</code>. Sites are never added or renamed here. Preview always comes first.</p>'
+    + '<h3>Sites</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
+    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail) or <code>commission_agent</code> (LOC CA). Sites are never added or renamed here. Preview always comes first.</p>'
     + '<div class="row"><button class="btn ghost" type="button" data-act="site-details-download">Download current list as CSV</button></div>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
@@ -2166,7 +2166,7 @@ async function paintVisitorRecord(id) {
   const visit = body.visit;
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="visitors">Back</button></p>'
     + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + siteChip(visit) + '</h2>'
-    + (visit.siteType === "commission_agent" || visit.siteType === "company" ? '<p class="muted small" data-testid="visitor-record-site">' + esc([visit.siteType === "commission_agent" ? "Commission agent site" : "Company site", visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ")) + ' (as shown when they signed in)</p>' : '<p class="muted small" data-testid="visitor-record-site">Typed site (not picked from the list).</p>')
+    + (visit.siteType === "commission_agent" || visit.siteType === "company" ? '<p class="muted small" data-testid="visitor-record-site">' + esc([visit.siteType === "commission_agent" ? "LOC CA site" : "VEA Retail site", visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ")) + ' (as shown when they signed in)</p>' : '<p class="muted small" data-testid="visitor-record-site">Typed site (not picked from the list).</p>')
     + '<p>' + esc(visit.name) + ' · ' + esc(visit.phone) + ' · ' + esc(visit.company) + '</p>'
     + '<p>Signed in ' + esc(visit.signedInMelbourne) + '</p>'
     + '<p>Signed out ' + esc(visit.signedOutMelbourne || "Still on site") + '</p>'
@@ -2350,7 +2350,7 @@ async function visitorAction(button) {
     const body = await api("/api/visitor-log/company", { method: "POST", body: JSON.stringify({ tradingName: document.getElementById("company-trading-name")?.value || "", abn: document.getElementById("company-abn")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
     if (!body) return;
     document.getElementById("company-abn").value = body.abn || "";
-    showNote(note, "Saved. Company sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
+    showNote(note, "Saved. VEA Retail sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
     toast("Company details saved");
     return;
   }
