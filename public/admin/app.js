@@ -1846,12 +1846,17 @@ function visitorDenied() {
   return '<h2>Visitor records are restricted</h2><p data-testid="visitor-denied">Visitor records are restricted. Sign in with your authorised email account to view them.</p><p>' + EMAIL_SIGNIN_BUTTON + '</p>';
 }
 function visitorPage() {
-  return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor types the site. It is not a site from the directory, and it is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
+  return '<div id="visitor-page" data-testid="visitor-page"><div class="page-head"><div><h1>Visitor log</h1><p class="muted">One general form. The visitor picks their site from the list (search or Use my location), or types it if it is not listed. It is not tied to a site QR.</p></div></div><div id="visitor-body" class="card">Loading…</div></div>';
 }
 function visitorTabs(active, viewOnly) {
   if (viewOnly) return "";
   const tab = (name, label, go) => '<button type="button" role="tab" class="visitor-tab' + (active === name ? " on" : "") + '" aria-selected="' + (active === name) + '" data-go="' + go + '" data-testid="visitor-tab-' + name + '">' + label + '</button>';
   return '<div class="visitor-tabs" role="tablist">' + tab("logs", "Logs", "visitors") + tab("settings", "Settings", "visitors/settings") + '</div>';
+}
+function siteChip(visit) {
+  if (visit.siteType === "commission_agent") return ' <span class="site-chip agent" title="' + esc([visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ") || "LOC CA") + '">LOC CA' + (visit.tradingName ? " · " + esc(visit.tradingName) : "") + '</span>';
+  if (visit.siteType === "company") return ' <span class="site-chip company">VEA Retail</span>';
+  return "";
 }
 async function paintVisitor() {
   const box = document.getElementById("visitor-body");
@@ -1874,6 +1879,10 @@ async function paintVisitor() {
   const from = document.getElementById("visitor-from")?.value || "";
   const to = document.getElementById("visitor-to")?.value || "";
   const location = document.getElementById("visitor-location")?.value || "";
+  const siteFilter = document.getElementById("visitor-site-type")?.value || state.visitorSiteFilter || "all";
+  state.visitorSiteFilter = siteFilter;
+  if (siteFilter.startsWith("agent:")) { params.set("siteType", "agent"); params.set("agent", siteFilter.slice(6)); }
+  else if (siteFilter !== "all") params.set("siteType", siteFilter);
   if (status && status !== "all") params.set("status", status);
   if (from) params.set("from", from);
   if (to) params.set("to", to);
@@ -1888,7 +1897,7 @@ async function paintVisitor() {
     return '<tr data-testid="visitor-row"' + (notes ? ' title="' + esc(notes) + '"' : "") + '>'
       + '<td>' + esc(visit.signedInMelbourne) + '</td>'
       + '<td>' + esc(visit.signedOutMelbourne || "") + '</td>'
-      + '<td>' + esc(visit.location) + '</td>'
+      + '<td>' + esc(visit.location) + siteChip(visit) + '</td>'
       + '<td><button class="text-btn" type="button" data-go="visitors/' + esc(visit.id) + '">' + esc(visit.name) + '</button></td>'
       + '<td>' + esc(visit.company || "") + '</td>'
       + '<td><span class="visitor-state ' + (visit.signedOutAt ? "out" : "in") + '">' + state + '</span>' + (notes ? ' <span class="muted" aria-label="Has notes">✎</span>' : "") + '</td>'
@@ -1901,12 +1910,17 @@ async function paintVisitor() {
     + '<div class="asset-dims visitor-filters"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
     + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
-    + '<label class="field"><span>Site contains</span><input id="visitor-location" value="' + esc(location) + '"></label></div>'
+    + '<label class="field"><span>Site contains</span><input id="visitor-location" value="' + esc(location) + '"></label>'
+    + '<label class="field"><span>Site type</span><select id="visitor-site-type" data-testid="visitor-site-type"><option value="all">All sites</option><option value="company">VEA Retail sites</option><option value="agents">All LOC CA sites</option>'
+    + ((listed.agents || []).length ? '<optgroup label="LOC CA sites">' + listed.agents.map((a) => '<option value="agent:' + esc(a.key) + '">' + esc(a.label) + (a.abn ? " · ABN " + esc(a.abn) : "") + '</option>').join("") + '</optgroup>' : "")
+    + '<option value="untagged">Older sign-ins (before site tagging)</option></select></label></div>'
     + '<div class="asset-actions"><button class="btn ghost" type="button" data-act="visitor-filter">Apply filters</button>' + (viewOnly ? "" : '<button class="btn ghost" type="button" data-act="visitor-export">Export CSV</button>') + '</div>'
     + '<div class="table-wrap visitor-sheet-wrap" data-testid="visitor-list"><table class="visitor-sheet"><thead><tr><th>Time in</th><th>Time out</th><th>Site</th><th>Name</th><th>Company</th><th>Status</th><th>Card returned</th><th>ID photo</th></tr></thead><tbody>' + (rows || '<tr><td colspan="8">No visits.</td></tr>') + '</tbody></table></div>'
     + '<p class="muted small">Tap a name to open the full record. Rows with ✎ have notes (hover to read).</p>';
   const statusSelect = document.getElementById("visitor-status");
   if (statusSelect) statusSelect.value = status || "all";
+  const siteSelect = document.getElementById("visitor-site-type");
+  if (siteSelect) siteSelect.value = [...siteSelect.options].some((o) => o.value === siteFilter) ? siteFilter : "all";
 }
 async function paintVisitorSettings(box, readiness) {
   const settings = await fetch("/api/visitor-log/settings", { credentials: "same-origin" }).then((res) => res.json());
@@ -1926,6 +1940,7 @@ async function paintVisitorSettings(box, readiness) {
     + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
     + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
+    + siteDetailsSection()
     + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
     + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
     + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>'
@@ -1933,6 +1948,47 @@ async function paintVisitorSettings(box, readiness) {
     + '<button class="btn ghost" type="button" data-act="visitor-photo-backfill">Fill ID photo column</button><p id="visitor-photo-backfill-note" class="small" data-testid="visitor-photo-backfill-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
+  paintSiteDetails().catch((err) => { const b = document.getElementById("site-details-body"); if (b) b.textContent = err.message; });
+}
+function siteDetailsSection() {
+  return '<h2 id="site-details">Site details on the sign-in form</h2><p class="muted">When a visitor picks their site they see its trading name, ABN, address and phone. VEA Retail sites show the company details below; LOC CA (commission agent) sites show their own. Empty fields are hidden.</p>'
+    + '<div id="site-details-body" data-testid="site-details" aria-busy="true">' + skeleton(2) + '</div>';
+}
+async function paintSiteDetails() {
+  const box = document.getElementById("site-details-body");
+  if (!box) return;
+  const data = await api("/api/visitor-log/site-details");
+  const c = data.counts || {};
+  box.removeAttribute("aria-busy");
+  box.innerHTML = '<h3>Company details for VEA Retail sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail site. Leave blank until you have them: blank fields are simply not shown.</p>'
+    + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
+    + '<label class="field"><span>ABN</span><input id="company-abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn"></label></div>'
+    + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="company-save">Save company details</button></div><p id="company-note" class="small" role="status"></p>'
+    + '<h3>Sites</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
+    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail) or <code>commission_agent</code> (LOC CA). Sites are never added or renamed here. Preview always comes first.</p>'
+    + '<div class="row"><button class="btn ghost" type="button" data-act="site-details-download">Download current list as CSV</button></div>'
+    + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
+    + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
+    + '<div class="row"><button class="btn" type="button" data-act="site-details-preview">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
+    + '<div id="site-details-preview" data-testid="site-details-preview"></div>';
+  const file = document.getElementById("site-details-file");
+  file?.addEventListener("change", async () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    if (f.size > 400000) { toast.error("That CSV is too large."); return; }
+    document.getElementById("site-details-csv").value = await f.text();
+    document.getElementById("site-details-apply").disabled = true;
+  });
+  document.getElementById("site-details-csv")?.addEventListener("input", () => { document.getElementById("site-details-apply").disabled = true; });
+}
+function siteDetailPreview(body) {
+  const s = body.summary || {};
+  const fmt = (v) => v === "" || v == null ? "(blank)" : String(v);
+  const rows = (body.rows || []).map((r) => '<tr class="' + (r.errors.length ? "bad" : Object.keys(r.changes).length ? "chg" : "same") + '"><td>' + esc(String(r.line)) + '</td><td>' + (r.site ? esc(r.site.name) + (r.site.loc ? ' <span class="muted">' + esc(r.site.loc) + '</span>' : "") : '<span class="muted">No match</span>') + '</td><td>'
+    + (Object.entries(r.changes).map(([k, [a, b]]) => '<div><strong>' + esc(k) + '</strong>: ' + esc(fmt(a)) + ' → ' + esc(fmt(b)) + '</div>').join("") || '<span class="muted">No change</span>') + '</td><td>'
+    + r.errors.map((e) => '<div class="err-text">' + esc(e) + '</div>').join("") + r.warnings.map((w) => '<div class="muted small">' + esc(w) + '</div>').join("") + '</td></tr>').join("");
+  return '<p data-testid="site-details-summary"><strong>' + (body.dryRun ? "Preview only, nothing saved." : "Saved " + esc(String(body.written)) + " site" + (body.written === 1 ? "" : "s") + ".") + '</strong> ' + esc(String(s.rows || 0)) + ' rows · ' + esc(String(s.changed || 0)) + ' to change · ' + esc(String(s.unchanged || 0)) + ' unchanged · ' + esc(String(s.errors || 0)) + ' with problems (skipped).' + ((body.ignoredColumns || []).length ? ' Ignored columns: ' + esc(body.ignoredColumns.join(", ")) + '.' : "") + '</p>'
+    + '<div class="table-wrap"><table class="visitor-sheet site-preview"><thead><tr><th>Row</th><th>Site</th><th>Changes</th><th>Notes</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">No rows.</td></tr>') + '</tbody></table></div>';
 }
 function usersPage() {
   return '<div id="users-page" data-testid="users-page"><div class="page-head"><div><h1>Users</h1><p class="muted">Email-code sign-ins and what each person can use. Only you (the owner) can see this page. Every change is logged. The head-office password is separate and unchanged.</p></div></div><div id="users-body" class="card">Loading…</div></div>';
@@ -2109,7 +2165,9 @@ async function paintVisitorRecord(id) {
   }
   const visit = body.visit;
   box.innerHTML = '<p><button class="btn ghost" type="button" data-go="visitors">Back</button></p>'
-    + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + '</h2>'
+    + '<div data-testid="visitor-record"><h2>' + esc(visit.location) + siteChip(visit) + '</h2>'
+    + (visit.siteType === "commission_agent" || visit.siteType === "company" ? '<p class="muted small" data-testid="visitor-record-site">' + esc([visit.siteType === "commission_agent" ? "LOC CA site" : "VEA Retail site", visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ")) + (visit.siteFrom === "sign-out" ? " (picked at sign-out)" : " (as shown when they signed in)") + '</p>' : '<p class="muted small" data-testid="visitor-record-site">Typed site (not picked from the list).</p>')
+    + (visit.signOutSite && visit.signOutSite !== visit.location ? '<p class="muted small" data-testid="visitor-record-out-site">Site given at sign-out: ' + esc(visit.signOutSite) + '</p>' : "")
     + '<p>' + esc(visit.name) + ' · ' + esc(visit.phone) + ' · ' + esc(visit.company) + '</p>'
     + '<p>Signed in ' + esc(visit.signedInMelbourne) + '</p>'
     + '<p>Signed out ' + esc(visit.signedOutMelbourne || "Still on site") + '</p>'
@@ -2286,6 +2344,39 @@ async function visitorAction(button) {
     const body = await response.json().catch(() => ({}));
     const note = document.getElementById("visitor-photo-backfill-note");
     if (note) note.textContent = response.ok ? (body.status === "ok" ? "Done. " + body.written + " row" + (body.written === 1 ? "" : "s") + " written; column P read back correctly." : "Finished with status " + body.status + ".") : (body.error || "The fill did not run");
+    return;
+  }
+  if (act === "company-save") {
+    const note = document.getElementById("company-note");
+    const body = await api("/api/visitor-log/company", { method: "POST", body: JSON.stringify({ tradingName: document.getElementById("company-trading-name")?.value || "", abn: document.getElementById("company-abn")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
+    if (!body) return;
+    document.getElementById("company-abn").value = body.abn || "";
+    showNote(note, "Saved. VEA Retail sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
+    toast("Company details saved");
+    return;
+  }
+  if (act === "site-details-download") {
+    const response = await fetch("/api/visitor-log/site-details.csv", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("The site list was not available");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url; link.download = "site-details.csv";
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return;
+  }
+  if (act === "site-details-preview" || act === "site-details-apply") {
+    const csv = document.getElementById("site-details-csv")?.value || "";
+    const out = document.getElementById("site-details-preview");
+    const applyBtn = document.getElementById("site-details-apply");
+    const apply = act === "site-details-apply";
+    if (apply && !confirm("Save the previewed changes to the site list? Rows with problems are skipped.")) return;
+    try {
+      const body = await api("/api/visitor-log/site-details/import", { method: "POST", body: JSON.stringify(apply ? { csv, dryRun: false, confirm: "APPLY" } : { csv, dryRun: true }) });
+      out.innerHTML = siteDetailPreview(body);
+      applyBtn.disabled = apply || !(body.summary?.changed > 0);
+      if (apply) { toast("Site details saved"); paintSiteDetails().then(() => { const o = document.getElementById("site-details-preview"); if (o) o.innerHTML = siteDetailPreview(body); }).catch(() => {}); }
+    } catch (err) { out.innerHTML = '<p class="err-text" role="alert">' + esc(err.message) + '</p>'; applyBtn.disabled = true; }
     return;
   }
   if (act === "visitor-maintenance-save") {

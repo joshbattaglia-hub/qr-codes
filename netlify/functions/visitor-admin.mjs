@@ -3,11 +3,20 @@ import { forbidden, originBlocked } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
+  importSiteDetails, saveCompanyDetails, siteDetailCsv, siteDetailSettings,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
 
-export default async (req) => {
+// Deploy previews and draft deploys share the live site's data, so on anything that is not the production deploy
+// the Visitor Log is look-only: no sign-ins, sign-outs or settings changes can be saved there.
+export function previewReadOnly(req, context) {
+  const ctx = context?.deploy?.context;
+  return !!ctx && ctx !== "production" && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET");
+}
+
+export default async (req, context) => {
+  if (previewReadOnly(req, context)) return json(403, { error: "This is a preview for review. Nothing can be saved here." }, { "cache-control": "private, no-store" });
   if (originBlocked(req)) return forbidden();
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -58,6 +67,15 @@ export default async (req) => {
     const result = await maintenanceSettings(actor);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
+  if (path === "/api/visitor-log/site-details" && req.method === "GET") {
+    const result = await siteDetailSettings(actor);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/site-details.csv" && req.method === "GET") {
+    const result = await siteDetailCsv(actor);
+    if (result.status !== 200) return json(result.status, { error: result.error }, PRIVATE);
+    return new Response(result.body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=\"site-details.csv\"", ...PRIVATE } });
+  }
   if (path === "/api/visitor-log/visits" && req.method === "GET") {
     const result = await listVisits(actor, url.searchParams);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
@@ -89,6 +107,16 @@ export default async (req) => {
   const recover = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})\/recover$/);
   if (recover) {
     const result = await recoverReceipt(actor, recover[1]);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/company" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await saveCompanyDetails(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/site-details/import" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await importSiteDetails(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/maintenance" && req.method === "POST") {

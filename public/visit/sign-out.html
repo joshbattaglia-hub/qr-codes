@@ -36,6 +36,34 @@
   .err { color:#d92d20; min-height:1.2em; }
   .ok { color:#067647; }
   .muted { color:var(--muted); font-weight:400; }
+  .site-pick { margin:12px 0; }
+  .site-pick-title { font-weight:700; margin:0 0 8px; }
+  .site-pick label { margin:12px 0 6px; }
+  button.near-btn { background:#fff; color:var(--blue); border:1px solid var(--blue); }
+  button.near-btn:disabled { opacity:.6; }
+  .small { font-size:14px; }
+  .near-note:empty { display:none; }
+  .near-privacy { margin:6px 0 0; }
+  .site-near-list { display:flex; flex-direction:column; gap:8px; }
+  .site-near-list:empty { display:none; }
+  button.site-near-item { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .combo { position:relative; }
+  .site-options { list-style:none; margin:4px 0 0; padding:4px; border:1px solid #d0d5dd; border-radius:8px; background:#fff; max-height:320px; overflow:auto; box-shadow:0 8px 24px rgba(16,24,40,.12); }
+  .site-option { display:flex; flex-direction:column; gap:2px; min-height:44px; padding:8px 10px; border-radius:6px; cursor:pointer; }
+  .site-option.active, .site-option:hover { background:#e7ecfb; }
+  .site-option span, .site-near-item span { font-size:14px; font-weight:400; }
+  .site-none { padding:10px; color:var(--muted); }
+  .site-card { margin-top:10px; border:1px solid var(--line); border-left:4px solid var(--blue); border-radius:10px; padding:12px; background:#f8faff; }
+  .site-pick[data-chosen="commission_agent"] .site-card { border-left-color:#b54708; background:#fffaf2; }
+  .site-card-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 10px; }
+  .site-card h3 { font-size:17px; margin:0; }
+  .site-type { font-size:13px; font-weight:700; padding:2px 10px; border-radius:999px; background:#e7ecfb; color:#1f3a9e; }
+  .site-type.agent { background:#fdead7; color:#93370d; }
+  .site-card dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; margin:10px 0 0; }
+  .site-card dt { color:var(--muted); font-weight:600; }
+  .site-card dd { margin:0; overflow-wrap:anywhere; }
+  .site-card dd a { display:inline-block; min-height:24px; font-weight:700; }
+  .site-card p { margin:8px 0 0; }
 </style>
 </head>
 <body>
@@ -48,6 +76,18 @@
     <p>Return the Shell card to the lockbox before you sign out.</p>
     <label>Visitor name<input name="name" required maxlength="80" autocomplete="name" data-testid="visit-out-name"></label>
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
+    <div class="site-pick" data-site-pick="out-" data-testid="out-site-pick">
+      <p class="site-pick-title">Site you are leaving</p>
+      <button type="button" class="near-btn" id="out-site-near" data-sp="near" data-testid="out-site-near"><span aria-hidden="true">📍</span> Use my location</button>
+      <p class="muted small near-privacy">Your location is only used on this phone to find nearby sites. It is not sent or saved.</p>
+      <p class="muted small near-note" id="out-site-near-note" data-sp="near-note" role="status" data-testid="out-site-near-note"></p>
+      <div id="out-site-near-list" class="site-near-list" data-sp="near-list" data-testid="out-site-near-list"></div>
+      <label for="out-site-q">Or search for your site<span class="muted">Optional. It helps us find your visit. Type the site name, number or suburb.</span></label>
+      <div class="combo"><input id="out-site-q" name="outLocation" maxlength="120" data-sp="q" data-testid="visit-out-location" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="out-site-options" autocomplete="off" placeholder="e.g. Ballarat or LOC0123">
+      <ul id="out-site-options" class="site-options" data-sp="options" role="listbox" aria-label="Matching sites" hidden data-testid="out-site-options"></ul></div>
+      <input type="hidden" name="siteId" data-testid="out-visit-site-id">
+      <section id="out-site-card" class="site-card" data-sp="card" hidden aria-live="polite" data-testid="out-site-card"></section>
+    </div>
     <label>Any issues to report<span class="muted">Optional</span><textarea name="issues" maxlength="500" data-testid="visit-out-issues"></textarea></label>
     <label class="choice"><input type="radio" name="cardReturned" value="yes" required data-testid="visit-card"> I Returned the Shell Card</label>
     <details class="details" data-testid="visit-details">
@@ -69,6 +109,7 @@
   </section>
 </main>
 <script src="/visit/submit.js"></script>
+<script src="/visit/site-pick.js" defer></script>
 <script>
 const intro = document.getElementById("intro");
 fetch("/api/visit/status", { credentials: "same-origin" }).then((res) => res.json()).then((status) => {
@@ -84,7 +125,7 @@ document.getElementById("out-form").addEventListener("submit", (event) => {
     fallback: "That sign-out could not be completed. Ask the site contact for help.",
     build: async () => {
       const data = new FormData(outForm);
-      return { name: data.get("name"), company: data.get("company"), issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" };
+      return { name: data.get("name"), company: data.get("company"), siteId: data.get("siteId") || "", location: data.get("outLocation") || "", issues: data.get("issues"), cardReturned: data.get("cardReturned") === "yes" };
     },
     done: () => {
       outForm.hidden = true;

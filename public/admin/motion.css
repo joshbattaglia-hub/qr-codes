@@ -200,11 +200,23 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 
 /* ---- PR B follow-ups from the screenshots ---- */
 /* Users table: the Edit / More cell stays in view at the right edge instead of hiding off-screen in a wide table (Fitts: the action is always reachable). */
-.visitor-sheet td.row-actions,.visitor-sheet thead th:last-child{position:sticky;right:0;background:var(--card);box-shadow:-8px 0 8px -8px rgba(16,24,40,.25)}
-.visitor-sheet thead th:last-child{background:var(--th-bg);z-index:var(--z-base)}
+.visitor-sheet td.row-actions,[data-testid="users-table"] thead th:last-child{position:sticky;right:0;background:var(--card);box-shadow:-8px 0 8px -8px rgba(16,24,40,.25)}
+[data-testid="users-table"] thead th:last-child{background:var(--th-bg);z-index:var(--z-base)}
 .visitor-sheet tbody tr:nth-child(even) td.row-actions{background:var(--row-alt)}
 /* Ticket page "Move to column": label, select and button line up and use the room. */
 .detail-group .ticket-move{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:0}
 .detail-group .ticket-move .field{flex:1 1 220px;margin:0}
 .detail-group .ticket-move select{width:100%;height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 8px}
 .detail-group .ticket-move .btn{height:var(--hit-min);min-height:var(--hit-min);font-size:14px;padding:0 18px}
+
+/* ---- Visitor Log: site type chips and the site-details import preview ---- */
+.site-chip{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:middle;white-space:nowrap}
+.site-chip.company{background:#e7ecfb;color:#1f3a9e}
+.site-chip.agent{background:#fdead7;color:#93370d}
+html[data-theme="dark"] .site-chip.company{background:#1e2a4d;color:#c7d4ff}
+html[data-theme="dark"] .site-chip.agent{background:#4a2a12;color:#ffd7b0}
+.site-preview td{white-space:normal;vertical-align:top}
+.site-preview tr.bad td{background:rgba(217,45,32,.08)}
+.site-preview tr.chg td:first-child{box-shadow:inset 3px 0 0 #12b76a}
+.err-text{color:#d92d20;font-weight:600}
+html[data-theme="dark"] .err-text{color:#ff8a80}
