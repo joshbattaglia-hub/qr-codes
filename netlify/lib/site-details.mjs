@@ -1,11 +1,13 @@
 /**
- * Site details shown on the public visitor sign-in form: site type (Liberty company site or commission agent),
+ * Site details shown on the public visitor sign-in form: site type (VEA Retail, LOC CA or Unattended),
  * trading name, ABN, physical address, phone and map point.
  *
  * - One master site list (the existing `sites` store). The detail fields live on each site record.
- * - Company sites show Liberty's ABN and trading name from one central setting; agent sites show their own.
+ * - VEA Retail sites show Liberty's ABN and trading name from one central setting.
+ * - LOC CA and Unattended sites show their own per-site ABN and trading name.
  * - Empty fields are simply left out, so nothing half-filled is shown.
  * - Visitor coordinates never reach this module: "Use my location" is worked out in the visitor's browser.
+ * - Hide and remove are soft: the record stays, past sign-in snapshots are never rewritten.
  */
 import crypto from "node:crypto";
 import { settingsStore, sitesStore } from "./lib.mjs";
@@ -17,16 +19,26 @@ export const SITE_TYPES = ["company", "commission_agent", "unattended"];
 export const PICKER_SITE_TYPES = ["unattended"];
 export const PICKER_SITE_TYPE = "unattended";
 export const SITE_TYPE_LABEL = { company: "VEA Retail", commission_agent: "LOC CA", unattended: "Unattended" };
-/** Company and Unattended sites show the central trading name and ABN; LOC CA sites show their own. */
-export const usesCompanyDetails = (type) => type !== "commission_agent";
+/** Only VEA Retail (and untyped sites, which count as VEA Retail) use the central trading name and ABN. LOC CA and Unattended use their own. */
+export const usesCompanyDetails = (type) => type !== "commission_agent" && type !== "unattended";
 export const DEFAULT_SITE_PHONE = "03 9113 7191";
 export const COMPANY_KEY = "company-details";
+export const PICKER_TYPES_KEY = "visitor-picker-types";
+export const DEFAULT_PICKER_TYPES = ["unattended"];
 export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "address", "lat", "lng"];
 const SITE_ID = /^s[a-f0-9]{8}$/;
 const CACHE_MS = 60 * 1000;
+const GEOCODE_UA = "ExpressHelp-site-manager/1.0 (https://expresshelp.site; admin address geocode only; no visitor data)";
 let cache = null;
 let clock = () => Date.now();
-export function setSiteDetailHooks({ now = null } = {}) { clock = typeof now === "function" ? now : () => Date.now(); cache = null; }
+let geocodeFetch = (...args) => fetch(...args);
+let lastGeocodeAt = 0;
+export function setSiteDetailHooks({ now = null, geocode = null } = {}) {
+  clock = typeof now === "function" ? now : () => Date.now();
+  if (geocode) geocodeFetch = geocode;
+  lastGeocodeAt = 0;
+  cache = null;
+}
 export function clearSiteDirectoryCache() { cache = null; }
 
 const clean = (value, max) => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -41,10 +53,14 @@ export function normaliseSiteType(value) {
   return null;
 }
 
-/** ABN: 11 digits that pass the ATO checksum. Returns "12 345 678 901", "" for blank, or null when invalid. */
+/** Temporary placeholder Joshua asked to use for the shared VIVA Unattended ABN until the real number is known. Not a valid ABN. */
+export const PLACEHOLDER_ABN = "1111";
+
+/** ABN: 11 digits that pass the ATO checksum, or the temporary placeholder 1111. Returns "12 345 678 901", "1111", "" for blank, or null when invalid. */
 export function normaliseAbn(value) {
   const digits = String(value ?? "").replace(/[\s.\-]/g, "");
   if (!digits) return "";
+  if (digits === PLACEHOLDER_ABN) return PLACEHOLDER_ABN;
   if (!/^\d{11}$/.test(digits)) return null;
   const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
   const sum = digits.split("").reduce((total, d, i) => total + (Number(d) - (i === 0 ? 1 : 0)) * weights[i], 0);
@@ -104,8 +120,9 @@ export function siteDetailFields(site) {
 }
 
 /**
- * What a visitor sees for one site. A site with no type yet counts as a Liberty company site.
- * Company sites always use the central Liberty ABN / trading name (never a per-site one).
+ * What a visitor sees for one site. A site with no type yet counts as a VEA Retail site.
+ * VEA Retail sites always use the central Liberty ABN / trading name (never a per-site one).
+ * LOC CA and Unattended sites use the ABN and trading name stored on the site.
  */
 export function displaySite(site, company, defaultPhone = DEFAULT_SITE_PHONE) {
   const f = siteDetailFields(site);
@@ -136,22 +153,55 @@ function directoryBody(sites, extra = {}) {
   return { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length, ...extra };
 }
 
+/** Hidden or removed sites, and source-held sites, stay out of the visitor picker. Past sign-ins keep their snapshot. */
+export function siteVisibility(site) {
+  if (site?.hold) return "held";
+  if (site?.visitorArchived) return "removed";
+  if (site?.visitorHidden) return "hidden";
+  return "visible";
+}
+export function isOfferedToVisitors(site) {
+  return !!(site && site.name && !site.hold && !site.visitorHidden && !site.visitorArchived);
+}
+
+/** Which types appear in the visitor picker. Missing setting: Unattended only. An explicit empty list means none (typed entry only). */
+export function normalisePickerTypes(value, { allowEmpty = false } = {}) {
+  const raw = Array.isArray(value) ? value : Array.isArray(value?.types) ? value.types : value == null || value === "" ? null : String(value).split(",");
+  if (raw == null) return allowEmpty ? [] : [...DEFAULT_PICKER_TYPES];
+  const types = [...new Set(raw.map((item) => normaliseSiteType(item)).filter((t) => SITE_TYPES.includes(t)))];
+  if (!types.length) return allowEmpty ? [] : [...DEFAULT_PICKER_TYPES];
+  return types;
+}
+export async function readPickerTypes() {
+  const raw = await settingsStore().get(PICKER_TYPES_KEY, { type: "json" }).catch(() => null);
+  if (raw == null) return [...DEFAULT_PICKER_TYPES];
+  return normalisePickerTypes(raw, { allowEmpty: true });
+}
+export async function savePickerTypes(body) {
+  const types = normalisePickerTypes(body?.types ?? body, { allowEmpty: true });
+  const next = { types, updatedAt: new Date(clock()).toISOString() };
+  await settingsStore().setJSON(PICKER_TYPES_KEY, next);
+  cache = null;
+  return { status: 200, body: { types } };
+}
+
 /** Public directory: active sites only, display fields only. Cached for a minute.
- *  Pass picker:true for the visitor sign-in/sign-out list (Unattended only by default).
+ *  Pass picker:true for the visitor sign-in/sign-out list (types from the admin setting; Unattended only by default).
  *  Admin callers omit picker so the master list, including retail sites, is unchanged.
  *  Pass includeProposed:true on deploy previews to overlay the proposed Unattended list (never written). */
 export async function publicSiteDirectory({ readFirstMaintenance, picker = false, includeProposed = false } = {}) {
   if (!(cache && clock() - cache.at < CACHE_MS)) {
-    const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
-    const sites = records.filter((r) => !r.hold).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
-    cache = { at: clock(), body: directoryBody(sites), company, defaultPhone };
+    const [records, company, defaultPhone, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readPickerTypes()]);
+    const sites = records.filter((r) => !r.hold && !r.visitorArchived).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
+    const offeredIds = new Set(records.filter(isOfferedToVisitors).map((r) => r.id));
+    cache = { at: clock(), body: directoryBody(sites), offeredIds, company, defaultPhone, pickerTypes };
   }
   let body = cache.body;
   if (picker) {
-    const types = PICKER_SITE_TYPES;
-    const sites = body.sites.filter((s) => types.includes(s.type));
+    const types = cache.pickerTypes;
+    const sites = body.sites.filter((s) => types.includes(s.type) && cache.offeredIds.has(s.id));
     body = directoryBody(sites, { picker: types.join(",") });
-    if (includeProposed) body = mergeProposedUnattended(body, cache.body.sites, cache.company, cache.defaultPhone);
+    if (includeProposed && types.includes("unattended")) body = mergeProposedUnattended(body, cache.body.sites, cache.company, cache.defaultPhone);
   }
   return body;
 }
@@ -185,7 +235,7 @@ export async function siteSnapshot(siteId, { readFirstMaintenance } = {}) {
   const id = String(siteId || "").trim();
   if (!SITE_ID.test(id)) return null;
   const record = await sitesStore().get(id, { type: "json" }).catch(() => null);
-  if (!record || !record.name || record.hold) return null;
+  if (!record || !isOfferedToVisitors(record)) return null;
   const view = displaySite(record, await readCompany(), await defaultSitePhone(readFirstMaintenance));
   return { siteId: view.id, loc: view.loc, name: view.name, siteType: view.type, tradingName: view.tradingName, abn: view.abn };
 }
@@ -308,8 +358,8 @@ export function planDetailImport(records, csvText) {
     const nextType = "siteType" in patch ? patch.siteType : current.siteType;
     const nextTn = "tradingName" in patch ? patch.tradingName : current.tradingName;
     const nextAbn = "abn" in patch ? patch.abn : current.abn;
-    if (usesCompanyDetails(nextType || "company") && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push((nextType === "unattended" ? "Unattended" : "VEA Retail") + " sites show the central company ABN and trading name; this row's own ABN / trading name are saved but not shown.");
-    if (nextType === "commission_agent" && (!nextTn || !nextAbn)) warnings.push("LOC CA site without " + (!nextTn && !nextAbn ? "trading name or ABN" : !nextTn ? "trading name" : "ABN") + " yet; the missing part is hidden on the form.");
+    if ((nextType || "company") === "company" && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push("VEA Retail sites show the central company ABN and trading name; this row's own ABN / trading name are saved but not shown.");
+    if ((nextType === "commission_agent" || nextType === "unattended") && (!nextTn || !nextAbn)) warnings.push((nextType === "unattended" ? "Unattended" : "LOC CA") + " site without " + (!nextTn && !nextAbn ? "trading name or ABN" : !nextTn ? "trading name" : "ABN") + " yet; the missing part is hidden on the form.");
     if (action === "add" && !nextType) warnings.push("This new site has no site_type; it will be shown as VEA Retail and will not appear in the visitor picker.");
     if (site) seen.add(site.id);
     else if (action === "add") {
@@ -408,7 +458,7 @@ function csvCell(value) {
 }
 /** Current site list as the import CSV, so it can be filled in and brought back. */
 export async function detailCsv() {
-  const records = (await allSiteRecords()).filter((r) => !r.hold).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const records = (await allSiteRecords()).filter((r) => !r.hold && !r.visitorArchived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const lines = [CSV_COLUMNS.join(",")];
   for (const r of records) {
     const f = siteDetailFields(r);
@@ -417,12 +467,218 @@ export async function detailCsv() {
   return lines.join("\n") + "\n";
 }
 
-/** Admin view: every active site with its stored fields and what the form shows. */
+function adminSiteView(r, pickerTypes) {
+  const f = siteDetailFields(r);
+  const visibility = siteVisibility(r);
+  const type = f.siteType || "company";
+  return {
+    ...f,
+    id: r.id,
+    loc: r.loc || "",
+    name: r.name,
+    hidden: !!r.visitorHidden,
+    archived: !!r.visitorArchived,
+    hold: !!r.hold,
+    visibility,
+    inPicker: isOfferedToVisitors(r) && pickerTypes.includes(type),
+  };
+}
+
+/** Admin view: every site (including hidden and removed) with stored fields, visibility and picker setting. */
 export async function adminSiteDetails({ readFirstMaintenance } = {}) {
-  const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
-  const sites = records.filter((r) => !r.hold).sort((a, b) => String(a.name).localeCompare(String(b.name))).map((r) => ({ ...siteDetailFields(r), id: r.id, loc: r.loc || "", name: r.name }));
-  const counts = { total: sites.length, company: sites.filter((s) => s.siteType === "company").length, agents: sites.filter((s) => s.siteType === "commission_agent").length, unattended: sites.filter((s) => s.siteType === "unattended").length, untyped: sites.filter((s) => !s.siteType).length, withCoordinates: sites.filter((s) => s.lat != null).length, phoneOverrides: sites.filter((s) => s.phone).length };
-  return { company, defaultPhone, columns: CSV_COLUMNS, counts, sites };
+  const [records, company, defaultPhone, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readPickerTypes()]);
+  const sites = records.sort((a, b) => String(a.name).localeCompare(String(b.name))).map((r) => adminSiteView(r, pickerTypes));
+  const active = sites.filter((s) => !s.archived && !s.hold);
+  const counts = {
+    total: active.length,
+    company: active.filter((s) => s.siteType === "company").length,
+    agents: active.filter((s) => s.siteType === "commission_agent").length,
+    unattended: active.filter((s) => s.siteType === "unattended").length,
+    untyped: active.filter((s) => !s.siteType).length,
+    withCoordinates: active.filter((s) => s.lat != null).length,
+    phoneOverrides: active.filter((s) => s.phone).length,
+    hidden: sites.filter((s) => s.visibility === "hidden").length,
+    removed: sites.filter((s) => s.visibility === "removed").length,
+    held: sites.filter((s) => s.visibility === "held").length,
+    all: sites.length,
+  };
+  return { company, defaultPhone, columns: CSV_COLUMNS, counts, sites, pickerTypes };
+}
+
+
+/* ---------- admin: add, edit, hide, remove, geocode ---------- */
+
+export function parseSiteInput(body) {
+  const errors = [];
+  const name = clean(body?.name, 120);
+  if (!name) errors.push("A site name is required.");
+  const loc = clean(body?.loc ?? body?.siteNumber, 40).toUpperCase();
+  let siteType = "";
+  if (body?.siteType != null && String(body.siteType).trim() !== "") {
+    const type = normaliseSiteType(body.siteType);
+    if (!type) errors.push("Type must be VEA Retail, LOC CA or Unattended.");
+    else siteType = type;
+  }
+  const tradingName = clean(body?.tradingName, 120);
+  let abn = "";
+  if (body?.abn != null && String(body.abn).trim() !== "") {
+    abn = normaliseAbn(body.abn);
+    if (abn === null) errors.push("That ABN is not valid. It needs 11 digits that pass the ABN check.");
+    else abn = abn || "";
+  }
+  let phone = "";
+  if (body?.phone != null && String(body.phone).trim() !== "") {
+    phone = normaliseSitePhone(body.phone);
+    if (phone === null) errors.push("That phone number is not valid.");
+    else phone = phone || "";
+  }
+  const address = clean(body?.address, 240);
+  let lat = null, lng = null;
+  const latBlank = body?.lat == null || String(body.lat).trim() === "";
+  const lngBlank = body?.lng == null || String(body.lng).trim() === "";
+  if (!latBlank || !lngBlank) {
+    const coords = validCoords(body?.lat, body?.lng);
+    if (!coords) errors.push("lat/lng must both be set to a point in Australia (for example -37.8136, 144.9631).");
+    else { lat = coords.lat; lng = coords.lng; }
+  }
+  return { errors, name, loc, fields: { siteType, tradingName, abn, phone, address, lat, lng } };
+}
+
+async function uniquenessError(id, name, loc) {
+  const records = await allSiteRecords();
+  const nameKey = clean(name, 120).toLowerCase();
+  const nameClash = records.find((r) => r.id !== id && clean(r.name, 120).toLowerCase() === nameKey);
+  if (nameClash) return nameClash.visitorArchived ? "A removed site already uses that name. Restore it or change that site first." : "A site with that name already exists.";
+  if (loc) {
+    const locClash = records.find((r) => r.id !== id && String(r.loc || "").trim().toUpperCase() === loc);
+    if (locClash) return locClash.visitorArchived ? "A removed site already uses that site number. Restore it or change that site first." : "A site with that site number already exists.";
+  }
+  return "";
+}
+
+async function loadManagedSite(id) {
+  if (!SITE_ID.test(String(id || ""))) return null;
+  const record = await sitesStore().get(id, { type: "json" }).catch(() => null);
+  return record && SITE_ID.test(String(record.id || "")) && record.name ? record : null;
+}
+
+async function viewed(record) {
+  return adminSiteView(record, await readPickerTypes());
+}
+
+async function setLocGate(store, id, loc, previous = "") {
+  const next = String(loc || "").trim().toUpperCase();
+  const prev = String(previous || "").trim().toUpperCase();
+  if (next === prev) return "";
+  if (next) {
+    const gate = await store.setJSON(locGateKey(next), { id }, { onlyIfNew: true });
+    if (gate && gate.modified === false) return "That site number was taken while saving.";
+  }
+  if (prev) await store.delete(locGateKey(prev)).catch(() => {});
+  return "";
+}
+
+function applyFields(site, parsed) {
+  const next = { ...site, name: parsed.name, detailsUpdatedAt: new Date(clock()).toISOString() };
+  if (parsed.loc) next.loc = parsed.loc;
+  else delete next.loc;
+  for (const [field, value] of Object.entries(parsed.fields)) {
+    if (value === "" || value == null) delete next[field];
+    else next[field] = value;
+  }
+  return next;
+}
+
+/** Create a site on the master list. Never touches visit records. */
+export async function createVisitorSite(body) {
+  const parsed = parseSiteInput(body);
+  if (!parsed.fields.siteType) parsed.errors.push("Choose a site type.");
+  if (parsed.errors.length) return { status: 400, error: parsed.errors[0], errors: parsed.errors };
+  const clash = await uniquenessError("", parsed.name, parsed.loc);
+  if (clash) return { status: 409, error: clash };
+  const store = sitesStore();
+  const id = await allocateSiteId(store);
+  if (!id) return { status: 500, error: "Could not allocate a new site id." };
+  const gateError = await setLocGate(store, id, parsed.loc);
+  if (gateError) return { status: 409, error: gateError };
+  const now = new Date(clock()).toISOString();
+  const site = applyFields({ id, created: now }, parsed);
+  const saved = await store.setJSON(id, site, { onlyIfNew: true });
+  if (saved && saved.modified === false) {
+    if (parsed.loc) await store.delete(locGateKey(parsed.loc)).catch(() => {});
+    return { status: 500, error: "Could not store the new site." };
+  }
+  cache = null;
+  return { status: 201, body: await viewed(site) };
+}
+
+/** Update name, site number, type, address, phone, ABN, trading name and map point. Past sign-ins keep their snapshot. */
+export async function updateVisitorSite(id, body) {
+  const current = await loadManagedSite(id);
+  if (!current) return { status: 404, error: "That site was not found." };
+  if (current.hold) return { status: 400, error: "Held sites are managed in the head-office site import, not here." };
+  const parsed = parseSiteInput(body);
+  if (!parsed.fields.siteType) parsed.errors.push("Choose a site type.");
+  if (parsed.errors.length) return { status: 400, error: parsed.errors[0], errors: parsed.errors };
+  const clash = await uniquenessError(current.id, parsed.name, parsed.loc);
+  if (clash) return { status: 409, error: clash };
+  const store = sitesStore();
+  const gateError = await setLocGate(store, current.id, parsed.loc, current.loc);
+  if (gateError) return { status: 409, error: gateError };
+  const next = applyFields(current, parsed);
+  await store.setJSON(current.id, next);
+  cache = null;
+  return { status: 200, body: await viewed(next) };
+}
+
+/** Soft hide or unhide. Hidden sites leave the visitor picker; history is unchanged. */
+export async function setSiteHidden(id, hidden) {
+  const current = await loadManagedSite(id);
+  if (!current) return { status: 404, error: "That site was not found." };
+  if (current.hold) return { status: 400, error: "Held sites are managed in the head-office site import, not here." };
+  if (current.visitorArchived) return { status: 400, error: "Restore the site before hiding or unhiding it." };
+  const next = { ...current, detailsUpdatedAt: new Date(clock()).toISOString() };
+  if (hidden) { next.visitorHidden = true; next.visitorHiddenAt = new Date(clock()).toISOString(); }
+  else { delete next.visitorHidden; delete next.visitorHiddenAt; }
+  await sitesStore().setJSON(current.id, next);
+  cache = null;
+  return { status: 200, body: await viewed(next) };
+}
+
+/** Soft remove (archive) or restore. Never deletes the record or any sign-in. */
+export async function setSiteArchived(id, { archived, confirm } = {}) {
+  const current = await loadManagedSite(id);
+  if (!current) return { status: 404, error: "That site was not found." };
+  if (current.hold) return { status: 400, error: "Held sites are managed in the head-office site import, not here." };
+  if (archived && confirm !== "REMOVE") return { status: 400, error: "Confirm to remove this site. Past sign-ins are not changed." };
+  const next = { ...current, detailsUpdatedAt: new Date(clock()).toISOString() };
+  if (archived) { next.visitorArchived = true; next.visitorArchivedAt = new Date(clock()).toISOString(); }
+  else { delete next.visitorArchived; delete next.visitorArchivedAt; }
+  await sitesStore().setJSON(current.id, next);
+  cache = null;
+  return { status: 200, body: await viewed(next) };
+}
+
+/** Look up a map point from an address only (Nominatim, 1 request/s). No visitor data, nothing stored. */
+export async function geocodeSiteAddress(address) {
+  const q = clean(address, 240);
+  if (!q) return { status: 400, error: "Enter an address first." };
+  if (lastGeocodeAt) {
+    const wait = 1000 - (clock() - lastGeocodeAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+  lastGeocodeAt = clock();
+  const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=au&q=" + encodeURIComponent(q);
+  let res;
+  try { res = await geocodeFetch(url, { headers: { "User-Agent": GEOCODE_UA, Accept: "application/json" } }); }
+  catch { return { status: 502, error: "The map lookup could not be reached." }; }
+  if (!res || !res.ok) return { status: 502, error: "The map lookup could not be reached." };
+  const rows = await res.json().catch(() => []);
+  const hit = Array.isArray(rows) ? rows[0] : null;
+  if (!hit) return { status: 404, error: "No map point was found for that address." };
+  const coords = validCoords(hit.lat, hit.lon ?? hit.lng);
+  if (!coords) return { status: 404, error: "That address did not resolve to a point in Australia." };
+  return { status: 200, body: { lat: coords.lat, lng: coords.lng, label: clean(hit.display_name, 240) } };
 }
 
 /* ---------- log filters ---------- */

@@ -424,12 +424,13 @@ test("public forms disable the button with a Submitting... spinner and send an i
   }
 });
 
-test("admin Visitor Log has Logs and Settings tabs; settings live only on the Settings tab; maintenance users get no Settings tab", async () => {
+test("admin Visitor Log has Logs, Sites and Settings tabs; settings live only on the Settings tab; maintenance users get no Sites or Settings tab", async () => {
   const fs = await import("node:fs");
   const app = fs.readFileSync(new URL("../public/admin/app.js", import.meta.url), "utf8");
   const logs = app.slice(app.indexOf("async function paintVisitor() {"), app.indexOf("async function paintVisitorSettings("));
-  const settings = app.slice(app.indexOf("async function paintVisitorSettings("), app.indexOf("async function paintVisitorRecord("));
-  assert.match(app, /tab\("logs", "Logs", "visitors"\) \+ tab\("settings", "Settings", "visitors\/settings"\)/);
+  const settings = app.slice(app.indexOf("async function paintVisitorSettings("), app.indexOf("async function paintVisitorSites("));
+  const sites = app.slice(app.indexOf("async function paintVisitorSites("), app.indexOf("async function paintVisitorRecord("));
+  assert.match(app, /tab\("logs", "Logs", "visitors"\) \+ tab\("sites", "Sites", "visitors\/sites"\) \+ tab\("settings", "Settings", "visitors\/settings"\)/);
   for (const header of ["Time in", "Time out", "Site", "Name", "Company", "Status", "Card returned", "ID photo"]) assert.ok(logs.includes("<th>" + header + "</th>"), header);
   for (const id of ["visitor-recipient", "visitor-users-pointer", "visitor-maintenance-", "visitor-sheet-check", "visitor-photo-backfill", "visitor-save"]) {
     assert.equal(logs.includes(id), false, id);
@@ -437,5 +438,8 @@ test("admin Visitor Log has Logs and Settings tabs; settings live only on the Se
   }
   assert.equal(logs.includes("/api/visitor-log/settings"), false);
   assert.match(app, /function visitorTabs\(active, viewOnly\) \{\n  if \(viewOnly\) return "";/);
-  assert.match(logs, /tabId === "settings" && !canSettings\) \{ window\.location\.replace\("#\/visitors"\)/);
+  assert.match(logs, /\(tabId === "settings" \|\| tabId === "sites"\) && !canSettings\) \{ window\.location\.replace\("#\/visitors"\)/);
+  assert.ok(sites.includes("data-testid=\"sites-table\""));
+  assert.ok(settings.includes("visitor-sites-link"), "Settings points at the Sites tab");
+  assert.equal(logs.includes("data-testid=\"sites-table\""), false);
 });

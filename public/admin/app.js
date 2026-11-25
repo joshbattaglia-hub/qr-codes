@@ -1851,7 +1851,7 @@ function visitorPage() {
 function visitorTabs(active, viewOnly) {
   if (viewOnly) return "";
   const tab = (name, label, go) => '<button type="button" role="tab" class="visitor-tab' + (active === name ? " on" : "") + '" aria-selected="' + (active === name) + '" data-go="' + go + '" data-testid="visitor-tab-' + name + '">' + label + '</button>';
-  return '<div class="visitor-tabs" role="tablist">' + tab("logs", "Logs", "visitors") + tab("settings", "Settings", "visitors/settings") + '</div>';
+  return '<div class="visitor-tabs" role="tablist">' + tab("logs", "Logs", "visitors") + tab("sites", "Sites", "visitors/sites") + tab("settings", "Settings", "visitors/settings") + '</div>';
 }
 function siteChip(visit) {
   if (visit.siteType === "commission_agent") return ' <span class="site-chip agent" title="' + esc([visit.tradingName, visit.abn ? "ABN " + visit.abn : ""].filter(Boolean).join(" · ") || "LOC CA") + '">LOC CA' + (visit.tradingName ? " · " + esc(visit.tradingName) : "") + '</span>';
@@ -1863,7 +1863,7 @@ async function paintVisitor() {
   const box = document.getElementById("visitor-body");
   if (!box) return;
   const tabId = route().id;
-  if (tabId && tabId !== "settings") return paintVisitorRecord(tabId);
+  if (tabId && tabId !== "settings" && tabId !== "sites") return paintVisitorRecord(tabId);
   const readiness = await fetch("/api/visitor-log/readiness", { credentials: "same-origin" }).then((res) => res.json()).catch(() => null);
   if (!readiness?.granted) {
     box.innerHTML = visitorDenied();
@@ -1873,8 +1873,9 @@ async function paintVisitor() {
   const canSettings = vrole === "admin" || vrole === "settings";
   const noPhotos = vrole === "viewer";
   const viewOnly = vrole !== "admin";
-  if (tabId === "settings" && !canSettings) { window.location.replace("#/visitors"); return; }
+  if ((tabId === "settings" || tabId === "sites") && !canSettings) { window.location.replace("#/visitors"); return; }
   if (tabId === "settings") return paintVisitorSettings(box, readiness);
+  if (tabId === "sites") return paintVisitorSites(box);
   const params = new URLSearchParams();
   const status = document.getElementById("visitor-status")?.value || "all";
   const from = document.getElementById("visitor-from")?.value || "";
@@ -1943,7 +1944,7 @@ async function paintVisitorSettings(box, readiness) {
     + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
     + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
-    + siteDetailsSection()
+    + '<h2 id="site-details">Site details</h2><p class="muted">Add, edit, hide and remove sites, set which types appear in the visitor picker, and fill the VEA Retail ABN and trading name in the <button class="text-btn" type="button" data-go="visitors/sites" data-testid="visitor-sites-link">Sites</button> tab.</p>'
     + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
     + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
     + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>'
@@ -1951,23 +1952,53 @@ async function paintVisitorSettings(box, readiness) {
     + '<button class="btn ghost" type="button" data-act="visitor-photo-backfill">Fill ID photo column</button><p id="visitor-photo-backfill-note" class="small" data-testid="visitor-photo-backfill-note"></p>';
   const events = document.getElementById("visitor-events");
   if (events && settings.events) events.value = settings.events;
-  paintSiteDetails().catch((err) => { const b = document.getElementById("site-details-body"); if (b) b.textContent = err.message; });
+}
+async function paintVisitorSites(box) {
+  box.innerHTML = visitorTabs("sites", false) + siteDetailsSection();
+  return paintSiteDetails();
 }
 function siteDetailsSection() {
-  return '<h2 id="site-details">Site details on the sign-in form</h2><p class="muted">The visitor sign-in and sign-out picker lists only Unattended sites. VEA Retail and LOC CA sites stay in this master list and in the log filters, but visitors cannot pick them. A picked site shows its trading name, ABN, address and phone. VEA Retail and Unattended sites show the company details below; LOC CA (commission agent) sites show their own. Empty fields are hidden.</p>'
-    + '<div id="site-details-body" data-testid="site-details" aria-busy="true">' + skeleton(2) + '</div>';
+  return '<h2 id="site-details">Sites</h2><p class="muted">Add, edit, hide or remove sites on the master list. The visitor sign-in and sign-out picker lists only the types you tick below, and never hidden or removed sites. VEA Retail sites show the company trading name and ABN. LOC CA and Unattended sites show their own. Empty fields are hidden on the form. Past sign-ins keep the site details they were saved with.</p>'
+    + '<div id="site-details-body" data-testid="site-details" aria-busy="true">' + skeleton(3) + '</div>';
 }
+function siteTypeChip(type) {
+  if (type === "commission_agent") return '<span class="site-chip agent">LOC CA</span>';
+  if (type === "unattended") return '<span class="site-chip unattended">Unattended</span>';
+  if (type === "company") return '<span class="site-chip company">VEA Retail</span>';
+  return '<span class="muted">Not set</span>';
+}
+function siteVisibilityChip(site) {
+  if (site.visibility === "removed") return '<span class="site-chip removed">Removed</span>';
+  if (site.visibility === "hidden") return '<span class="site-chip hidden-site">Hidden</span>';
+  if (site.visibility === "held") return '<span class="site-chip held">Held</span>';
+  return site.inPicker ? '<span class="muted">In picker</span>' : '<span class="muted">Visible</span>';
+}
+function usesOwnSiteDetails(type) { return type === "commission_agent" || type === "unattended"; }
 async function paintSiteDetails() {
   const box = document.getElementById("site-details-body");
   if (!box) return;
   const data = await api("/api/visitor-log/site-details");
   const c = data.counts || {};
+  const types = data.pickerTypes || ["unattended"];
+  state.visitorSites = data.sites || [];
+  state.visitorSitesDefaultPhone = data.defaultPhone || "";
   box.removeAttribute("aria-busy");
-  box.innerHTML = '<h3>Company details for VEA Retail and Unattended sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail and Unattended site. Leave blank until you have them: blank fields are simply not shown.</p>'
+  box.innerHTML = '<h3 id="company-details">Company details for VEA Retail sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail site. Leave blank until you have them: blank fields are simply not shown. LOC CA and Unattended sites each have their own trading name and ABN, edited on the site.</p>'
     + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
     + '<label class="field"><span>ABN</span><input id="company-abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn"></label></div>'
     + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="company-save">Save company details</button></div><p id="company-note" class="small" role="status"></p>'
-    + '<h3>Sites</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
+    + '<h3 id="picker-types">Visitor picker</h3><p class="muted small">Tick the site types visitors can pick on sign-in and sign-out. The default is Unattended only. Hidden and removed sites never appear, even if their type is ticked.</p>'
+    + '<div class="picker-type-checks" data-testid="picker-types">'
+    + [['company', 'VEA Retail'], ['commission_agent', 'LOC CA'], ['unattended', 'Unattended']].map(([id, label]) => '<label class="check"><input type="checkbox" name="picker-type" value="' + id + '" data-testid="picker-type-' + id + '"' + (types.includes(id) ? " checked" : "") + '> ' + label + '</label>').join("")
+    + '</div>'
+    + '<div class="form-actions"><button class="btn" type="button" data-act="picker-types-save" data-testid="picker-types-save">Save picker types</button></div><p id="picker-types-note" class="small" role="status"></p>'
+    + '<h3 id="sites-manager">Site list</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.hidden || 0)) + ' hidden, ' + esc(String(c.removed || 0)) + ' removed. ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
+    + '<div class="asset-dims sites-filters"><label class="field"><span>Search</span><input id="site-mgr-search" type="search" placeholder="Name, site number or address" data-testid="site-mgr-search"></label>'
+    + '<label class="field"><span>Type</span><select id="site-mgr-type" data-testid="site-mgr-type"><option value="all">All types</option><option value="company">VEA Retail</option><option value="commission_agent">LOC CA</option><option value="unattended">Unattended</option><option value="untyped">Not set</option></select></label>'
+    + '<label class="field"><span>Visibility</span><select id="site-mgr-visibility" data-testid="site-mgr-visibility"><option value="visible">Visible</option><option value="hidden">Hidden</option><option value="removed">Removed</option><option value="held">Held</option><option value="all">All</option></select></label></div>'
+    + '<div class="asset-actions"><button class="btn" type="button" data-act="site-add-open" data-testid="site-add-open">➕ Add site</button></div>'
+    + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Address</th><th>Phone</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
+    + '<p id="sites-table-empty" class="muted small" hidden>No sites match these filters.</p>'
     + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
     + '<div class="row"><button class="btn ghost" type="button" data-act="site-details-download">Download current list as CSV</button></div>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
@@ -1983,6 +2014,100 @@ async function paintSiteDetails() {
     document.getElementById("site-details-apply").disabled = true;
   });
   document.getElementById("site-details-csv")?.addEventListener("input", () => { document.getElementById("site-details-apply").disabled = true; });
+  const redraw = () => paintSitesTable();
+  document.getElementById("site-mgr-search")?.addEventListener("input", redraw);
+  document.getElementById("site-mgr-type")?.addEventListener("change", redraw);
+  document.getElementById("site-mgr-visibility")?.addEventListener("change", redraw);
+  paintSitesTable();
+}
+function filteredVisitorSites() {
+  const q = (document.getElementById("site-mgr-search")?.value || "").trim().toLowerCase();
+  const type = document.getElementById("site-mgr-type")?.value || "all";
+  const vis = document.getElementById("site-mgr-visibility")?.value || "visible";
+  return (state.visitorSites || []).filter((site) => {
+    if (type === "untyped" && site.siteType) return false;
+    if (type !== "all" && type !== "untyped" && site.siteType !== type) return false;
+    if (vis !== "all" && (site.visibility || "visible") !== vis) return false;
+    if (!q) return true;
+    const blob = [site.name, site.loc, site.address, site.tradingName, site.abn, site.phone].join(" ").toLowerCase();
+    return blob.includes(q);
+  });
+}
+function paintSitesTable() {
+  const body = document.getElementById("sites-table-body");
+  const empty = document.getElementById("sites-table-empty");
+  if (!body) return;
+  const rows = filteredVisitorSites();
+  body.innerHTML = rows.map((site) => {
+    const held = site.visibility === "held";
+    const removed = site.visibility === "removed";
+    const actions = held ? '<span class="muted">Held by import</span>'
+      : removed
+        ? '<button class="btn ghost" type="button" data-act="site-restore" data-id="' + esc(site.id) + '" data-testid="site-restore">Restore</button>'
+        : ('<button class="btn ghost" type="button" data-act="site-edit" data-id="' + esc(site.id) + '" data-testid="site-edit">✏️ Edit</button>'
+          + (site.hidden
+            ? '<button class="btn ghost" type="button" data-act="site-unhide" data-id="' + esc(site.id) + '" data-testid="site-unhide">Unhide</button>'
+            : '<button class="btn ghost" type="button" data-act="site-hide" data-id="' + esc(site.id) + '" data-testid="site-hide">Hide</button>')
+          + '<button class="btn ghost" type="button" data-act="site-remove" data-id="' + esc(site.id) + '" data-name="' + esc(site.name) + '" data-testid="site-remove">🗑️ Remove</button>');
+    const phone = site.phone || state.visitorSitesDefaultPhone || "";
+    return '<tr data-testid="site-row" data-id="' + esc(site.id) + '" data-visibility="' + esc(site.visibility || "visible") + '">'
+      + '<td>' + esc(site.name) + '</td><td>' + esc(site.loc || "") + '</td><td>' + siteTypeChip(site.siteType) + '</td>'
+      + '<td class="site-address">' + esc(site.address || "") + '</td><td>' + esc(phone) + '</td>'
+      + '<td>' + esc(site.tradingName || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td><td>' + esc(site.abn || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td>'
+      + '<td>' + (site.lat != null ? esc(String(site.lat) + ", " + String(site.lng)) : "—") + '</td>'
+      + '<td>' + siteVisibilityChip(site) + '</td>'
+      + '<td class="row-actions">' + actions + '</td></tr>';
+  }).join("");
+  if (empty) empty.hidden = rows.length > 0;
+}
+function siteFormHtml(site) {
+  const type = site?.siteType || "unattended";
+  const own = usesOwnSiteDetails(type);
+  const opt = (id, label) => '<option value="' + id + '"' + (type === id ? " selected" : "") + ">" + label + "</option>";
+  return '<h2 id="modal-title">' + (site ? "Edit site" : "Add site") + '</h2><form data-act="' + (site ? "site-save" : "site-add") + '" data-testid="' + (site ? "site-edit-form" : "site-add-form") + '">'
+    + (site ? '<input type="hidden" name="id" value="' + esc(site.id) + '">' : "")
+    + '<label class="field"><span>Site name</span><input name="name" required maxlength="120" value="' + esc(site?.name || "") + '" data-testid="site-form-name"></label>'
+    + '<label class="field"><span>Site number</span><input name="loc" maxlength="40" value="' + esc(site?.loc || "") + '" placeholder="Optional" data-testid="site-form-loc"></label>'
+    + '<label class="field"><span>Type</span><select name="siteType" id="site-form-type" data-testid="site-form-type">' + opt("unattended", "Unattended") + opt("company", "VEA Retail") + opt("commission_agent", "LOC CA") + '</select></label>'
+    + '<label class="field"><span>Address</span><input name="address" id="site-form-address" maxlength="240" value="' + esc(site?.address || "") + '" data-testid="site-form-address"></label>'
+    + '<div class="split"><label class="field"><span>Latitude</span><input name="lat" id="site-form-lat" inputmode="decimal" value="' + esc(site?.lat != null ? String(site.lat) : "") + '" data-testid="site-form-lat"></label>'
+    + '<label class="field"><span>Longitude</span><input name="lng" id="site-form-lng" inputmode="decimal" value="' + esc(site?.lng != null ? String(site.lng) : "") + '" data-testid="site-form-lng"></label></div>'
+    + '<div class="row"><button class="btn ghost" type="button" data-act="site-geocode" data-testid="site-geocode">📍 Find coordinates</button></div><p id="site-geocode-note" class="small" role="status"></p>'
+    + '<label class="field"><span>Phone</span><input name="phone" maxlength="24" value="' + esc(site?.phone || "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultPhone || "the default") + '" data-testid="site-form-phone"></label>'
+    + '<div id="site-own-details"' + (own ? "" : " hidden") + '><p class="muted small">This type shows its own trading name and ABN on the visitor form. Leave blank until you have them.</p>'
+    + '<div class="split"><label class="field"><span>Trading name</span><input name="tradingName" maxlength="120" value="' + esc(site?.tradingName || "") + '" data-testid="site-form-trading-name"></label>'
+    + '<label class="field"><span>ABN</span><input name="abn" inputmode="numeric" maxlength="14" value="' + esc(site?.abn || "") + '" placeholder="11 digits" data-testid="site-form-abn"></label></div></div>'
+    + '<p id="site-central-note" class="muted small"' + (own ? " hidden" : "") + '>VEA Retail sites show the company trading name and ABN set on this page, not a per-site value.</p>'
+    + '<div class="site-form-end-space"></div>'
+    + '<div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn" type="submit" data-testid="site-form-save">' + (site ? "Save site" : "Add site") + '</button></div>'
+    + '<p class="err" id="site-form-error" role="alert"></p></form>';
+}
+function wireSiteFormType() {
+  const sel = document.getElementById("site-form-type");
+  if (!sel) return;
+  const sync = () => {
+    const own = usesOwnSiteDetails(sel.value);
+    const ownBox = document.getElementById("site-own-details");
+    const note = document.getElementById("site-central-note");
+    if (ownBox) ownBox.hidden = !own;
+    if (note) note.hidden = own;
+  };
+  sel.addEventListener("change", sync);
+  sync();
+}
+function siteFormBody(form) {
+  const fd = new FormData(form);
+  return {
+    name: fd.get("name") || "",
+    loc: fd.get("loc") || "",
+    siteType: fd.get("siteType") || "",
+    address: fd.get("address") || "",
+    lat: fd.get("lat") || "",
+    lng: fd.get("lng") || "",
+    phone: fd.get("phone") || "",
+    tradingName: fd.get("tradingName") || "",
+    abn: fd.get("abn") || "",
+  };
 }
 function siteDetailPreview(body) {
   const s = body.summary || {};
@@ -2354,7 +2479,7 @@ async function visitorAction(button) {
     const body = await api("/api/visitor-log/company", { method: "POST", body: JSON.stringify({ tradingName: document.getElementById("company-trading-name")?.value || "", abn: document.getElementById("company-abn")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
     if (!body) return;
     document.getElementById("company-abn").value = body.abn || "";
-    showNote(note, "Saved. VEA Retail and Unattended sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
+    showNote(note, "Saved. VEA Retail sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
     toast("Company details saved");
     return;
   }
@@ -2380,6 +2505,92 @@ async function visitorAction(button) {
       applyBtn.disabled = apply || !((body.summary?.willWrite || 0) > 0 || (body.summary?.changed || 0) + (body.summary?.added || 0) > 0);
       if (apply) { toast("Site details saved"); paintSiteDetails().then(() => { const o = document.getElementById("site-details-preview"); if (o) o.innerHTML = siteDetailPreview(body); }).catch(() => {}); }
     } catch (err) { out.innerHTML = '<p class="err-text" role="alert">' + esc(err.message) + '</p>'; applyBtn.disabled = true; }
+    return;
+  }
+  if (act === "picker-types-save") {
+    const note = document.getElementById("picker-types-note");
+    const types = [...document.querySelectorAll('input[name="picker-type"]:checked')].map((el) => el.value);
+    const body = await api("/api/visitor-log/picker-types", { method: "POST", body: JSON.stringify({ types }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
+    if (!body) return;
+    showNote(note, "Saved. The visitor picker now lists " + (body.types.length ? body.types.map((ty) => ({ company: "VEA Retail", commission_agent: "LOC CA", unattended: "Unattended" }[ty] || ty)).join(", ") : "no types (visitors type the site name)") + ".", "ok");
+    toast("Picker types saved");
+    paintSiteDetails().catch(() => {});
+    return;
+  }
+  if (act === "site-add-open") {
+    openModal(siteFormHtml(null));
+    wireSiteFormType();
+    return;
+  }
+  if (act === "site-edit") {
+    const site = (state.visitorSites || []).find((s) => s.id === button.dataset.id);
+    if (!site) { toast.error("That site is not in the current list."); return; }
+    openModal(siteFormHtml(site));
+    wireSiteFormType();
+    return;
+  }
+  if (act === "site-geocode") {
+    const note = document.getElementById("site-geocode-note");
+    const address = document.getElementById("site-form-address")?.value || "";
+    if (note) note.textContent = "Looking up that address…";
+    try {
+      const body = await api("/api/visitor-log/sites/geocode?address=" + encodeURIComponent(address));
+      document.getElementById("site-form-lat").value = body.lat;
+      document.getElementById("site-form-lng").value = body.lng;
+      showNote(note, "Found " + (body.label || (body.lat + ", " + body.lng)) + ".", "ok");
+    } catch (err) { showNote(note, err.message, "error"); }
+    return;
+  }
+  if (act === "site-add" || act === "site-save") {
+    const form = button.closest("form") || document.querySelector("#modal form");
+    const err = document.getElementById("site-form-error");
+    if (!form) return;
+    const id = form.querySelector('[name="id"]')?.value;
+    const path = act === "site-save" && id ? "/api/visitor-log/sites/" + encodeURIComponent(id) : "/api/visitor-log/sites";
+    try {
+      await api(path, { method: "POST", body: JSON.stringify(siteFormBody(form)) });
+      closeModal();
+      toast(act === "site-save" ? "Site saved" : "Site added");
+      await paintSiteDetails();
+    } catch (e) { if (err) err.textContent = e.message; else toast.error(e.message); }
+    return;
+  }
+  if (act === "site-hide" || act === "site-unhide") {
+    const site = (state.visitorSites || []).find((s) => s.id === button.dataset.id);
+    const hide = act === "site-hide";
+    openModal('<h2>' + (hide ? "Hide this site?" : "Unhide this site?") + '</h2><p>' + (hide ? "Hide " + esc(site?.name || "this site") + " from the visitor picker? Sign-in history is unchanged. You can unhide it later." : "Show " + esc(site?.name || "this site") + " in the visitor picker again, if its type is ticked above.") + '</p><div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn" type="button" data-act="site-hide-confirm" data-id="' + esc(button.dataset.id) + '" data-hide="' + (hide ? "1" : "0") + '" data-testid="site-hide-confirm">' + (hide ? "Hide site" : "Unhide site") + '</button></div>');
+    return;
+  }
+  if (act === "site-hide-confirm") {
+    const hide = button.dataset.hide === "1";
+    try {
+      await api("/api/visitor-log/sites/" + encodeURIComponent(button.dataset.id) + "/" + (hide ? "hide" : "unhide"), { method: "POST", body: "{}" });
+      closeModal();
+      toast(hide ? "Site hidden" : "Site unhidden");
+      await paintSiteDetails();
+    } catch (e) { toast.error(e.message); }
+    return;
+  }
+  if (act === "site-remove") {
+    const name = button.dataset.name || (state.visitorSites || []).find((s) => s.id === button.dataset.id)?.name || "this site";
+    openModal('<h2>Remove this site?</h2><p>Remove ' + esc(name) + ' from the site list? This is not a permanent delete. Past sign-ins keep their saved site details. You can restore it later from the Removed filter.</p><div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="button" data-act="site-remove-confirm" data-id="' + esc(button.dataset.id) + '" data-testid="site-remove-confirm">Remove site</button></div>');
+    return;
+  }
+  if (act === "site-remove-confirm") {
+    try {
+      await api("/api/visitor-log/sites/" + encodeURIComponent(button.dataset.id) + "/remove", { method: "POST", body: JSON.stringify({ confirm: "REMOVE" }) });
+      closeModal();
+      toast("Site removed");
+      await paintSiteDetails();
+    } catch (e) { toast.error(e.message); }
+    return;
+  }
+  if (act === "site-restore") {
+    try {
+      await api("/api/visitor-log/sites/" + encodeURIComponent(button.dataset.id) + "/restore", { method: "POST", body: "{}" });
+      toast("Site restored");
+      await paintSiteDetails();
+    } catch (e) { toast.error(e.message); }
     return;
   }
   if (act === "visitor-maintenance-save") {
@@ -3106,6 +3317,10 @@ document.body.addEventListener("click", (e) => {
     Promise.resolve(visitorAction(actEl)).catch((err) => { const note = document.getElementById("visitor-note"); if (note) note.textContent = err.message; });
     return;
   }
+  if (actEl && actEl.closest("#modal") && String(actEl.dataset.act || "").startsWith("site-")) {
+    Promise.resolve(visitorAction(actEl)).catch((err) => toast.error(err.message));
+    return;
+  }
   if (actEl && actEl.closest("#warehouse-page")) {
     Promise.resolve(warehouseAction(actEl)).catch((err) => toast.error(err.message || "Warehouse Stickers failed"));
     return;
@@ -3121,7 +3336,7 @@ document.body.addEventListener("submit", (e) => {
   if (!(form instanceof HTMLFormElement) || !form.dataset.act) return;
   e.preventDefault();
   const act = form.dataset.act;
-  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-tv" ? () => saveTvLocation(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : null;
+  const run = act === "create" ? onCreate : act === "save-rule" ? onRule : act === "add-tag" ? () => onTag(form) : act === "save-edit" ? () => onEdit(form) : act === "save-customize" ? () => onCustomize(form) : act === "save-bulk" ? onBulk : act === "save-settings" ? () => onSettings(form) : act === "save-page" ? () => savePage() : act === "save-comp" ? () => saveCompetition() : act === "create-site" ? () => createSite(form) : act === "assign-site" ? () => assignRecord(form) : act === "create-staff" ? () => createStaff(form) : act === "save-staff" ? () => saveStaff(form) : act === "save-tv" ? () => saveTvLocation(form) : act === "save-collection" ? () => saveCollection(form) : act === "copy-comp" ? () => copyCompetition(form) : act === "save-pos" ? () => savePos(form) : act === "preview-import" ? () => previewImport(form) : (act === "site-add" || act === "site-save") ? () => visitorAction(form) : null;
   if (run) Promise.resolve(run()).catch((err) => toast.error(err.message));
 });
 document.body.addEventListener("input", (e) => {

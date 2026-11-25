@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, detailCsv, previewDetailImport, publicSiteDirectory, readCompany, saveCompany, siteLabel, siteSnapshot, visitSiteType } from "./site-details.mjs";
+import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, createVisitorSite, detailCsv, geocodeSiteAddress, previewDetailImport, publicSiteDirectory, readCompany, saveCompany, savePickerTypes, setSiteArchived, setSiteHidden, siteLabel, siteSnapshot, updateVisitorSite, visitSiteType } from "./site-details.mjs";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
@@ -1027,3 +1027,45 @@ export async function siteDetailCsv(actor) {
   if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   return { status: 200, body: await detailCsv() };
 }
+
+export async function savePickerTypeSetting(actor, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await savePickerTypes(body);
+  if (result.status === 200) await audit("picker-types", actor.id || actor.email || "", "", "types " + ((result.body.types || []).join(",") || "(none)"));
+  return result;
+}
+
+export async function createManagedSite(actor, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await createVisitorSite(body);
+  if (result.status === 201) await audit("site-create", actor.id || actor.email || "", "", (result.body.name || "") + (result.body.loc ? " (" + result.body.loc + ")" : "") + " " + (result.body.siteType || ""));
+  return result;
+}
+
+export async function updateManagedSite(actor, id, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await updateVisitorSite(id, body);
+  if (result.status === 200) await audit("site-update", actor.id || actor.email || "", "", result.body.id + " " + (result.body.name || ""));
+  return result;
+}
+
+export async function hideManagedSite(actor, id, hidden) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await setSiteHidden(id, hidden);
+  if (result.status === 200) await audit(hidden ? "site-hide" : "site-unhide", actor.id || actor.email || "", "", result.body.id + " " + (result.body.name || ""));
+  return result;
+}
+
+export async function archiveManagedSite(actor, id, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const archived = body?.archived !== false && body?.restore !== true;
+  const result = await setSiteArchived(id, { archived, confirm: body?.confirm });
+  if (result.status === 200) await audit(archived ? "site-remove" : "site-restore", actor.id || actor.email || "", "", result.body.id + " " + (result.body.name || ""));
+  return result;
+}
+
+export async function geocodeManagedSite(actor, address) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  return geocodeSiteAddress(address);
+}
+

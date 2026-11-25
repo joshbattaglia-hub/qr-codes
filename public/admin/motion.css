@@ -217,6 +217,12 @@ html[data-theme="crazy"] .toast[data-kind="error"]{background:#b42318;color:#fff
 html[data-theme="dark"] .site-chip.company{background:#1e2a4d;color:#c7d4ff}
 html[data-theme="dark"] .site-chip.agent{background:#4a2a12;color:#ffd7b0}
 html[data-theme="dark"] .site-chip.unattended{background:#143526;color:#b7ebc8}
+.site-chip.hidden-site{background:#eef0f4;color:#3f4c5a}
+.site-chip.removed{background:#fde8e8;color:#8a1c1c}
+.site-chip.held{background:#f3eef9;color:#5b2d86}
+html[data-theme="dark"] .site-chip.hidden-site{background:#2a3038;color:#c5ccd6}
+html[data-theme="dark"] .site-chip.removed{background:#4a1c1c;color:#ffc9c9}
+html[data-theme="dark"] .site-chip.held{background:#2d2140;color:#e0c8ff}
 .site-preview td{white-space:normal;vertical-align:top}
 .site-preview tr.bad td{background:rgba(217,45,32,.08)}
 .site-preview tr.chg td:first-child{box-shadow:inset 3px 0 0 #12b76a}
