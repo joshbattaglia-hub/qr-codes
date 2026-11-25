@@ -1023,9 +1023,11 @@ export async function importSiteDetails(actor, body) {
   return { status: 200, body: { dryRun: !apply, written: report.written || 0, summary: report.summary, ignoredColumns: report.ignoredColumns, rows: report.plan.map(({ patch, ...row }) => row) } };
 }
 
-export async function siteDetailCsv(actor) {
+export async function siteDetailCsv(actor, types) {
   if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
-  return { status: 200, body: await detailCsv() };
+  const csv = await detailCsv(types);
+  if (csv && typeof csv === "object" && csv.error) return { status: 400, error: csv.error };
+  return { status: 200, body: csv };
 }
 
 export async function savePickerTypeSetting(actor, body) {

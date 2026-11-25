@@ -507,3 +507,60 @@ test("preview deploys refuse site manager writes and picker-type changes; geocod
   assert.deepEqual(await storeDump(), before);
   sd.setSiteDetailHooks({});
 });
+
+test("CSV export can filter by site type, keeps columns, and still skips removed and held sites", async () => {
+  await lib.sitesStore().setJSON("s00000c10", { id: "s00000c10", name: "Synthetic Hidden Unattended", siteType: "unattended", visitorHidden: true, address: "9 Hide St, Moe VIC 3825" });
+  await lib.sitesStore().setJSON("s00000c11", { id: "s00000c11", name: "Synthetic Removed Unattended", siteType: "unattended", visitorArchived: true, address: "10 Gone St, Moe VIC 3825" });
+  const anon = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended"));
+  assert.equal(anon.status, 401);
+  const all = await j(H.call("GET", "/api/visitor-log/site-details.csv", { cookie: owner }));
+  assert.equal(all.status, 200);
+  assert.equal(all.body.split("\n")[0], sd.CSV_COLUMNS.join(","));
+  assert.ok(all.body.includes("Synthetic Unattended Moe"));
+  assert.ok(all.body.includes("Synthetic Hidden Unattended"), "hidden sites stay in the export");
+  assert.ok(!all.body.includes("Synthetic Held Site"));
+  assert.ok(!all.body.includes("Synthetic Removed Unattended"), "removed sites stay out of the export");
+  const unattended = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended", { cookie: owner }));
+  assert.equal(unattended.status, 200);
+  assert.equal(unattended.body.split("\n")[0], sd.CSV_COLUMNS.join(","), "filtered export uses the same columns");
+  assert.ok(unattended.body.includes("Synthetic Unattended Moe"));
+  assert.ok(unattended.body.includes("Synthetic Hidden Unattended"));
+  assert.ok(!unattended.body.includes("Synthetic Ballarat North"), "VEA Retail / untyped sites are left out of Unattended only");
+  assert.ok(!unattended.body.includes("Synthetic Agent No Details"));
+  assert.ok(!unattended.body.includes("Synthetic Removed Unattended"));
+  assert.ok(!unattended.body.includes("Synthetic Held Site"));
+  const rows = unattended.body.trim().split("\n").slice(1).map((line) => {
+    const cols = [];
+    let cur = "", q = false;
+    for (const ch of line) {
+      if (ch === '"') q = !q;
+      else if (ch === "," && !q) { cols.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    cols.push(cur);
+    return { name: cols[1], siteType: cols[2] };
+  });
+  assert.ok(rows.length, "Unattended only should have rows");
+  assert.ok(rows.every((row) => row.siteType === "unattended"), rows.map((row) => row.name + ":" + row.siteType).join(","));
+  const company = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=company", { cookie: owner }));
+  assert.equal(company.status, 200);
+  assert.ok(company.body.includes("Synthetic Ballarat North"), "untyped sites count as VEA Retail");
+  assert.ok(!company.body.includes("Synthetic Unattended Moe"));
+  const both = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended&types=commission_agent", { cookie: owner }));
+  assert.equal(both.status, 200);
+  assert.ok(both.body.includes("Synthetic Unattended Moe"));
+  assert.ok(both.body.includes("Synthetic Agent No Details") || both.body.includes("Synthetic Bendigo East") || both.body.includes("commission_agent") || both.body.includes("Synthetic Geelong West"));
+  assert.ok(!both.body.includes("Synthetic Ballarat North"));
+  const labels = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=" + encodeURIComponent("Unattended,LOC CA"), { cookie: owner }));
+  assert.equal(labels.status, 200);
+  assert.ok(labels.body.includes("Synthetic Unattended Moe"));
+  const empty = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=", { cookie: owner }));
+  assert.equal(empty.status, 400);
+  assert.match(empty.body.error, /at least one site type/i);
+  const bad = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=franchise", { cookie: owner }));
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /not valid/i);
+  assert.deepEqual(sd.parseCsvTypes(undefined).types, ["company", "commission_agent", "unattended"]);
+  assert.deepEqual(sd.parseCsvTypes(["unattended", "company"]).types, ["unattended", "company"]);
+  assert.equal(sd.parseCsvTypes("").error || sd.parseCsvTypes([]).error, "Tick at least one site type: Unattended, LOC CA or VEA Retail.");
+});

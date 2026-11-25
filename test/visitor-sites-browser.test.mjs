@@ -303,3 +303,29 @@ test("admin sites manager: table, add form, Unattended edit form, hide and remov
     await p.close();
   }
 });
+
+test("Sites CSV download has type ticks, defaults to Unattended (the picker types), and disables when none are ticked", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  const p = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, log: false });
+  await p.waitForSelector('[data-testid="csv-types"]', { timeout: 8000 });
+  assert.equal(await p.$eval('[data-testid="csv-type-unattended"]', (e) => e.checked), true, "Unattended starts ticked, matching the picker");
+  assert.equal(await p.$eval('[data-testid="csv-type-company"]', (e) => e.checked), false);
+  assert.equal(await p.$eval('[data-testid="csv-type-commission_agent"]', (e) => e.checked), false);
+  assert.equal(await p.$eval('[data-testid="site-details-download"]', (b) => b.disabled), false);
+  assert.equal(await p.$eval('[data-testid="csv-types-hint"]', (e) => e.hidden), true);
+  await p.click('[data-testid="csv-type-unattended"]');
+  assert.equal(await p.$eval('[data-testid="site-details-download"]', (b) => b.disabled), true);
+  assert.equal(await p.$eval('[data-testid="csv-types-hint"]', (e) => e.hidden), false);
+  assert.match(await p.$eval('[data-testid="csv-types-hint"]', (e) => e.textContent), /Tick at least one site type/);
+  await p.click('[data-testid="csv-types-all"]');
+  assert.equal(await p.$eval('[data-testid="csv-type-company"]', (e) => e.checked), true);
+  assert.equal(await p.$eval('[data-testid="csv-type-commission_agent"]', (e) => e.checked), true);
+  assert.equal(await p.$eval('[data-testid="csv-type-unattended"]', (e) => e.checked), true);
+  assert.equal(await p.$eval('[data-testid="site-details-download"]', (b) => b.disabled), false);
+  await p.click('[data-testid="csv-types-unattended"]');
+  assert.equal(await p.$eval('[data-testid="csv-type-unattended"]', (e) => e.checked), true);
+  assert.equal(await p.$eval('[data-testid="csv-type-company"]', (e) => e.checked), false);
+  assert.equal(await p.$eval('[data-testid="csv-type-commission_agent"]', (e) => e.checked), false);
+  assert.equal(await p.$eval('[data-testid="site-details-download"]', (b) => b.disabled), false);
+  await p.close();
+});

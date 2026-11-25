@@ -67,7 +67,8 @@ export default async (req, context) => {
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/site-details.csv" && req.method === "GET") {
-    const result = await siteDetailCsv(actor);
+    const typesParam = url.searchParams.has("types") ? url.searchParams.getAll("types") : undefined;
+    const result = await siteDetailCsv(actor, typesParam);
     if (result.status !== 200) return json(result.status, { error: result.error }, PRIVATE);
     return new Response(result.body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=\"site-details.csv\"", ...PRIVATE } });
   }

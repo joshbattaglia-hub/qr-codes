@@ -1944,7 +1944,7 @@ async function paintVisitorSettings(box, readiness) {
     + '<h2>Maintenance phone numbers</h2><p class="muted">Shown to visitors on the "Thanks for signing in" screen under "Need the locker access code? Call maintenance:". Same numbers for every site and form. Leave all four blank to hide the block. No staff names are shown.</p>'
     + '<div data-testid="visitor-maintenance">' + maintenanceFields + '</div>'
     + '<button class="btn" type="button" data-act="visitor-maintenance-save">Save maintenance numbers</button><p id="visitor-maintenance-note" class="small"></p>'
-    + '<h2 id="site-details">Site details</h2><p class="muted">Add, edit, hide and remove sites, set which types appear in the visitor picker, and fill the VEA Retail ABN and trading name in the <button class="text-btn" type="button" data-go="visitors/sites" data-testid="visitor-sites-link">Sites</button> tab.</p>'
+    + '<h2 id="site-details">Site details</h2><p class="muted">Add, edit, hide and remove sites, set which types appear in the visitor picker, fill the VEA Retail ABN and trading name, and download a filtered site CSV in the <button class="text-btn" type="button" data-go="visitors/sites" data-testid="visitor-sites-link">Sites</button> tab.</p>'
     + '<h2>Spreadsheet connection</h2><p class="muted">The public form stays closed. This writes one synthetic row on the Visits tab and then clears it. No email is sent.</p>'
     + '<label class="check"><input id="visitor-sheet-check" type="checkbox"> I am running the one synthetic sheet check.</label>'
     + '<button class="btn" type="button" data-act="visitor-sheet-check">Run connection check</button><p id="visitor-sheet-note" class="small" data-testid="visitor-sheet-note"></p>'
@@ -1974,6 +1974,20 @@ function siteVisibilityChip(site) {
   return site.inPicker ? '<span class="muted">In picker</span>' : '<span class="muted">Visible</span>';
 }
 function usesOwnSiteDetails(type) { return type === "commission_agent" || type === "unattended"; }
+function csvDownloadTypes() {
+  return [...document.querySelectorAll('input[name="csv-type"]:checked')].map((el) => el.value);
+}
+function setCsvDownloadTypes(types) {
+  document.querySelectorAll('input[name="csv-type"]').forEach((el) => { el.checked = types.includes(el.value); });
+  syncCsvDownloadButton();
+}
+function syncCsvDownloadButton() {
+  const none = csvDownloadTypes().length === 0;
+  const btn = document.getElementById("site-details-download");
+  const hint = document.getElementById("csv-types-hint");
+  if (btn) btn.disabled = none;
+  if (hint) hint.hidden = !none;
+}
 async function paintSiteDetails() {
   const box = document.getElementById("site-details-body");
   if (!box) return;
@@ -1999,8 +2013,14 @@ async function paintSiteDetails() {
     + '<div class="asset-actions"><button class="btn" type="button" data-act="site-add-open" data-testid="site-add-open">➕ Add site</button></div>'
     + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Address</th><th>Phone</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
     + '<p id="sites-table-empty" class="muted small" hidden>No sites match these filters.</p>'
+    + '<h3>Download site list (CSV)</h3><p class="muted small">Same columns as the import, so you can edit the file and bring it back. Tick the types to include. All ticked is the full list. Hidden sites are included; removed and held sites are not. The ticks start as the visitor picker types, so Unattended only is the usual starting point.</p>'
+    + '<div class="picker-type-checks" data-testid="csv-types">'
+    + [['company', 'VEA Retail'], ['commission_agent', 'LOC CA'], ['unattended', 'Unattended']].map(([id, label]) => '<label class="check"><input type="checkbox" name="csv-type" value="' + id + '" data-testid="csv-type-' + id + '"' + ((types.length ? types : ["unattended"]).includes(id) ? " checked" : "") + '> ' + label + '</label>').join("")
+    + '</div>'
+    + '<div class="row csv-type-presets"><button class="text-btn" type="button" data-act="csv-types-unattended" data-testid="csv-types-unattended">Unattended only</button><button class="text-btn" type="button" data-act="csv-types-all" data-testid="csv-types-all">All types</button></div>'
+    + '<div class="row"><button class="btn ghost" type="button" id="site-details-download" data-act="site-details-download" data-testid="site-details-download">Download current list as CSV</button></div>'
+    + '<p id="csv-types-hint" class="muted small" hidden data-testid="csv-types-hint">Tick at least one site type to download.</p>'
     + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
-    + '<div class="row"><button class="btn ghost" type="button" data-act="site-details-download">Download current list as CSV</button></div>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
     + '<div class="row"><button class="btn" type="button" data-act="site-details-preview">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
@@ -2014,6 +2034,8 @@ async function paintSiteDetails() {
     document.getElementById("site-details-apply").disabled = true;
   });
   document.getElementById("site-details-csv")?.addEventListener("input", () => { document.getElementById("site-details-apply").disabled = true; });
+  document.querySelectorAll('input[name="csv-type"]').forEach((el) => el.addEventListener("change", syncCsvDownloadButton));
+  syncCsvDownloadButton();
   const redraw = () => paintSitesTable();
   document.getElementById("site-mgr-search")?.addEventListener("input", redraw);
   document.getElementById("site-mgr-type")?.addEventListener("change", redraw);
@@ -2483,12 +2505,21 @@ async function visitorAction(button) {
     toast("Company details saved");
     return;
   }
+  if (act === "csv-types-unattended") { setCsvDownloadTypes(["unattended"]); return; }
+  if (act === "csv-types-all") { setCsvDownloadTypes(["company", "commission_agent", "unattended"]); return; }
   if (act === "site-details-download") {
-    const response = await fetch("/api/visitor-log/site-details.csv", { credentials: "same-origin" });
-    if (!response.ok) throw new Error("The site list was not available");
+    const types = csvDownloadTypes();
+    if (!types.length) { syncCsvDownloadButton(); return; }
+    const query = types.map((type) => "types=" + encodeURIComponent(type)).join("&");
+    const response = await fetch("/api/visitor-log/site-details.csv?" + query, { credentials: "same-origin" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "The site list was not available");
+    }
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
-    link.href = url; link.download = "site-details.csv";
+    const file = types.length === 3 ? "site-details.csv" : "site-details-" + types.join("-") + ".csv";
+    link.href = url; link.download = file;
     document.body.appendChild(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
     return;
