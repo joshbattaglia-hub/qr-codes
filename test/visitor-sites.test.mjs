@@ -58,13 +58,16 @@ test("display rules: company sites use the one Liberty setting, agents their own
   assert.equal(agent.tradingName, "Agent Co"); assert.equal(agent.abn, SYN_AGENT_ABN); assert.equal(agent.phone, "0412 345 678");
   const bare = sd.displaySite({ id: "s4", name: "D", siteType: "commission_agent" }, { abn: "", tradingName: "" });
   assert.equal(bare.tradingName, ""); assert.equal(bare.abn, ""); assert.equal(bare.address, "");
-  const u = sd.displaySite({ id: "s5", name: "E", siteType: "unattended", abn: SYN_AGENT_ABN, tradingName: "Ignored" }, company);
+  const u = sd.displaySite({ id: "s5", name: "E", siteType: "unattended", abn: SYN_AGENT_ABN, tradingName: "Synthetic Unattended Pty Ltd" }, company);
   assert.equal(u.type, "unattended");
-  assert.equal(u.tradingName, "Synthetic Liberty Trading", "Unattended sites use the central company trading name");
-  assert.equal(u.abn, SYN_LIBERTY_ABN);
+  assert.equal(u.tradingName, "Synthetic Unattended Pty Ltd", "Unattended sites use their own trading name");
+  assert.equal(u.abn, SYN_AGENT_ABN, "Unattended sites use their own ABN, not the central VEA Retail one");
   assert.equal(u.phone, "03 9113 7191");
-  assert.equal(sd.usesCompanyDetails("unattended"), true);
+  const bareU = sd.displaySite({ id: "s6", name: "F", siteType: "unattended" }, company);
+  assert.equal(bareU.tradingName, ""); assert.equal(bareU.abn, "");
+  assert.equal(sd.usesCompanyDetails("unattended"), false);
   assert.equal(sd.usesCompanyDetails("company"), true);
+  assert.equal(sd.usesCompanyDetails(""), true, "untyped sites count as VEA Retail");
   assert.equal(sd.usesCompanyDetails("commission_agent"), false);
 });
 
@@ -101,11 +104,13 @@ test("company details: owner-only setting, ABN checked, saved centrally and show
   sd.clearSiteDirectoryCache();
   const dir = (await sd.publicSiteDirectory({ picker: false })).sites;
   assert.ok(dir.some((s) => s.type === "company"));
-  for (const s of dir.filter((x) => x.type === "company" || x.type === "unattended")) { assert.equal(s.abn, SYN_LIBERTY_ABN); assert.equal(s.tradingName, "Synthetic Liberty Trading"); }
+  for (const s of dir.filter((x) => x.type === "company")) { assert.equal(s.abn, SYN_LIBERTY_ABN); assert.equal(s.tradingName, "Synthetic Liberty Trading"); }
+  const unatt = dir.find((s) => s.type === "unattended");
+  assert.ok(unatt); assert.equal(unatt.abn, ""); assert.equal(unatt.tradingName, "");
   const picker = (await j(H.call("GET", "/api/visit/sites"))).body.sites;
   assert.ok(picker.every((s) => s.type === "unattended"));
   assert.ok(!picker.some((s) => s.type === "company" || s.type === "commission_agent"));
-  assert.equal(picker[0].abn, SYN_LIBERTY_ABN);
+  assert.equal(picker[0].abn, "", "Unattended sites do not inherit the central VEA Retail ABN");
 });
 
 test("sign-in with a picked site stores a snapshot (name, LOC, type, trading name, ABN); typed sites still work; no coordinates are accepted or stored", async () => {
@@ -346,4 +351,125 @@ test("deploy previews overlay proposed Unattended sites on the picker without wr
   assert.ok(aliasBody.proposed >= 25, "CLI draft/alias URLs overlay proposed sites even if context says production");
   assert.ok(aliasBody.sites.some((s) => s.name === "Reddy Express Moe" && s.proposed));
   assert.deepEqual(await storeDump(), before);
+});
+
+
+const SYN_UNATTENDED_ABN = "20 000 000 190";
+
+test("site manager: add, edit, hide, unhide, soft-remove and restore; past snapshots stay; picker types are a setting", async () => {
+  const beforeVisits = await (async () => {
+    const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
+    return Promise.all(blobs.map((x) => lib.visitorStore().get(x.key, { type: "json" })));
+  })();
+  const snapBefore = beforeVisits.filter((v) => v.site).map((v) => ({ id: v.id, site: v.site }));
+
+  const anon = await j(H.call("POST", "/api/visitor-log/sites", { body: { name: "Nope", siteType: "unattended" } }));
+  assert.equal(anon.status, 401);
+
+  const badAbn = await j(H.call("POST", "/api/visitor-log/sites", { cookie: owner, body: { name: "Synthetic Manager New", siteType: "unattended", abn: "51 824 753 557", address: "1 Test St, Moe VIC 3825" } }));
+  assert.equal(badAbn.status, 400); assert.match(badAbn.body.error, /ABN/);
+
+  const created = await j(H.call("POST", "/api/visitor-log/sites", { cookie: owner, body: { name: "Synthetic Manager New", siteType: "unattended", loc: "LOC0801", address: "1 Test St, Moe VIC 3825", phone: "03 9113 7191", tradingName: "Synthetic Manager Pty Ltd", abn: SYN_UNATTENDED_ABN, lat: -38.172, lng: 146.261 } }));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.siteType, "unattended");
+  assert.equal(created.body.tradingName, "Synthetic Manager Pty Ltd");
+  assert.equal(created.body.abn, SYN_UNATTENDED_ABN);
+  assert.equal(created.body.visibility, "visible");
+  assert.equal(created.body.inPicker, true);
+  const id = created.body.id;
+  assert.match(id, /^s[a-f0-9]{8}$/);
+
+  const clash = await j(H.call("POST", "/api/visitor-log/sites", { cookie: owner, body: { name: "Synthetic Manager New", siteType: "unattended" } }));
+  assert.equal(clash.status, 409);
+
+  const edited = await j(H.call("POST", "/api/visitor-log/sites/" + id, { cookie: owner, body: { name: "Synthetic Manager New", siteType: "unattended", loc: "LOC0801", address: "2 Test St, Moe VIC 3825", phone: "03 9113 7191", tradingName: "Synthetic Manager Pty Ltd", abn: SYN_UNATTENDED_ABN, lat: -38.172, lng: 146.261 } }));
+  assert.equal(edited.status, 200, JSON.stringify(edited.body));
+  assert.match(edited.body.address, /2 Test St/);
+
+  sd.clearSiteDirectoryCache();
+  const inPicker = (await j(H.call("GET", "/api/visit/sites"))).body.sites.map((s) => s.name);
+  assert.ok(inPicker.includes("Synthetic Manager New"));
+
+  const hidden = await j(H.call("POST", "/api/visitor-log/sites/" + id + "/hide", { cookie: owner, body: {} }));
+  assert.equal(hidden.status, 200); assert.equal(hidden.body.visibility, "hidden"); assert.equal(hidden.body.inPicker, false);
+  sd.clearSiteDirectoryCache();
+  assert.ok(!(await j(H.call("GET", "/api/visit/sites"))).body.sites.some((s) => s.id === id), "hidden sites leave the picker");
+
+  const unhidden = await j(H.call("POST", "/api/visitor-log/sites/" + id + "/unhide", { cookie: owner, body: {} }));
+  assert.equal(unhidden.status, 200); assert.equal(unhidden.body.visibility, "visible");
+
+  const noConfirm = await j(H.call("POST", "/api/visitor-log/sites/" + id + "/remove", { cookie: owner, body: {} }));
+  assert.equal(noConfirm.status, 400);
+  const removed = await j(H.call("POST", "/api/visitor-log/sites/" + id + "/remove", { cookie: owner, body: { confirm: "REMOVE" } }));
+  assert.equal(removed.status, 200); assert.equal(removed.body.visibility, "removed");
+  assert.ok(await lib.sitesStore().get(id, { type: "json" }), "remove is a soft archive, the record stays");
+  sd.clearSiteDirectoryCache();
+  assert.ok(!(await j(H.call("GET", "/api/visit/sites"))).body.sites.some((s) => s.id === id));
+  const list = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
+  assert.ok(list.body.sites.some((s) => s.id === id && s.archived));
+  assert.ok(list.body.counts.removed >= 1);
+
+  const restored = await j(H.call("POST", "/api/visitor-log/sites/" + id + "/restore", { cookie: owner, body: {} }));
+  assert.equal(restored.status, 200); assert.equal(restored.body.visibility, "visible");
+
+  const types = await j(H.call("POST", "/api/visitor-log/picker-types", { cookie: owner, body: { types: ["company"] } }));
+  assert.equal(types.status, 200); assert.deepEqual(types.body.types, ["company"]);
+  sd.clearSiteDirectoryCache();
+  const onlyCompany = (await j(H.call("GET", "/api/visit/sites"))).body;
+  assert.equal(onlyCompany.picker, "company");
+  assert.ok(onlyCompany.sites.every((s) => s.type === "company"));
+  assert.ok(!onlyCompany.sites.some((s) => s.id === id), "Unattended leaves the picker when only VEA Retail is ticked");
+  const back = await j(H.call("POST", "/api/visitor-log/picker-types", { cookie: owner, body: { types: ["unattended"] } }));
+  assert.equal(back.status, 200); assert.deepEqual(back.body.types, ["unattended"]);
+
+  const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
+  const after = await Promise.all(blobs.map((x) => lib.visitorStore().get(x.key, { type: "json" })));
+  const snapAfter = after.filter((v) => v.site).map((v) => ({ id: v.id, site: v.site }));
+  assert.deepEqual(snapAfter, snapBefore, "past sign-in snapshots were not rewritten");
+});
+
+test("geocode looks up only the address, is rate-limited, stores nothing, and is mocked with no network", async () => {
+  const calls = [];
+  sd.setSiteDetailHooks({
+    geocode: async (url, opts) => {
+      calls.push({ url, ua: opts?.headers?.["User-Agent"] || opts?.headers?.["user-agent"] });
+      return { ok: true, json: async () => [{ lat: "-38.1721", lon: "146.2612", display_name: "1 Test St, Moe VIC 3825, Australia" }] };
+    },
+  });
+  const before = await storeDump();
+  const anon = await j(H.call("GET", "/api/visitor-log/sites/geocode?address=1%20Test%20St%20Moe"));
+  assert.equal(anon.status, 401);
+  const ok = await j(H.call("GET", "/api/visitor-log/sites/geocode?address=" + encodeURIComponent("1 Test St, Moe VIC 3825"), { cookie: owner }));
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.lat, -38.1721);
+  assert.equal(ok.body.lng, 146.2612);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /nominatim\.openstreetmap\.org\/search/);
+  assert.match(calls[0].url, /countrycodes=au/);
+  assert.ok(!/visitor|photo|phone=0400/i.test(calls[0].url), "only the address is sent");
+  assert.match(calls[0].ua, /ExpressHelp-site-manager/);
+  assert.deepEqual(await storeDump(), before, "geocode does not write sites");
+  const blank = await j(H.call("GET", "/api/visitor-log/sites/geocode?address=", { cookie: owner }));
+  assert.equal(blank.status, 400);
+  sd.setSiteDetailHooks({});
+});
+
+test("preview deploys refuse site manager writes and picker-type changes; geocode GET still works", async () => {
+  const adm = await import("../netlify/functions/visitor-admin.mjs");
+  const before = await storeDump();
+  const post = (path, body) => adm.default(new Request("https://preview.example" + path, { method: "POST", headers: { "content-type": "application/json", cookie: owner }, body: JSON.stringify(body) }), { deploy: { context: "deploy-preview" } });
+  for (const [path, body] of [
+    ["/api/visitor-log/sites", { name: "Preview Should Not Add", siteType: "unattended" }],
+    ["/api/visitor-log/picker-types", { types: ["company"] }],
+    ["/api/visitor-log/sites/s00000a06/hide", {}],
+    ["/api/visitor-log/sites/s00000a06/remove", { confirm: "REMOVE" }],
+  ]) {
+    const res = await post(path, body);
+    assert.equal(res.status, 403, path);
+  }
+  sd.setSiteDetailHooks({ geocode: async () => ({ ok: true, json: async () => [{ lat: "-38.17", lon: "146.26", display_name: "Moe" }] }) });
+  const geo = await adm.default(new Request("https://preview.example/api/visitor-log/sites/geocode?address=Moe", { headers: { cookie: owner } }), { deploy: { context: "deploy-preview" } });
+  assert.equal(geo.status, 200, "address lookup is a GET, so previews can still try it");
+  assert.deepEqual(await storeDump(), before);
+  sd.setSiteDetailHooks({});
 });

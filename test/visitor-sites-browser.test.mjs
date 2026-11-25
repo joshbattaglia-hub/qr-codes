@@ -18,9 +18,9 @@ async function boot() {
     { id: "s00000b01", name: "Synthetic Ballarat North", loc: "LOC0201", address: "1 Example Rd, Ballarat North VIC 3350", lat: -37.53, lng: 143.86 },
     { id: "s00000b02", name: "Synthetic Ballan Agent", loc: "LOC0202", address: "2 Sample St, Ballan VIC 3342", lat: -37.6, lng: 144.22, siteType: "commission_agent", tradingName: "Synthetic Ballan Fuels Pty Ltd", abn: SYN_AGENT_ABN, phone: "0412 345 678" },
     { id: "s00000b03", name: "Synthetic Geelong West", loc: "LOC0203", address: "3 Test Ave, Geelong West VIC 3218", lat: -38.14, lng: 144.34 },
-    { id: "s00000b04", name: "Synthetic Unattended Ballarat", loc: "LOC0204", address: "10 Example Rd, Ballarat VIC 3350", lat: -37.55, lng: 143.85, siteType: "unattended" },
-    { id: "s00000b05", name: "Synthetic Unattended Mernda", loc: "LOC0205", address: "1444 Plenty Rd, Mernda VIC 3754", lat: -37.60, lng: 145.10, siteType: "unattended" },
-    { id: "s00000b06", name: "Synthetic Unattended Geelong West", loc: "LOC0206", address: "21-25 Church St, Geelong West VIC 3218", lat: -38.14, lng: 144.35, siteType: "unattended" },
+    { id: "s00000b04", name: "Synthetic Unattended Ballarat", loc: "LOC0204", address: "10 Example Rd, Ballarat VIC 3350", lat: -37.55, lng: 143.85, siteType: "unattended", tradingName: "Synthetic Unattended Pty Ltd", abn: "20 000 000 190" },
+    { id: "s00000b05", name: "Synthetic Unattended Mernda", loc: "LOC0205", address: "1444 Plenty Rd, Mernda VIC 3754", lat: -37.60, lng: 145.10, siteType: "unattended", tradingName: "Synthetic Unattended Pty Ltd", abn: "20 000 000 190" },
+    { id: "s00000b06", name: "Synthetic Unattended Geelong West", loc: "LOC0206", address: "21-25 Church St, Geelong West VIC 3218", lat: -38.14, lng: 144.35, siteType: "unattended", tradingName: "Synthetic Unattended Pty Ltd", abn: "20 000 000 190" },
   ];
   for (const s of sites) await lib.sitesStore().setJSON(s.id, s);
   await H.call("POST", "/api/visitor-log/company", { cookie: owner, body: { abn: "51824753556", tradingName: "Synthetic Liberty Trading" } });
@@ -64,7 +64,7 @@ async function openPublicOut(p) {
 }
 const GEO_SPY = `window.__geoCalls = 0; (function(){ var g = navigator.geolocation; if (!g) return; var real = g.getCurrentPosition.bind(g); g.getCurrentPosition = function(){ window.__geoCalls++; return real.apply(null, arguments); }; })();`;
 
-test("type-ahead: suggestions as you type, keyboard pick, Unattended card shows the company details and hides retail sites", { skip: SKIP, timeout: 60000 }, async () => {
+test("type-ahead: suggestions as you type, keyboard pick, Unattended card shows its own details and hides retail sites", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   const p = await openPublic("/visit/sign-in", { init: GEO_SPY });
   assert.equal(await p.evaluate(() => window.__geoCalls), 0, "location is not asked for on page load");
@@ -82,7 +82,7 @@ test("type-ahead: suggestions as you type, keyboard pick, Unattended card shows 
   const card = await p.$eval("#site-card", (c) => ({ hidden: c.hidden, text: c.innerText, terms: [...c.querySelectorAll("dt")].map((d) => d.textContent), tel: c.querySelector("a[href^='tel:']")?.getAttribute("href") }));
   assert.equal(card.hidden, false);
   assert.deepEqual(card.terms, ["Trading name", "ABN", "Address", "Phone"]);
-  assert.match(card.text, /Synthetic Liberty Trading/); assert.match(card.text, /51 824 753 556/); assert.match(card.text, /Unattended/); assert.ok(!/Liberty site/.test(card.text) && !/VEA Retail/.test(card.text));
+  assert.match(card.text, /Synthetic Unattended Pty Ltd/); assert.match(card.text, /20 000 000 190/); assert.match(card.text, /Unattended/); assert.ok(!/Liberty site/.test(card.text) && !/VEA Retail/.test(card.text) && !/Synthetic Liberty Trading/.test(card.text));
   assert.equal(card.tel, "tel:0391137191");
   await p.type("#site-q", "x");
   assert.equal(await p.$eval("input[name=siteId]", (e) => e.value), "", "editing the text drops the pick");
@@ -91,7 +91,7 @@ test("type-ahead: suggestions as you type, keyboard pick, Unattended card shows 
   await p.close();
 });
 
-test("use my location: asked only on tap, nearest Unattended sites listed, card shows company details, coordinates never sent", { skip: SKIP, timeout: 60000 }, async () => {
+test("use my location: asked only on tap, nearest Unattended sites listed, card shows per-site details, coordinates never sent", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   await browser.defaultBrowserContext().overridePermissions("https://expresshelp.site", ["geolocation"]);
   const p = await openPublic("/visit/sign-in", { init: GEO_SPY });
@@ -106,8 +106,8 @@ test("use my location: asked only on tap, nearest Unattended sites listed, card 
   await p.click(".site-near-item");
   const card = await p.$eval("#site-card", (c) => c.innerText);
   assert.match(card, /Unattended/);
-  assert.match(card, /Synthetic Liberty Trading/);
-  assert.match(card, /51 824 753 556/);
+  assert.match(card, /Synthetic Unattended Pty Ltd/);
+  assert.match(card, /20 000 000 190/);
   assert.ok(!card.includes("LOC CA") && !card.includes("Synthetic Ballan Fuels"));
   // Fill and submit with a synthetic photo, then check the payload and the stored snapshot.
   const img = path.join(os.tmpdir(), "synthetic-id.jpg");
@@ -123,7 +123,7 @@ test("use my location: asked only on tap, nearest Unattended sites listed, card 
   assert.ok(!sentText.includes("-37.61") && !sentText.includes("144.2,") && !/"lat"|"lng"|latitude/.test(sentText.replace(/\/api\/visit\/sites[^\n]*/g, "")), "no visitor coordinates in any request");
   const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
   const visit = (await Promise.all(blobs.map((b) => lib.visitorStore().get(b.key, { type: "json" })))).find((v) => v.name === "Synthetic Browser Visitor");
-  assert.equal(visit.site.siteType, "unattended"); assert.equal(visit.site.abn, "51 824 753 556");
+  assert.equal(visit.site.siteType, "unattended"); assert.equal(visit.site.abn, "20 000 000 190");
   assert.equal(H.mailbox.filter((m) => !/code is \d{8}/.test(m.text || "")).length, 0, "no notification email");
   await p.close();
 });
@@ -145,8 +145,10 @@ test("admin logs: site-type filter offers All, VEA Retail, LOC CA, Unattended an
   await p.click('[data-act="visitor-filter"]');
   await p.waitForFunction(() => [...document.querySelectorAll('[data-testid="visitor-row"]')].length >= 1 && [...document.querySelectorAll('[data-testid="visitor-row"]')].every((r) => r.textContent.includes("Unattended")), { timeout: 5000 });
   await p.close();
-  const s = await H.openPage(browser, owner, "visitors/settings", { w: 1440, h: 900, log: false });
+  const s = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, log: false });
   await s.waitForSelector('[data-testid="site-detail-counts"]', { timeout: 8000 });
+  assert.ok(await s.$('[data-testid="visitor-tab-sites"]'));
+  assert.ok(await s.$('[data-testid="sites-table"]'));
   assert.match(await s.$eval('[data-testid="site-detail-counts"]', (e) => e.textContent), /6 sites: 0 VEA Retail, 1 LOC CA, 3 Unattended, 2 not set \(shown as VEA Retail\)/);
   await s.type('[data-testid="site-details-csv"]', "loc,site_type\nLOC0203,company");
   await s.click('[data-act="site-details-preview"]');
@@ -225,4 +227,79 @@ test("when no Unattended sites are listed, search and Use my location are hidden
   await out.type("#out-site-q", "typed out");
   assert.equal(await out.$eval("#out-site-q", (e) => e.value), "typed out");
   await out.close();
+});
+
+test("admin sites manager: table, add form, Unattended edit form, hide and remove confirms; screenshots at 390 and 1440", { skip: SKIP, timeout: 90000 }, async () => {
+  await boot();
+  const dir = path.join("screenshots");
+  fs.mkdirSync(dir, { recursive: true });
+  async function shot(page, name, sel) {
+    const file = path.join(dir, name);
+    if (sel) {
+      const el = await page.$(sel);
+      assert.ok(el, "screenshot target " + sel);
+      await el.screenshot({ path: file });
+    } else {
+      await page.screenshot({ path: file, fullPage: false });
+    }
+    return file;
+  }
+  for (const w of [1440, 390]) {
+    const p = await H.openPage(browser, owner, "visitors/sites", { w, h: w < 500 ? 844 : 900, theme: "crazy", log: false });
+    await p.waitForSelector('[data-testid="sites-table"]', { timeout: 8000 });
+    const names = await p.$$eval('[data-testid="site-row"] td:first-child', (els) => els.map((e) => e.textContent));
+    assert.ok(names.includes("Synthetic Unattended Ballarat"), "table lists Unattended sites at " + w);
+    assert.ok(names.includes("Synthetic Ballarat North"), "retail sites stay in the manager at " + w);
+    assert.ok(await p.$('[data-testid="picker-types"]'));
+    assert.equal(await p.$eval('[data-testid="picker-type-unattended"]', (e) => e.checked), true);
+    await p.$eval("#site-details", (e) => e.scrollIntoView({ block: "start" })); await H.wait(200); await shot(p, "sites-page-" + w + ".png");
+    await p.$eval("#sites-manager", (e) => e.scrollIntoView({ block: "start" })); await H.wait(200); await shot(p, "sites-table-" + w + ".png");
+    await p.select("#site-mgr-type", "unattended");
+    const only = await p.$$eval('[data-testid="site-row"] td:first-child', (els) => els.map((e) => e.textContent));
+    assert.ok(only.every((n) => /Unattended/.test(n)), only.join(" | "));
+
+    await p.click('[data-testid="site-add-open"]');
+    await p.waitForSelector('[data-testid="site-add-form"]');
+    assert.ok(await p.$eval('[data-testid="site-add-form"]', (f) => f.getBoundingClientRect().width > 0));
+    assert.equal(await p.$eval('[data-testid="site-form-type"]', (s) => s.value), "unattended");
+    assert.equal(await p.$eval("#site-own-details", (e) => e.hidden), false, "Unattended add form shows per-site ABN and trading name");
+    await p.$eval("#site-own-details", (e) => e.scrollIntoView({ block: "center" })); await H.wait(150); await shot(p, "sites-add-" + w + ".png", ".modal-card");
+    await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+    await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+    await p.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+      row?.querySelector('[data-testid="site-edit"]')?.click();
+    });
+    await p.waitForSelector('[data-testid="site-edit-form"]');
+    assert.equal(await p.$eval('[data-testid="site-form-name"]', (e) => e.value), "Synthetic Unattended Ballarat");
+    assert.equal(await p.$eval('[data-testid="site-form-type"]', (s) => s.value), "unattended");
+    assert.equal(await p.$eval('[data-testid="site-form-trading-name"]', (e) => e.value), "Synthetic Unattended Pty Ltd");
+    assert.equal(await p.$eval('[data-testid="site-form-abn"]', (e) => e.value), "20 000 000 190");
+    assert.equal(await p.$eval("#site-own-details", (e) => e.hidden), false);
+    await p.$eval("#site-own-details", (e) => e.scrollIntoView({ block: "center" })); await H.wait(150); await shot(p, "sites-edit-unattended-" + w + ".png", ".modal-card");
+    await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+    await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+    await p.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+      row?.querySelector('[data-testid="site-remove"]')?.click();
+    });
+    await p.waitForSelector('[data-testid="site-remove-confirm"]');
+    assert.match(await p.$eval(".modal-card", (e) => e.innerText), /Remove this site\?/);
+    assert.match(await p.$eval(".modal-card", (e) => e.innerText), /Past sign-ins keep their saved site details/);
+    await shot(p, "sites-remove-confirm-" + w + ".png", ".modal-card");
+    await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+    await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+    await p.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+      row?.querySelector('[data-testid="site-hide"]')?.click();
+    });
+    await p.waitForSelector('[data-testid="site-hide-confirm"]');
+    assert.match(await p.$eval(".modal-card", (e) => e.innerText), /Hide this site\?/);
+    await shot(p, "sites-hide-confirm-" + w + ".png", ".modal-card");
+    await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+    await p.close();
+  }
 });
