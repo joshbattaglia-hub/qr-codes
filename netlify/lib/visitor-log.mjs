@@ -612,17 +612,32 @@ export async function listVisits(actor, query) {
   const location = String(query.get("location") || "").trim().toLowerCase();
   const siteType = String(query.get("siteType") || "all");
   const agent = String(query.get("agent") || "");
-  // Agents to filter by: every commission agent in the site list, plus any seen in older sign-ins.
+  const unattendedSite = String(query.get("site") || "");
+  // Agents and Unattended sites to filter by: every one in the site list, plus any seen in older sign-ins.
   const agents = new Map();
+  const unattended = new Map();
   const directory = await publicSiteDirectory({ readFirstMaintenance }).catch(() => ({ sites: [] }));
-  for (const s of directory.sites || []) if (s.type === "commission_agent") { const snap = { siteId: s.id, name: s.name, tradingName: s.tradingName, abn: s.abn }; const key = agentKey(snap); if (key && !agents.has(key)) agents.set(key, { key, label: agentLabel(snap), abn: s.abn || "", count: 0 }); }
-  for (const row of rows) if (visitSiteType(row) === "commission_agent") { const key = agentKey(row.site); if (!key) continue; if (!agents.has(key)) agents.set(key, { key, label: agentLabel(row.site), abn: row.site.abn || "", count: 0 }); agents.get(key).count += 1; }
+  for (const s of directory.sites || []) {
+    if (s.type === "commission_agent") { const snap = { siteId: s.id, name: s.name, tradingName: s.tradingName, abn: s.abn }; const key = agentKey(snap); if (key && !agents.has(key)) agents.set(key, { key, label: agentLabel(snap), abn: s.abn || "", count: 0 }); }
+    if (s.type === "unattended" && s.id && !unattended.has(s.id)) unattended.set(s.id, { id: s.id, loc: s.loc || "", name: s.name, count: 0 });
+  }
+  for (const row of rows) {
+    if (visitSiteType(row) === "commission_agent") { const key = agentKey(row.site); if (!key) continue; if (!agents.has(key)) agents.set(key, { key, label: agentLabel(row.site), abn: row.site.abn || "", count: 0 }); agents.get(key).count += 1; }
+    if (visitSiteType(row) === "unattended") {
+      const id = row.site?.siteId || "";
+      if (!id) continue;
+      if (!unattended.has(id)) unattended.set(id, { id, loc: row.site.loc || "", name: row.site.name || "Unattended site", count: 0 });
+      unattended.get(id).count += 1;
+    }
+  }
   const filtered = rows.filter((row) => {
     const type = visitSiteType(row);
-    if (siteType === "company" && type === "commission_agent") return false;
+    if (siteType === "company" && type !== "company" && type !== "untagged") return false;
     if (siteType === "untagged" && type !== "untagged") return false;
     if (siteType === "agents" && type !== "commission_agent") return false;
     if (siteType === "agent" && (type !== "commission_agent" || agentKey(row.site) !== agent)) return false;
+    if (siteType === "unattended" && type !== "unattended") return false;
+    if (siteType === "unattended_site" && (type !== "unattended" || row.site?.siteId !== unattendedSite)) return false;
     if (status === "in" && row.signedOutAt) return false;
     if (status === "out" && !row.signedOutAt) return false;
     const day = melbourneDay(row.signedInAt);
@@ -631,7 +646,7 @@ export async function listVisits(actor, query) {
     if (location && !String(row.location || "").toLowerCase().includes(location)) return false;
     return true;
   }).sort((a, b) => String(b.signedInAt).localeCompare(String(a.signedInAt)));
-  return { status: 200, body: { visits: filtered.slice(0, 500).map(publicVisit), agents: [...agents.values()].sort((a, b) => a.label.localeCompare(b.label)) } };
+  return { status: 200, body: { visits: filtered.slice(0, 500).map(publicVisit), agents: [...agents.values()].sort((a, b) => a.label.localeCompare(b.label)), unattended: [...unattended.values()].sort((a, b) => a.name.localeCompare(b.name)) } };
 }
 
 export async function readVisit(actor, id) {
@@ -1004,7 +1019,7 @@ export async function importSiteDetails(actor, body) {
   if (apply && body?.confirm !== "APPLY") return { status: 400, error: "Preview first, then confirm to apply." };
   const report = apply ? await applyDetailImport(csv) : await previewDetailImport(csv);
   if (report.error) return { status: 400, error: report.error };
-  if (apply) await audit("site-details-import", actor.id || actor.email || "", "", "rows " + report.summary.rows + ", written " + report.written + ", errors " + report.summary.errors);
+  if (apply) await audit("site-details-import", actor.id || actor.email || "", "", "rows " + report.summary.rows + ", added " + (report.summary.added || 0) + ", changed " + (report.summary.changed || 0) + ", written " + report.written + ", errors " + report.summary.errors);
   return { status: 200, body: { dryRun: !apply, written: report.written || 0, summary: report.summary, ignoredColumns: report.ignoredColumns, rows: report.plan.map(({ patch, ...row }) => row) } };
 }
 

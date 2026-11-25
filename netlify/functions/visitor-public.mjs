@@ -32,7 +32,9 @@ export default async (req, context) => {
     // Public site directory for the site picker: names, LOC, address, phone, ABN / trading name and map points of
     // our own sites. Nothing about visitors. "Use my location" is worked out in the browser; coordinates are never sent here.
     // The visitor picker lists only the enabled types (Unattended by default). Retail sites stay in the master list.
-    const directory = await publicSiteDirectory({ readFirstMaintenance, picker: true }).catch(() => ({ sites: [], total: 0, withCoordinates: 0, picker: "unattended" }));
+    // On a deploy preview, proposed Unattended sites are overlaid for review and are never written to the live list.
+    const preview = !!context?.deploy?.context && context.deploy.context !== "production";
+    const directory = await publicSiteDirectory({ readFirstMaintenance, picker: true, includeProposed: preview }).catch(() => ({ sites: [], total: 0, withCoordinates: 0, picker: "unattended" }));
     return json(200, directory, { "cache-control": "public, max-age=60", "referrer-policy": "no-referrer" });
   }
   if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);

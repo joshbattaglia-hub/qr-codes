@@ -42,7 +42,7 @@ test("normalisers: ABN checksum, AU phone, site type words, CSV quoting", () => 
   assert.equal(sd.normaliseSitePhone("call me"), null);
   for (const w of ["Commission Agent", "agent", "commission_agent", "CA", "LOC CA", "loc-ca"]) assert.equal(sd.normaliseSiteType(w), "commission_agent", w);
   for (const w of ["Liberty", "company", "Company run", "VEA Retail", "VEA"]) assert.equal(sd.normaliseSiteType(w), "company", w);
-  for (const w of ["Unattended", "unattended_site", "unmanned"]) assert.equal(sd.normaliseSiteType(w), "unattended", w);
+  for (const w of ["Unattended", "unattended", "unattended_site", "unmanned", "Unattended service station"]) assert.equal(sd.normaliseSiteType(w), "unattended", w);
   assert.equal(sd.normaliseSiteType("franchise"), null);
   assert.deepEqual(sd.parseCsv('\ufeffloc,trading_name\r\nLOC1,"Smith, Jones ""& Co"""\n\n'), [["loc", "trading_name"], ["LOC1", 'Smith, Jones "& Co"']]);
 });
@@ -60,6 +60,14 @@ test("display rules: company sites use the one Liberty setting, agents their own
   assert.equal(agent.tradingName, "Agent Co"); assert.equal(agent.abn, SYN_AGENT_ABN); assert.equal(agent.phone, "0412 345 678");
   const bare = sd.displaySite({ id: "s4", name: "D", siteType: "commission_agent" }, { abn: "", tradingName: "" });
   assert.equal(bare.tradingName, ""); assert.equal(bare.abn, ""); assert.equal(bare.address, "");
+  const u = sd.displaySite({ id: "s5", name: "E", siteType: "unattended", abn: SYN_AGENT_ABN, tradingName: "Ignored" }, company);
+  assert.equal(u.type, "unattended");
+  assert.equal(u.tradingName, "Synthetic Liberty Trading", "Unattended sites use the central company trading name");
+  assert.equal(u.abn, SYN_LIBERTY_ABN);
+  assert.equal(u.phone, "03 9113 7191");
+  assert.equal(sd.usesCompanyDetails("unattended"), true);
+  assert.equal(sd.usesCompanyDetails("company"), true);
+  assert.equal(sd.usesCompanyDetails("commission_agent"), false);
 });
 
 test("public site directory: the visitor picker lists only Unattended sites, not VEA Retail or LOC CA", async () => {
@@ -67,20 +75,22 @@ test("public site directory: the visitor picker lists only Unattended sites, not
   const r = await j(H.call("GET", "/api/visit/sites"));
   assert.equal(r.status, 200);
   assert.match(r.headers.get("cache-control"), /public/);
+  assert.equal(r.body.picker, "unattended");
   const names = r.body.sites.map((s) => s.name);
+  assert.deepEqual(names, ["Synthetic Unattended Moe"]);
   assert.ok(!names.includes("Synthetic Held Site"), "held sites are not offered");
-  assert.ok(!names.includes("Synthetic Ballarat North") && !names.includes("Synthetic Bendigo East"), "retail sites stay out of the picker");
+  assert.ok(!names.includes("Synthetic Ballarat North") && !names.includes("Synthetic Bendigo East") && !names.includes("Synthetic Geelong West"), "retail sites stay out of the picker");
   assert.equal(r.body.picker, "unattended");
   assert.equal(r.body.total, 1); assert.equal(r.body.withCoordinates, 1);
   assert.deepEqual(names, ["Synthetic Unattended Moe"]);
   assert.equal(r.body.sites[0].type, "unattended");
   const keys = new Set(r.body.sites.flatMap((s) => Object.keys(s)));
-  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "lat", "lng", "picker"].includes(k), "unexpected public field " + k);
+  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "lat", "lng", "picker", "proposed"].includes(k), "unexpected public field " + k);
   const full = await sd.publicSiteDirectory({ picker: false });
   assert.ok(full.sites.some((s) => s.name === "Synthetic Ballarat North"), "the master list still has retail sites");
+  assert.ok(full.sites.some((s) => s.type === "company"));
   assert.ok(full.sites.some((s) => s.type === "commission_agent"));
-  const emptyStore = await sd.publicSiteDirectory({ picker: true });
-  assert.equal(emptyStore.sites.every((s) => s.type === "unattended"), true);
+  assert.equal((await sd.publicSiteDirectory({ picker: true })).sites.every((s) => s.type === "unattended"), true);
 });
 
 test("company details: owner-only setting, ABN checked, saved centrally and shown on every company site", async () => {
@@ -93,9 +103,11 @@ test("company details: owner-only setting, ABN checked, saved centrally and show
   sd.clearSiteDirectoryCache();
   const dir = (await sd.publicSiteDirectory({ picker: false })).sites;
   assert.ok(dir.some((s) => s.type === "company"));
-  for (const s of dir.filter((x) => x.type === "company")) { assert.equal(s.abn, SYN_LIBERTY_ABN); assert.equal(s.tradingName, "Synthetic Liberty Trading"); }
+  for (const s of dir.filter((x) => x.type === "company" || x.type === "unattended")) { assert.equal(s.abn, SYN_LIBERTY_ABN); assert.equal(s.tradingName, "Synthetic Liberty Trading"); }
   const picker = (await j(H.call("GET", "/api/visit/sites"))).body.sites;
+  assert.ok(picker.every((s) => s.type === "unattended"));
   assert.ok(!picker.some((s) => s.type === "company" || s.type === "commission_agent"));
+  assert.equal(picker[0].abn, SYN_LIBERTY_ABN);
 });
 
 test("sign-in with a picked site stores a snapshot (name, LOC, type, trading name, ABN); typed sites still work; no coordinates are accepted or stored", async () => {
@@ -196,6 +208,7 @@ test("CSV import: preview writes nothing, flags problems, needs an explicit appl
   const view = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
   assert.equal(view.body.defaultPhone, "03 9113 7191");
   assert.equal(view.body.counts.total, 5);
+  assert.equal(view.body.counts.unattended, 1);
 });
 
 test("privacy: location is only asked for on the button tap, worked out in the browser, and never sent", () => {
@@ -264,6 +277,63 @@ test("labels: visitors and admins see VEA Retail, LOC CA and Unattended, never t
   assert.match(js, /"Unattended"/);
   assert.ok(!js.includes('"Liberty site"') && !js.includes('"Commission agent"'));
   const app = fs.readFileSync("public/admin/app.js", "utf8");
-  for (const t of ["VEA Retail sites", "All LOC CA sites", "LOC CA sites", ">VEA Retail</span>", "LOC CA site"]) assert.ok(app.includes(t), t);
+  for (const t of ["VEA Retail sites", "All LOC CA sites", "Unattended sites", "LOC CA sites", ">VEA Retail</span>", "LOC CA site", ">Unattended</span>"]) assert.ok(app.includes(t), t);
   for (const t of [">Company sites<", "All commission agents", ">Liberty</span>", '"Commission agents"']) assert.ok(!app.includes(t), t);
+});
+
+test("CSV import can add a new Unattended site after preview, and will not add a name that already exists", async () => {
+  const csv = [
+    "loc,site_name,site_type,address,phone",
+    ",Synthetic Unattended Horsham,unattended,\"170-172 Firebrace St, Horsham VIC 3400\",03 9113 7191",
+    "LOC0106,Synthetic Unattended Moe,unattended,,",
+    "LOC9998,,unattended,,,",
+    "LOC9997,Synthetic Ballarat North,unattended,,",
+  ].join("\n");
+  const before = await storeDump();
+  const prev = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv } }));
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.dryRun, true);
+  assert.deepEqual(await storeDump(), before, "preview writes nothing");
+  const byLine = Object.fromEntries(prev.body.rows.map((r) => [r.line, r]));
+  assert.equal(byLine[2].action, "add");
+  assert.equal(byLine[2].site.added, true);
+  assert.equal(byLine[2].site.name, "Synthetic Unattended Horsham");
+  assert.equal(byLine[3].action, "update");
+  assert.equal(byLine[3].site.id, "s00000a06");
+  assert.match(byLine[4].errors[0], /No site with LOC LOC9998/);
+  assert.match(byLine[5].errors[0], /already belongs to/);
+  assert.equal(prev.body.summary.added, 1);
+  const applied = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv, dryRun: false, confirm: "APPLY" } }));
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.equal(applied.body.written, 1);
+  const addRow = applied.body.rows.find((r) => r.action === "add");
+  assert.ok(addRow.site.id && /^s[a-f0-9]{8}$/.test(addRow.site.id));
+  const created = await lib.sitesStore().get(addRow.site.id, { type: "json" });
+  assert.equal(created.siteType, "unattended");
+  assert.equal(created.name, "Synthetic Unattended Horsham");
+  assert.match(created.address, /Horsham/);
+  sd.clearSiteDirectoryCache();
+  const picker = (await j(H.call("GET", "/api/visit/sites"))).body.sites.map((s) => s.name).sort();
+  assert.deepEqual(picker, ["Synthetic Unattended Horsham", "Synthetic Unattended Moe"]);
+  const view = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
+  assert.equal(view.body.counts.unattended, 2);
+});
+
+
+test("deploy previews overlay proposed Unattended sites on the picker without writing them; production is unchanged", async () => {
+  const pub = await import("../netlify/functions/visitor-public.mjs");
+  const before = await storeDump();
+  sd.clearSiteDirectoryCache();
+  const preview = await pub.default(new Request("https://preview.example/api/visit/sites"), { deploy: { context: "deploy-preview" } });
+  assert.equal(preview.status, 200);
+  const body = await preview.json();
+  assert.ok(body.proposed >= 25, "proposed Unattended sites are overlaid on a preview");
+  const moe = body.sites.find((s) => s.name === "Reddy Express Moe");
+  assert.equal(moe?.type, "unattended");
+  assert.equal(moe?.proposed, true);
+  assert.ok(!body.sites.some((s) => s.type === "company" || s.type === "commission_agent"), "retail sites stay out of the picker");
+  assert.deepEqual(await storeDump(), before, "the overlay is not written");
+  sd.clearSiteDirectoryCache();
+  const live = await j(H.call("GET", "/api/visit/sites"));
+  assert.ok(!live.body.sites.some((s) => s.name === "Reddy Express Moe"), "production/test list is only stored Unattended sites");
 });
