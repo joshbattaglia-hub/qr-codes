@@ -246,8 +246,9 @@ test("footer: shared wording is present on the admin page and readable in every 
   const footer = fs.readFileSync("public/footer.js", "utf8");
   assert.match(HTML, /<script src="\/footer\.js" defer><\/script>/);
   assert.match(footer, /Cowabunga - please hesitate to reach out /);
-  assert.match(footer, /link\.textContent = "email me here"/);
-  assert.match(footer, /mailto:jbattaglia@libertyretail\.com\.au/);
+  assert.match(footer, /DEFAULT_LINK = "email me here"/);
+  assert.match(footer, /link\.textContent = DEFAULT_LINK/);
+  assert.match(footer, /DEFAULT_EMAIL = "jbattaglia@libertyretail\.com\.au"/);
   assert.match(footer, /color:var\(--footer-ink,#667085\)/, "public pages (no theme) keep the light colour");
   const dark = varsOf(blockAfter(CSS, 'html[data-theme="dark"]'));
   assert.ok(ratio(dark["footer-ink"], dark["bg"]) >= 4.5);

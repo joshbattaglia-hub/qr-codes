@@ -5,7 +5,7 @@ export { previewReadOnly };
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
-  archiveManagedSite, createManagedSite, geocodeManagedSite, hideManagedSite, importSiteDetails, saveCompanyDetails, savePickerTypeSetting, siteDetailCsv, siteDetailSettings, updateManagedSite,
+  archiveManagedSite, createManagedSite, geocodeManagedSite, hideManagedSite, importSiteDetails, saveCompanyDetails, saveDefaultContactEmailSetting, savePickerTypeSetting, siteDetailCsv, siteDetailSettings, updateManagedSite,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -112,6 +112,11 @@ export default async (req, context) => {
   if (path === "/api/visitor-log/company" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await saveCompanyDetails(actor, body);
+    return json(result.status, result.body || { error: result.error }, PRIVATE);
+  }
+  if (path === "/api/visitor-log/contact-email" && req.method === "POST") {
+    const body = await req.json().catch(() => ({}));
+    const result = await saveDefaultContactEmailSetting(actor, body);
     return json(result.status, result.body || { error: result.error }, PRIVATE);
   }
   if (path === "/api/visitor-log/site-details/import" && req.method === "POST") {

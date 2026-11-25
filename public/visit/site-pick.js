@@ -166,6 +166,7 @@
     row(dl, "ABN", site.abn);
     row(dl, "Address", site.address);
     row(dl, "Phone", site.phone, site.phoneHref);
+    row(dl, "Email", site.contactEmail, site.contactEmailHref);
     if (dl.childNodes.length) card.appendChild(dl);
     if (site.type === "commission_agent") card.appendChild(el("p", "muted small", "This site is run by an independently owned commission agent."));
     if (site.proposed) card.appendChild(el("p", "muted small", "Preview only. This site is not on the live list yet."));

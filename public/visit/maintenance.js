@@ -22,7 +22,24 @@
         item.append(link);
         list.append(item);
       }
-      box.hidden = contacts.length === 0;
+      const email = typeof body.contactEmail === "string" ? body.contactEmail.trim() : "";
+      const href = typeof body.contactEmailHref === "string" ? body.contactEmailHref.trim() : "";
+      const oldMail = list.querySelector('[data-testid="visit-contact-email"]');
+      if (oldMail) oldMail.parentNode.remove();
+      if (email && /^mailto:[a-z0-9._%+'’-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(href)) {
+        const item = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = href;
+        link.setAttribute("data-testid", "visit-contact-email");
+        const label = document.createElement("span");
+        label.textContent = "Email";
+        const address = document.createElement("strong");
+        address.textContent = email;
+        link.append(label, address);
+        item.append(link);
+        list.append(item);
+      }
+      box.hidden = contacts.length === 0 && !(email && href);
     })
     .catch(() => { box.hidden = true; });
 })();

@@ -1,6 +1,6 @@
 /**
  * Site details shown on the public visitor sign-in form: site type (VEA Retail, LOC CA or Unattended),
- * trading name, ABN, physical address, phone and map point.
+ * trading name, ABN, physical address, phone, contact email and map point.
  *
  * - One master site list (the existing `sites` store). The detail fields live on each site record.
  * - VEA Retail sites show Liberty's ABN and trading name from one central setting.
@@ -22,10 +22,15 @@ export const SITE_TYPE_LABEL = { company: "VEA Retail", commission_agent: "LOC C
 /** Only VEA Retail (and untyped sites, which count as VEA Retail) use the central trading name and ABN. LOC CA and Unattended use their own. */
 export const usesCompanyDetails = (type) => type !== "commission_agent" && type !== "unattended";
 export const DEFAULT_SITE_PHONE = "03 9113 7191";
+/** Shown under the phone on the visitor site card when a site has no override. */
+export const DEFAULT_CONTACT_EMAIL = "pumprepairs@libertyretail.com.au";
+export const CONTACT_EMAIL_KEY = "visitor-contact-email";
+/** Stored on a site to hide the contact email (CSV value HIDE). */
+export const CONTACT_EMAIL_HIDDEN = "HIDE";
 export const COMPANY_KEY = "company-details";
 export const PICKER_TYPES_KEY = "visitor-picker-types";
 export const DEFAULT_PICKER_TYPES = ["unattended"];
-export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "address", "lat", "lng"];
+export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "contact_email", "address", "lat", "lng"];
 const SITE_ID = /^s[a-f0-9]{8}$/;
 const CACHE_MS = 60 * 1000;
 const GEOCODE_UA = "ExpressHelp-site-manager/1.0 (https://expresshelp.site; admin address geocode only; no visitor data)";
@@ -97,6 +102,16 @@ export function normaliseSitePhone(value) {
   return (plus ? "+" : "") + digits;
 }
 export const phoneHref = (display) => display ? "tel:" + (display.startsWith("+") ? "+" : "") + display.replace(/\D/g, "") : "";
+const CONTACT_EMAIL_RE = /^[a-z0-9._%+'’-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
+/** Contact email: a valid address, the word HIDE (show nothing), "" for blank, or null when invalid. */
+export function normaliseContactEmail(value) {
+  const text = unguardCsvCell(String(value ?? "")).trim();
+  if (!text) return "";
+  if (["HIDE", "NONE", "HIDDEN"].includes(text.toUpperCase())) return CONTACT_EMAIL_HIDDEN;
+  if (text.length > 120 || text.includes(" ") || !CONTACT_EMAIL_RE.test(text)) return null;
+  return text.toLowerCase();
+}
+export const contactEmailHref = (email) => email && email !== CONTACT_EMAIL_HIDDEN ? "mailto:" + email : "";
 
 export function cleanCompany(raw) {
   const abn = normaliseAbn(raw?.abn);
@@ -120,12 +135,14 @@ export function siteDetailFields(site) {
   const type = normaliseSiteType(site?.siteType);
   const abn = normaliseAbn(site?.abn);
   const phone = normaliseSitePhone(site?.phone);
+  const contactEmail = normaliseContactEmail(site?.contactEmail);
   const coords = validCoords(site?.lat ?? site?.latitude, site?.lng ?? site?.lon ?? site?.longitude);
   return {
     siteType: type || "",
     tradingName: clean(site?.tradingName, 120),
     abn: abn || "",
     phone: phone || "",
+    contactEmail: contactEmail || "",
     address: clean(site?.address, 240),
     lat: coords ? coords.lat : null,
     lng: coords ? coords.lng : null,
@@ -137,14 +154,16 @@ export function siteDetailFields(site) {
  * VEA Retail sites always use the central Liberty ABN / trading name (never a per-site one).
  * LOC CA and Unattended sites use the ABN and trading name stored on the site.
  */
-export function displaySite(site, company, defaultPhone = DEFAULT_SITE_PHONE) {
+export function displaySite(site, company, defaultPhone = DEFAULT_SITE_PHONE, defaultContactEmail = DEFAULT_CONTACT_EMAIL) {
   const f = siteDetailFields(site);
   const type = f.siteType || "company";
   const central = usesCompanyDetails(type);
   const tradingName = central ? company.tradingName : f.tradingName;
   const abn = central ? company.abn : f.abn;
   const phone = f.phone || defaultPhone || "";
-  const out = { id: site.id, loc: clean(site.loc, 40), name: clean(site.name, 120), suburb: suburbFromAddress(site.address), type, address: f.address, tradingName, abn, phone, phoneHref: phoneHref(phone) };
+  const hiddenEmail = f.contactEmail === CONTACT_EMAIL_HIDDEN;
+  const contactEmail = hiddenEmail ? "" : (f.contactEmail || defaultContactEmail || "");
+  const out = { id: site.id, loc: clean(site.loc, 40), name: clean(site.name, 120), suburb: suburbFromAddress(site.address), type, address: f.address, tradingName, abn, phone, phoneHref: phoneHref(phone), contactEmail, contactEmailHref: contactEmailHref(contactEmail) };
   if (f.lat != null) { out.lat = f.lat; out.lng = f.lng; }
   return out;
 }
@@ -160,6 +179,26 @@ async function allSiteRecords() {
 export async function defaultSitePhone(readFirstMaintenance) {
   const first = readFirstMaintenance ? await readFirstMaintenance().catch(() => "") : "";
   return normaliseSitePhone(first) || DEFAULT_SITE_PHONE;
+}
+
+/** The default contact email shown on visitor cards. Code default when the setting is unset. */
+export async function readDefaultContactEmail() {
+  const raw = await settingsStore().get(CONTACT_EMAIL_KEY, { type: "json" }).catch(() => null);
+  if (raw == null) return DEFAULT_CONTACT_EMAIL;
+  const email = normaliseContactEmail(typeof raw === "string" ? raw : raw?.email);
+  if (email === CONTACT_EMAIL_HIDDEN) return "";
+  return email || DEFAULT_CONTACT_EMAIL;
+}
+export async function saveDefaultContactEmail(body) {
+  const raw = body?.email != null ? body.email : body?.contactEmail;
+  const email = normaliseContactEmail(raw);
+  if (email === null) return { status: 400, error: "That email is not valid." };
+  const next = { email: email || DEFAULT_CONTACT_EMAIL, updatedAt: new Date(clock()).toISOString() };
+  if (email === CONTACT_EMAIL_HIDDEN) next.email = CONTACT_EMAIL_HIDDEN;
+  await settingsStore().setJSON(CONTACT_EMAIL_KEY, next);
+  cache = null;
+  const display = next.email === CONTACT_EMAIL_HIDDEN ? "" : (next.email || DEFAULT_CONTACT_EMAIL);
+  return { status: 200, body: { email: display, hidden: next.email === CONTACT_EMAIL_HIDDEN } };
 }
 
 function directoryBody(sites, extra = {}) {
@@ -204,17 +243,17 @@ export async function savePickerTypes(body) {
  *  Pass includeProposed:true on deploy previews to overlay the proposed Unattended list (never written). */
 export async function publicSiteDirectory({ readFirstMaintenance, picker = false, includeProposed = false } = {}) {
   if (!(cache && clock() - cache.at < CACHE_MS)) {
-    const [records, company, defaultPhone, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readPickerTypes()]);
-    const sites = records.filter((r) => !r.hold && !r.visitorArchived).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
+    const [records, company, defaultPhone, defaultContactEmail, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readDefaultContactEmail(), readPickerTypes()]);
+    const sites = records.filter((r) => !r.hold && !r.visitorArchived).map((r) => displaySite(r, company, defaultPhone, defaultContactEmail)).sort((a, b) => a.name.localeCompare(b.name));
     const offeredIds = new Set(records.filter(isOfferedToVisitors).map((r) => r.id));
-    cache = { at: clock(), body: directoryBody(sites), offeredIds, company, defaultPhone, pickerTypes };
+    cache = { at: clock(), body: directoryBody(sites), offeredIds, company, defaultPhone, defaultContactEmail, pickerTypes };
   }
   let body = cache.body;
   if (picker) {
     const types = cache.pickerTypes;
     const sites = body.sites.filter((s) => types.includes(s.type) && cache.offeredIds.has(s.id));
     body = directoryBody(sites, { picker: types.join(",") });
-    if (includeProposed && types.includes("unattended")) body = mergeProposedUnattended(body, cache.body.sites, cache.company, cache.defaultPhone);
+    if (includeProposed && types.includes("unattended")) body = mergeProposedUnattended(body, cache.body.sites, cache.company, cache.defaultPhone, cache.defaultContactEmail);
   }
   return body;
 }
@@ -226,7 +265,7 @@ function proposedId(index) {
   const hex = (0xe000000 + index).toString(16).slice(-8);
   return "s" + hex;
 }
-function mergeProposedUnattended(pickerBody, allLive, company, defaultPhone) {
+function mergeProposedUnattended(pickerBody, allLive, company, defaultPhone, defaultContactEmail) {
   const taken = new Set((allLive || []).map((s) => (s.name || "").trim().toLowerCase()));
   const raw = loadProposedUnattendedRaw();
   const extra = [];
@@ -234,7 +273,7 @@ function mergeProposedUnattended(pickerBody, allLive, company, defaultPhone) {
     const name = clean(row.name, 120);
     if (!name || taken.has(name.toLowerCase())) return;
     const id = SITE_ID.test(String(row.id || "")) ? row.id : proposedId(i + 1);
-    const view = displaySite({ ...row, siteType: "unattended", name, id }, company || {}, defaultPhone || DEFAULT_SITE_PHONE);
+    const view = displaySite({ ...row, siteType: "unattended", name, id }, company || {}, defaultPhone || DEFAULT_SITE_PHONE, defaultContactEmail || DEFAULT_CONTACT_EMAIL);
     view.proposed = true;
     extra.push(view);
     taken.add(name.toLowerCase());
@@ -249,8 +288,8 @@ export async function siteSnapshot(siteId, { readFirstMaintenance } = {}) {
   if (!SITE_ID.test(id)) return null;
   const record = await sitesStore().get(id, { type: "json" }).catch(() => null);
   if (!record || !isOfferedToVisitors(record)) return null;
-  const view = displaySite(record, await readCompany(), await defaultSitePhone(readFirstMaintenance));
-  return { siteId: view.id, loc: view.loc, name: view.name, siteType: view.type, tradingName: view.tradingName, abn: view.abn };
+  const view = displaySite(record, await readCompany(), await defaultSitePhone(readFirstMaintenance), await readDefaultContactEmail());
+  return { siteId: view.id, loc: view.loc, name: view.name, siteType: view.type, tradingName: view.tradingName, abn: view.abn, contactEmail: view.contactEmail || "" };
 }
 export const siteLabel = (snap) => snap ? snap.name + (snap.loc ? " (" + snap.loc + ")" : "") : "";
 
@@ -305,6 +344,7 @@ const HEADER_ALIASES = {
   trading_name: ["trading_name", "tradingname", "business_name", "entity_name"],
   abn: ["abn"],
   phone: ["phone", "phone_number", "site_phone"],
+  contact_email: ["contact_email", "contactemail", "email", "site_email", "contact"],
   address: ["address", "physical_address", "site_address"],
   lat: ["lat", "latitude"],
   lng: ["lng", "lon", "long", "longitude"],
@@ -376,6 +416,12 @@ export function planDetailImport(records, csvText) {
       const phone = phoneRaw.toUpperCase() === CLEAR ? "" : normaliseSitePhone(phoneRaw);
       if (phone === null) errors.push("Phone " + phoneRaw + " is not valid.");
       else set("phone", phone);
+    }
+    const emailRaw = get("contact_email");
+    if (emailRaw) {
+      const contactEmail = emailRaw.toUpperCase() === CLEAR ? "" : normaliseContactEmail(emailRaw);
+      if (contactEmail === null) errors.push("Contact email " + emailRaw + " is not valid.");
+      else set("contactEmail", contactEmail, "contact_email");
     }
     const address = get("address");
     if (address) set("address", address.toUpperCase() === CLEAR ? "" : clean(address, 240));
@@ -524,7 +570,7 @@ export async function detailCsv(types) {
   const lines = [CSV_COLUMNS.join(",")];
   for (const r of records) {
     const f = siteDetailFields(r);
-    lines.push([r.loc || "", r.name, f.siteType, f.tradingName, f.abn, f.phone, f.address, f.lat ?? "", f.lng ?? ""].map(csvCell).join(","));
+    lines.push([r.loc || "", r.name, f.siteType, f.tradingName, f.abn, f.phone, f.contactEmail || "", f.address, f.lat ?? "", f.lng ?? ""].map(csvCell).join(","));
   }
   return lines.join("\n") + "\n";
 }
@@ -548,7 +594,7 @@ function adminSiteView(r, pickerTypes) {
 
 /** Admin view: every site (including hidden and removed) with stored fields, visibility and picker setting. */
 export async function adminSiteDetails({ readFirstMaintenance } = {}) {
-  const [records, company, defaultPhone, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readPickerTypes()]);
+  const [records, company, defaultPhone, defaultContactEmail, pickerTypes] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance), readDefaultContactEmail(), readPickerTypes()]);
   const sites = records.sort((a, b) => String(a.name).localeCompare(String(b.name))).map((r) => adminSiteView(r, pickerTypes));
   const active = sites.filter((s) => !s.archived && !s.hold);
   const counts = {
@@ -559,12 +605,13 @@ export async function adminSiteDetails({ readFirstMaintenance } = {}) {
     untyped: active.filter((s) => !s.siteType).length,
     withCoordinates: active.filter((s) => s.lat != null).length,
     phoneOverrides: active.filter((s) => s.phone).length,
+    emailOverrides: active.filter((s) => s.contactEmail).length,
     hidden: sites.filter((s) => s.visibility === "hidden").length,
     removed: sites.filter((s) => s.visibility === "removed").length,
     held: sites.filter((s) => s.visibility === "held").length,
     all: sites.length,
   };
-  return { company, defaultPhone, columns: CSV_COLUMNS, counts, sites, pickerTypes };
+  return { company, defaultPhone, defaultContactEmail, columns: CSV_COLUMNS, counts, sites, pickerTypes };
 }
 
 
@@ -594,6 +641,14 @@ export function parseSiteInput(body) {
     if (phone === null) errors.push("That phone number is not valid.");
     else phone = phone || "";
   }
+  let contactEmail = "";
+  if (body?.hideContactEmail === true || String(body?.contactEmail || "").trim().toUpperCase() === CONTACT_EMAIL_HIDDEN) {
+    contactEmail = CONTACT_EMAIL_HIDDEN;
+  } else if (body?.contactEmail != null && String(body.contactEmail).trim() !== "") {
+    contactEmail = normaliseContactEmail(body.contactEmail);
+    if (contactEmail === null) errors.push("That contact email is not valid.");
+    else contactEmail = contactEmail || "";
+  }
   const address = clean(body?.address, 240);
   let lat = null, lng = null;
   const latBlank = body?.lat == null || String(body.lat).trim() === "";
@@ -603,7 +658,7 @@ export function parseSiteInput(body) {
     if (!coords) errors.push("lat/lng must both be set to a point in Australia (for example -37.8136, 144.9631).");
     else { lat = coords.lat; lng = coords.lng; }
   }
-  return { errors, name, loc, fields: { siteType, tradingName, abn, phone, address, lat, lng } };
+  return { errors, name, loc, fields: { siteType, tradingName, abn, phone, contactEmail, address, lat, lng } };
 }
 
 async function uniquenessError(id, name, loc) {

@@ -1,4 +1,4 @@
-import { footerHtml } from "../lib/footer.mjs";
+import { footerHtml, loadFooter } from "../lib/footer.mjs";
 import { json, posReviews } from "../lib/lib.mjs";
 import { forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
 import { actorFromRequest } from "../lib/identity.mjs";
@@ -52,7 +52,7 @@ function reviewPayload(found) {
   };
 }
 
-function reviewHtml(token, found) {
+async function reviewHtml(token, found) {
   const view = reviewPayload(found);
   const action = "/api/pos-review/" + token + "/decision";
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS review</title><body style="font-family:sans-serif;max-width:40rem;margin:24px auto;padding:0 16px">
@@ -64,7 +64,7 @@ function reviewHtml(token, found) {
 <p>${esc(view.start)} through ${esc(view.end)}. Sites: ${esc((view.sites || []).map((site) => site.name).join(", ") || "Unassigned")}.</p>
 <form method="post" action="${esc(action)}"><input type="hidden" name="decision" value="approve"><input type="hidden" name="etag" value="${esc(view.etag)}"><button type="submit">Approve this revision</button></form>
 <form method="post" action="${esc(action)}"><input type="hidden" name="decision" value="reject"><input type="hidden" name="etag" value="${esc(view.etag)}"><button type="submit">Reject this revision</button></form>
-${footerHtml()}
+${footerHtml(await loadFooter())}
 </body></html>`;
 }
 
@@ -76,7 +76,7 @@ export default async (req) => {
     const found = await openReview(review[1]);
     if (found.status) return json(found.status, { error: found.status === 410 ? "This review link has expired" : "Not found" });
     if ((req.headers.get("accept") || "").includes("application/json")) return json(200, reviewPayload(found));
-    return new Response(reviewHtml(review[1], found), { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    return new Response(await reviewHtml(review[1], found), { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   if (req.method === "POST" && decision) {
     if (originBlocked(req)) return forbidden();
@@ -95,7 +95,7 @@ export default async (req) => {
     });
     const payload = result.body || { error: result.error };
     if ((req.headers.get("accept") || "").includes("text/html")) {
-      return new Response("<!doctype html><title>POS review</title><p>" + esc(payload.error || "Decision recorded. Nothing was published.") + "</p>" + footerHtml(), { status: result.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      return new Response("<!doctype html><title>POS review</title><p>" + esc(payload.error || "Decision recorded. Nothing was published.") + "</p>" + footerHtml(await loadFooter()), { status: result.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     }
     return json(result.status, payload);
   }

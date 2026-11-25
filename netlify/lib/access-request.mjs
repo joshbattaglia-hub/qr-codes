@@ -1,7 +1,7 @@
 import { conditionalIncrement, publicBase, rateStore } from "./lib.mjs";
 import { deliver, mailAvailable } from "./mail.mjs";
 import { emailKey, now } from "./credentials.mjs";
-import { footerHtml, footerText } from "./footer.mjs";
+import { footerHtml, footerText, loadFooter } from "./footer.mjs";
 import { emailLogoHtml } from "./brand.mjs";
 import { OWNER_EMAIL } from "./users.mjs";
 import { ticketAccess } from "./tickets.mjs";
@@ -42,7 +42,7 @@ export function editLink(email) {
   return publicBase() + "/admin/#/users?edit=" + encodeURIComponent(email);
 }
 
-export function requestMessage(email, tool, reason, at) {
+export function requestMessage(email, tool, reason, at, footer) {
   const name = REQUEST_TOOLS[tool];
   const grantable = GRANTABLE.has(tool);
   const link = editLink(email);
@@ -61,7 +61,7 @@ export function requestMessage(email, tool, reason, at) {
     "Edit this user: " + link,
     note,
     "",
-    footerText(),
+    footerText(footer),
   ].join("\n");
   const row = (k, v) => '<tr><td style="padding:4px 14px 4px 0;color:#667085;vertical-align:top;white-space:nowrap">' + k + '</td><td style="padding:4px 0;word-break:break-word;overflow-wrap:anywhere">' + v + '</td></tr>';
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
@@ -76,7 +76,7 @@ export function requestMessage(email, tool, reason, at) {
     + '</table>'
     + '<p style="margin:0 0 18px"><a href="' + esc(link) + '" data-testid="request-link" style="display:inline-block;max-width:100%;box-sizing:border-box;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px;text-align:center;word-break:break-word;overflow-wrap:anywhere">Open in Users</a></p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0">' + esc(note) + '</p>'
-    + '</td></tr></table>' + footerHtml() + '</td></tr></table></body></html>';
+    + '</td></tr></table>' + footerHtml(footer) + '</td></tr></table></body></html>';
   return { to: OWNER_EMAIL, replyTo: email, subject: "[Express Help] Access request: " + name + " (" + email + ")", text, html };
 }
 
@@ -128,7 +128,8 @@ export async function submitRequest(actor, body) {
     return day.reason === "limit" ? { status: 429, error: REQUEST_LIMIT_DAY } : { status: 503, error: REQUEST_FAILED };
   }
   const reason = cleanReason(body?.reason);
-  const message = { ...requestMessage(actor.email, tool, reason, t), idempotencyKey: "arq-" + ek.slice(0, 16) + "-" + tool + "-" + Math.floor(t / HOUR) };
+  const footer = await loadFooter();
+  const message = { ...requestMessage(actor.email, tool, reason, t, footer), idempotencyKey: "arq-" + ek.slice(0, 16) + "-" + tool + "-" + Math.floor(t / HOUR) };
   let result;
   try { result = await deliver(message); } catch { result = { status: "unknown" }; }
   if (result?.status !== "sent") {

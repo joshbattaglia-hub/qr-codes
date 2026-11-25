@@ -21,7 +21,8 @@ test("every static HTML page loads the shared footer (future pages fail this tes
 test("footer text and mailto are exact in both the script and the server helper", async () => {
   const script = fs.readFileSync(path.join(root, "footer.js"), "utf8");
   assert.match(script, /"Cowabunga - please hesitate to reach out "/);
-  assert.match(script, /mailto:jbattaglia@libertyretail\.com\.au/);
+  assert.match(script, /DEFAULT_EMAIL = "jbattaglia@libertyretail\.com\.au"/);
+  assert.match(script, /"mailto:" \+ DEFAULT_EMAIL/);
   assert.match(script, /"email me here"/);
   assert.match(script, /font:11px\/1\.5/);
   const { footerHtml, footerText, FOOTER_LEAD } = await import("../netlify/lib/footer.mjs");
@@ -64,8 +65,8 @@ test("every email that carries the footer uses the new wording, in HTML and plai
     assert.equal(/Built, not bought|J\.Batt|need changes|\u{1F3CE}/u.test(m.text + m.html), false);
   }
   const src = fs.readFileSync(new URL("../netlify/lib/support-digest.mjs", import.meta.url), "utf8");
-  assert.match(src, /footerText\(\)/);
-  assert.match(src, /footerHtml\(\)/);
+  assert.match(src, /footerText\(footer\)/);
+  assert.match(src, /footerHtml\(footer\)/);
 });
 
 test("server-rendered pages include the footer", async () => {
@@ -76,7 +77,7 @@ test("server-rendered pages include the footer", async () => {
   const res = await redirect(new Request("https://expresshelp.site/r/nothing-here"), { params: { slug: "nothing-here" } });
   assert.equal(res.status, 404);
   assert.match(await res.text(), /data-testid="eh-footer"/);
-  assert.match(fs.readFileSync(new URL("../netlify/functions/pos-review.mjs", import.meta.url), "utf8"), /\$\{footerHtml\(\)\}/);
+  assert.match(fs.readFileSync(new URL("../netlify/functions/pos-review.mjs", import.meta.url), "utf8"), /footerHtml\(await loadFooter\(\)\)/);
 });
 
 test("admin sign-in: Express Help, email code and password first, other ways below, no developer wording", () => {

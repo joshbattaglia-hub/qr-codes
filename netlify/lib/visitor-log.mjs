@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, createVisitorSite, detailCsv, geocodeSiteAddress, previewDetailImport, publicSiteDirectory, readCompany, saveCompany, savePickerTypes, setSiteArchived, setSiteHidden, siteLabel, siteSnapshot, updateVisitorSite, visitSiteType } from "./site-details.mjs";
+import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, createVisitorSite, detailCsv, geocodeSiteAddress, previewDetailImport, publicSiteDirectory, readCompany, readDefaultContactEmail, saveCompany, saveDefaultContactEmail, savePickerTypes, setSiteArchived, setSiteHidden, siteLabel, siteSnapshot, updateVisitorSite, visitSiteType } from "./site-details.mjs";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
@@ -820,7 +820,8 @@ export async function publicMaintenanceContacts() {
     const phone = maintenancePhone(value);
     contacts.push({ label: "Maintenance line " + (i + 1), display: phone.display, href: phone.href });
   });
-  return { contacts };
+  const contactEmail = await readDefaultContactEmail();
+  return { contacts, contactEmail: contactEmail || "", contactEmailHref: contactEmail ? "mailto:" + contactEmail : "" };
 }
 
 export async function maintenanceSettings(actor) {
@@ -999,6 +1000,13 @@ export async function runVisitorCleanup(at = now()) {
 export async function siteDetailSettings(actor) {
   if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   return { status: 200, body: await adminSiteDetails({ readFirstMaintenance }) };
+}
+
+export async function saveDefaultContactEmailSetting(actor, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await saveDefaultContactEmail(body);
+  if (result.status === 200) await audit("contact-email-default", actor.id || actor.email || "", "", "email " + (result.body.hidden ? "hidden" : result.body.email ? "set" : "blank"));
+  return result;
 }
 
 export async function saveCompanyDetails(actor, body) {
