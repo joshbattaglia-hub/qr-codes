@@ -56,9 +56,22 @@ export function normaliseSiteType(value) {
 /** Temporary placeholder Joshua asked to use for the shared VIVA Unattended ABN until the real number is known. Not a valid ABN. */
 export const PLACEHOLDER_ABN = "1111";
 
-/** ABN: 11 digits that pass the ATO checksum, or the temporary placeholder 1111. Returns "12 345 678 901", "1111", "" for blank, or null when invalid. */
+/** Undo the leading apostrophe csvCell adds so Excel will not treat a value like -33.1 or +61… as a formula. */
+export function unguardCsvCell(value) {
+  const text = String(value ?? "");
+  if (text.charAt(0) === "'" && /^[=+\-@\t]/.test(text.slice(1))) return text.slice(1);
+  return text;
+}
+
+/** ABN: 11 digits that pass the ATO checksum, or the temporary placeholder 1111. Returns "12 345 678 901", "1111", "" for blank, or null when invalid. Spaces, dots and hyphens are ignored. Excel scientific notation for an 11-digit number is accepted. */
 export function normaliseAbn(value) {
-  const digits = String(value ?? "").replace(/[\s.\-]/g, "");
+  let text = unguardCsvCell(String(value ?? "")).trim();
+  const compact = text.replace(/\s/g, "");
+  if (/^[+-]?\d+(\.\d+)?[eE][+-]?\d+$/.test(compact)) {
+    const n = Number(compact);
+    if (Number.isFinite(n) && n >= 0 && Number.isInteger(n) && n <= 99999999999) text = String(Math.round(n));
+  }
+  const digits = text.replace(/[\s.\-]/g, "");
   if (!digits) return "";
   if (digits === PLACEHOLDER_ABN) return PLACEHOLDER_ABN;
   if (!/^\d{11}$/.test(digits)) return null;
@@ -70,7 +83,7 @@ export function normaliseAbn(value) {
 
 /** Australian phone in one tidy shape ("03 9113 7191", "0412 345 678", "1300 123 456"). "" for blank, null when not a phone. */
 export function normaliseSitePhone(value) {
-  const text = String(value ?? "").trim();
+  const text = unguardCsvCell(String(value ?? "")).trim();
   if (!text) return "";
   if (!/^\+?[0-9 ()\-.]+$/.test(text)) return null;
   let digits = text.replace(/^\s*(\+|00)/, "").replace(/\D/g, "");
@@ -243,9 +256,29 @@ export const siteLabel = (snap) => snap ? snap.name + (snap.loc ? " (" + snap.lo
 
 /* ---------- admin: CSV of the detail fields, dry run first ---------- */
 
-/** Small RFC 4180 CSV reader: quotes, doubled quotes, commas and new lines inside quotes, CRLF, BOM. */
+/** Delimiter for a CSV body: comma, or semicolon / tab when the header has no commas (Excel in some locales). */
+function detectCsvDelimiter(src) {
+  let comma = 0, semi = 0, tab = 0, quoted = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"' && src[i + 1] === '"') i++;
+      else if (ch === '"') quoted = false;
+    } else if (ch === '"') quoted = true;
+    else if (ch === "\n" || ch === "\r") break;
+    else if (ch === ",") comma++;
+    else if (ch === ";") semi++;
+    else if (ch === "\t") tab++;
+  }
+  if (comma === 0 && semi > 0 && semi >= tab) return ";";
+  if (comma === 0 && tab > 0) return "\t";
+  return ",";
+}
+
+/** Small RFC 4180 CSV reader: quotes, doubled quotes, commas and new lines inside quotes, CRLF, BOM. Semicolon or tab if the header has no commas. */
 export function parseCsv(text) {
   const src = String(text ?? "").replace(/^\ufeff/, "");
+  const delim = detectCsvDelimiter(src);
   const rows = [];
   let row = [], cell = "", quoted = false;
   for (let i = 0; i < src.length; i++) {
@@ -255,7 +288,7 @@ export function parseCsv(text) {
       else if (ch === '"') quoted = false;
       else cell += ch;
     } else if (ch === '"' && cell === "") quoted = true;
-    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === delim) { row.push(cell); cell = ""; }
     else if (ch === "\n" || ch === "\r") {
       if (ch === "\r" && src[i + 1] === "\n") i++;
       row.push(cell); rows.push(row); row = []; cell = "";
@@ -303,7 +336,7 @@ export function planDetailImport(records, csvText) {
   const plan = [];
   rows.slice(1).forEach((cells, index) => {
     const line = index + 2;
-    const get = (key) => { const i = keys.indexOf(key); return i < 0 ? "" : String(cells[i] ?? "").trim(); };
+    const get = (key) => { const i = keys.indexOf(key); return i < 0 ? "" : unguardCsvCell(String(cells[i] ?? "")).trim(); };
     const errors = [], warnings = [];
     const loc = get("loc").toUpperCase();
     const name = get("site_name");
@@ -453,7 +486,10 @@ async function createSiteFromImport(store, row) {
 
 function csvCell(value) {
   const text = String(value ?? "").replace(/[\r\n]+/g, " ");
-  const safe = /^[=+\-@\t]/.test(text) ? "'" + text : text;
+  // Plain numbers such as -37.8136 are safe in Excel (it stores them as numbers). Only guard
+  // formula-like values. Import strips this apostrophe so a downloaded file can be uploaded again.
+  const plainNumber = /^-?(?:\d+\.?\d*|\.\d+)$/.test(text);
+  const safe = !plainNumber && /^[=+\-@\t]/.test(text) ? "'" + text : text;
   return /[",]/.test(safe) || safe !== text ? '"' + safe.replace(/"/g, '""') + '"' : safe;
 }
 /**

@@ -40,15 +40,22 @@ test("normalisers: ABN checksum, AU phone, site type words, CSV quoting", () => 
   assert.equal(sd.normaliseAbn("11111111111"), null, "11 ones still fail the checksum");
   assert.equal(sd.normaliseAbn("1111"), sd.PLACEHOLDER_ABN);
   assert.equal(sd.normaliseAbn(" 1111 "), sd.PLACEHOLDER_ABN, "placeholder spacing is ignored");
+  assert.equal(sd.normaliseAbn("5.1824753556e+10"), SYN_LIBERTY_ABN, "Excel scientific notation for an 11-digit ABN");
+  assert.equal(sd.normaliseAbn("5.1824753556E+10"), SYN_LIBERTY_ABN);
+  assert.equal(sd.unguardCsvCell("'-38.1736"), "-38.1736");
+  assert.equal(sd.unguardCsvCell("'+61412345678"), "+61412345678");
+  assert.equal(sd.unguardCsvCell("'text"), "'text", "a leading apostrophe is only removed when the rest looks like a formula");
   assert.equal(sd.normaliseAbn(""), "");
   assert.equal(sd.normaliseSitePhone("(03) 9113-7191"), "03 9113 7191");
   assert.equal(sd.normaliseSitePhone("+61 412 345 678"), "0412 345 678");
+  assert.equal(sd.normaliseSitePhone("'+61 412 345 678"), "0412 345 678", "formula-guarded international phones");
   assert.equal(sd.normaliseSitePhone("call me"), null);
   for (const w of ["Commission Agent", "agent", "commission_agent", "CA", "LOC CA", "loc-ca"]) assert.equal(sd.normaliseSiteType(w), "commission_agent", w);
   for (const w of ["Liberty", "company", "Company run", "VEA Retail", "VEA"]) assert.equal(sd.normaliseSiteType(w), "company", w);
   for (const w of ["Unattended", "unattended", "unattended_site", "unmanned", "Unattended service station"]) assert.equal(sd.normaliseSiteType(w), "unattended", w);
   assert.equal(sd.normaliseSiteType("franchise"), null);
   assert.deepEqual(sd.parseCsv('\ufeffloc,trading_name\r\nLOC1,"Smith, Jones ""& Co"""\n\n'), [["loc", "trading_name"], ["LOC1", 'Smith, Jones "& Co"']]);
+  assert.deepEqual(sd.parseCsv("loc;site_name;abn\nLOC1;Moe;51 824 753 556"), [["loc", "site_name", "abn"], ["LOC1", "Moe", "51 824 753 556"]], "semicolon when the header has no commas");
 });
 
 test("display rules: company sites use the one Liberty setting, agents their own, empty fields hidden, phone defaults to 03 9113 7191", () => {
@@ -563,4 +570,72 @@ test("CSV export can filter by site type, keeps columns, and still skips removed
   assert.deepEqual(sd.parseCsvTypes(undefined).types, ["company", "commission_agent", "unattended"]);
   assert.deepEqual(sd.parseCsvTypes(["unattended", "company"]).types, ["unattended", "company"]);
   assert.equal(sd.parseCsvTypes("").error || sd.parseCsvTypes([]).error, "Tick at least one site type: Unattended, LOC CA or VEA Retail.");
+});
+
+test("CSV export round-trips through an Excel-style edit: BOM, CRLF, spaced ABNs, and formula-guarded latitudes", async () => {
+  await lib.sitesStore().setJSON("s00000c20", { id: "s00000c20", name: "Synthetic Unattended Roundtrip", loc: "LOC0190", address: "1 Roundtrip Rd, Moe VIC 3825", lat: -38.1736, lng: 146.2588, siteType: "unattended", phone: "03 9113 7191" });
+  await lib.sitesStore().setJSON("s00000c21", { id: "s00000c21", name: "Synthetic Unattended No Coords", loc: "18616", address: "7 Honey Bee Parade, Banksia Grove 6031", siteType: "unattended" });
+
+  const exported = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended", { cookie: owner }));
+  assert.equal(exported.status, 200);
+  const rtLine = exported.body.split("\n").find((line) => line.includes("Synthetic Unattended Roundtrip"));
+  assert.ok(rtLine, "the new site is in the Unattended export");
+  assert.ok(!rtLine.includes("'-38"), "new exports do not formula-guard a plain latitude");
+  assert.match(rtLine, /-38\.1736/);
+
+  const straight = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: exported.body, dryRun: true } }));
+  assert.equal(straight.status, 200, JSON.stringify(straight.body));
+  const ours = straight.body.rows.filter((r) => r.site && (r.site.id === "s00000c20" || r.site.id === "s00000c21"));
+  assert.equal(ours.length, 2);
+  assert.ok(ours.every((r) => !r.errors.length), JSON.stringify(ours.map((r) => r.errors)));
+  assert.ok(ours.every((r) => !Object.keys(r.changes || {}).length), "a downloaded list re-imports with no changes");
+
+  // Older downloads prefixed a ' to negative latitudes. Excel also writes a BOM, CRLF, and ABNs with spaces.
+  const excel = "\ufeff" + [
+    "loc,site_name,site_type,trading_name,abn,phone,address,lat,lng",
+    "LOC0190,Synthetic Unattended Roundtrip,unattended,Synthetic VIVA,1111,03 9113 7191,\"1 Roundtrip Rd, Moe VIC 3825\",\"'-38.1736\",146.2588",
+    "18616,Synthetic Unattended No Coords,unattended,Custom CA,51 824 753 556,,\"7 Honey Bee Parade, Banksia Grove 6031\",,",
+  ].join("\r\n") + "\r\n";
+  const prev = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: excel, dryRun: true } }));
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.dryRun, true);
+  const byId = Object.fromEntries(prev.body.rows.filter((r) => r.site?.id).map((r) => [r.site.id, r]));
+  assert.deepEqual(byId.s00000c20.errors, [], "formula-guarded latitudes must not block the row");
+  assert.ok(!("lat" in (byId.s00000c20.changes || {})), "coordinates stay as they are");
+  assert.ok(!("lng" in (byId.s00000c20.changes || {})));
+  assert.deepEqual(byId.s00000c20.changes.abn, ["", "1111"]);
+  assert.deepEqual(byId.s00000c20.changes.trading_name, ["", "Synthetic VIVA"]);
+  assert.deepEqual(byId.s00000c21.errors, []);
+  assert.deepEqual(byId.s00000c21.changes.abn, ["", SYN_LIBERTY_ABN]);
+  assert.deepEqual(byId.s00000c21.changes.trading_name, ["", "Custom CA"]);
+  assert.equal(prev.body.summary.errors, 0);
+  assert.equal(prev.body.summary.changed, 2);
+  const beforeRt = await lib.sitesStore().get("s00000c20", { type: "json" });
+  assert.equal(beforeRt.abn, undefined, "preview writes nothing");
+
+  const applied = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: excel, dryRun: false, confirm: "APPLY" } }));
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.equal(applied.body.dryRun, false);
+  assert.equal(applied.body.written, 2);
+  assert.equal(applied.body.summary.errors, 0);
+  const written = await lib.sitesStore().get("s00000c20", { type: "json" });
+  assert.equal(written.abn, "1111");
+  assert.equal(written.tradingName, "Synthetic VIVA");
+  assert.equal(written.lat, -38.1736, "coordinates are unchanged");
+  assert.equal(written.lng, 146.2588);
+  assert.equal(written.address, "1 Roundtrip Rd, Moe VIC 3825");
+  const noCoords = await lib.sitesStore().get("s00000c21", { type: "json" });
+  assert.equal(noCoords.abn, SYN_LIBERTY_ABN);
+  assert.equal(noCoords.tradingName, "Custom CA");
+  assert.equal(noCoords.lat, undefined);
+
+  const sci = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,abn\nSynthetic Unattended No Coords,5.1824753556e+10", dryRun: true } }));
+  assert.equal(sci.status, 200);
+  assert.deepEqual(sci.body.rows[0].errors, []);
+  assert.equal(sci.body.summary.unchanged, 1, "scientific notation of the same ABN is not a change");
+
+  const semi = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name;trading_name\nSynthetic Unattended Roundtrip;Still VIVA", dryRun: true } }));
+  assert.equal(semi.status, 200, JSON.stringify(semi.body));
+  assert.deepEqual(semi.body.rows[0].errors, []);
+  assert.deepEqual(semi.body.rows[0].changes.trading_name, ["Synthetic VIVA", "Still VIVA"]);
 });
