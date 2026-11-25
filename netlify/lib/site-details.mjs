@@ -456,9 +456,35 @@ function csvCell(value) {
   const safe = /^[=+\-@\t]/.test(text) ? "'" + text : text;
   return /[",]/.test(safe) || safe !== text ? '"' + safe.replace(/"/g, '""') + '"' : safe;
 }
-/** Current site list as the import CSV, so it can be filled in and brought back. */
-export async function detailCsv() {
-  const records = (await allSiteRecords()).filter((r) => !r.hold && !r.visitorArchived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+/**
+ * Types to include in the site-details CSV. Missing/undefined means every type (the previous behaviour).
+ * Accepts a string, comma-separated list, or array; labels such as "Unattended" and "LOC CA" are allowed.
+ * Untyped sites count as VEA Retail (company), matching how they are shown.
+ */
+export function parseCsvTypes(raw) {
+  if (raw == null) return { types: ["company", "commission_agent", "unattended"] };
+  const parts = (Array.isArray(raw) ? raw : [raw]).flatMap((value) => String(value).split(/[,+]/)).map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return { error: "Tick at least one site type: Unattended, LOC CA or VEA Retail." };
+  const types = [];
+  for (const part of parts) {
+    const type = normaliseSiteType(part);
+    if (!type) return { error: "Site type \"" + part + "\" is not valid. Use unattended, commission_agent (LOC CA) or company (VEA Retail)." };
+    if (!types.includes(type)) types.push(type);
+  }
+  return { types };
+}
+
+/** Bucket used when filtering the CSV: a site with no type counts as VEA Retail. */
+export function csvTypeBucket(site) {
+  return siteDetailFields(site).siteType || "company";
+}
+
+/** Current site list as the import CSV, so it can be filled in and brought back. Hidden sites are included; removed and held sites are not. */
+export async function detailCsv(types) {
+  const parsed = parseCsvTypes(types === undefined ? undefined : types);
+  if (parsed.error) return parsed;
+  const allow = new Set(parsed.types);
+  const records = (await allSiteRecords()).filter((r) => !r.hold && !r.visitorArchived && allow.has(csvTypeBucket(r))).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const lines = [CSV_COLUMNS.join(",")];
   for (const r of records) {
     const f = siteDetailFields(r);
