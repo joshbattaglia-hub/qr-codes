@@ -6,7 +6,7 @@
 import crypto from "node:crypto";
 import { env, ticketStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
-import { footerHtml, footerText } from "./footer.mjs";
+import { footerHtml, footerText, loadFooter } from "./footer.mjs";
 import { emailLogoHtml } from "./brand.mjs";
 import { notifyRecipientOk, NOTIFY_DOMAIN, NOTIFY_RECIPIENTS_MAX } from "./visitor-log.mjs";
 import { allTicketRows, columnFor, columnLabel, isOpenStatus, NATIONAL_SITE_ID, NATIONAL_SITE_LABEL, QUEUES, STATUS_LABEL, TICKET_ADMIN_EMAIL } from "./tickets.mjs";
@@ -144,7 +144,7 @@ export async function collectJobs(queues, at = clock()) {
 
 function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
-export function buildDigest({ jobs, queues, date, test = false }) {
+export function buildDigest({ jobs, queues, date, test = false, footer } = {}) {
   const label = queues.map((q) => QUEUE_LABEL[q] || q).join(" + ");
   const overdue = jobs.filter((j) => j.due.kind === "overdue").length;
   const supportUrl = publicUrl() + "/admin/#/tickets";
@@ -152,7 +152,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
   const subject = prefix + (jobs.length
     ? `Support digest: ${jobs.length} open ${label} job${jobs.length === 1 ? "" : "s"}${overdue ? ` (${overdue} overdue)` : ""} · ${prettyDate(date)}`
     : `Support digest: nothing open in ${label} · ${prettyDate(date)}`);
-  const footerLine = footerText();
+  const footerLine = footerText(footer);
   const lines = [];
   if (test) lines.push("This is a test digest. The daily schedule is not affected.", "");
   lines.push(jobs.length ? `${jobs.length} open ${label} job${jobs.length === 1 ? "" : "s"}, most overdue first.` : `No open ${label} jobs today.`, "");
@@ -177,7 +177,7 @@ export function buildDigest({ jobs, queues, date, test = false }) {
     + `<h2 style="margin:0 0 4px;font-size:18px">Express Help · ${esc(label)} digest</h2><p style="margin:0 0 12px;color:#667085">${esc(prettyDate(date))} · ${jobs.length ? `${jobs.length} open, ${overdue} overdue, most overdue first` : "nothing open"}</p>`
     + (jobs.length ? `<table role="presentation" style="width:100%;border-collapse:collapse">${cards}</table>` : `<p>No open ${esc(label)} jobs today.</p>`)
     + `<p style="margin-top:16px"><a href="${esc(supportUrl)}" style="color:#1f4bdb">Open Support</a></p>`
-    + footerHtml() + `</div>`;
+    + footerHtml(footer) + `</div>`;
   return { subject, text: lines.join("\n"), html, count: jobs.length, overdue };
 }
 
@@ -217,7 +217,7 @@ export async function runDigest({ at = clock() } = {}) {
     await ticketStore().setJSON(key, { state: "skipped-empty", runId, at: new Date(at).toISOString() });
     return { outcome: "skipped-empty", date };
   }
-  const digest = buildDigest({ jobs, queues: settings.queues, date });
+  const digest = buildDigest({ jobs, queues: settings.queues, date, footer: await loadFooter() });
   const results = await sendTo(settings.recipients, digest, "support-digest-" + date);
   await ticketStore().setJSON(key, { state: "done", runId, at: new Date(at).toISOString(), count: digest.count, overdue: digest.overdue, results });
   return { outcome: "sent", date, count: digest.count, results };
@@ -234,7 +234,7 @@ export async function sendTestDigest({ at = clock(), requestId = "" } = {}) {
   if (claim?.modified !== true) return { status: 429, error: "A test digest was sent in the last few minutes. Try again shortly." };
   const { date } = melbourneParts(at);
   const jobs = await collectJobs(settings.queues, at);
-  const digest = buildDigest({ jobs, queues: settings.queues, date, test: true });
+  const digest = buildDigest({ jobs, queues: settings.queues, date, test: true, footer: await loadFooter() });
   const results = await sendTo([TICKET_ADMIN_EMAIL], digest, "support-digest-test-" + slot);
   await ticketStore().setJSON("digest/test/" + slot, { at: new Date(at).toISOString(), requestId, count: digest.count, results });
   return { status: 200, body: { sent: results[0]?.status === "sent", status: results[0]?.status, count: digest.count, overdue: digest.overdue, to: TICKET_ADMIN_EMAIL, id: results[0]?.id || "" } };

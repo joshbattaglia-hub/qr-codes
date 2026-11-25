@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { promisify } from "node:util";
 import { conditionalIncrement, credStore, publicBase, rateStore } from "./lib.mjs";
 import { deliver, mailAvailable } from "./mail.mjs";
-import { footerHtml, footerText } from "./footer.mjs";
+import { footerHtml, footerText, loadFooter } from "./footer.mjs";
 import { emailLogoHtml } from "./brand.mjs";
 
 /**
@@ -222,7 +222,7 @@ export function linkUrl(token) {
   return publicBase() + "/set-password#" + token;
 }
 
-export function inviteMessage(email, token, kind, exp) {
+export function inviteMessage(email, token, kind, exp, footer) {
   const url = linkUrl(token);
   const reset = kind === "reset";
   const hours = Math.round((exp - now()) / 3600000);
@@ -238,7 +238,7 @@ export function inviteMessage(email, token, kind, exp) {
     "You can also sign in without a password: on the Express Help sign-in page choose \"Email me a code\".",
     reset ? "If you did not ask for this, ignore this message. Your password has not changed." : "If you were not expecting this, ignore this message. Nothing happens until the link is used.",
     "",
-    footerText(),
+    footerText(footer),
   ].join("\n");
   const html = '<!doctype html><html><body style="margin:0;background:#f2f4f8;padding:24px 12px;font-family:system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif;color:#101828">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">'
@@ -251,7 +251,7 @@ export function inviteMessage(email, token, kind, exp) {
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0 0 8px">If the button does not work, paste this address into your browser:<br><span style="word-break:break-all">' + esc(url) + '</span></p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0 0 8px">You can also sign in without a password: on the sign-in page choose &ldquo;Email me a code&rdquo;.</p>'
     + '<p style="font-size:13px;line-height:1.5;color:#475467;margin:0">' + (reset ? "If you did not ask for this, ignore this message. Your password has not changed." : "If you were not expecting this, ignore this message. Nothing happens until the link is used.") + '</p>'
-    + '</td></tr></table>' + footerHtml() + '</td></tr></table></body></html>';
+    + '</td></tr></table>' + footerHtml(footer) + '</td></tr></table></body></html>';
   return { to: email, subject, text, html };
 }
 
@@ -263,7 +263,8 @@ export async function sendLinkEmail(email, kind) {
   if (!mailAvailable()) return { status: "not-configured" };
   const issued = await issueLink(email, kind);
   if (!issued) return { status: "failed" };
-  const message = { ...inviteMessage(email, issued.token, kind, issued.exp), idempotencyKey: kind + "-" + issued.id };
+  const footer = await loadFooter();
+  const message = { ...inviteMessage(email, issued.token, kind, issued.exp, footer), idempotencyKey: kind + "-" + issued.id };
   let result;
   try { result = await deliver(message); } catch { result = { status: "unknown" }; }
   const status = result?.status || "failed";

@@ -80,7 +80,7 @@ test("phone validation keeps readable display text and normalises the tel: href"
 test("public contacts are empty and the block stays hidden until a number is set", async () => {
   const empty = await read(await publicFn(req("GET", "/api/visit/contacts")));
   assert.equal(empty.status, 200);
-  assert.deepEqual(empty.body, { contacts: [] });
+  assert.deepEqual(empty.body, { contacts: [], contactEmail: "pumprepairs@libertyretail.com.au", contactEmailHref: "mailto:pumprepairs@libertyretail.com.au" });
   assert.match(empty.headers.get("cache-control"), /no-store/);
   for (const page of ["../public/visit.html", "../public/visit/sign-in.html"]) {
     const html = fs.readFileSync(new URL(page, import.meta.url), "utf8");
@@ -91,7 +91,7 @@ test("public contacts are empty and the block stays hidden until a number is set
     assert.match(html, /<script src="\/visit\/maintenance\.js" defer><\/script>/);
   }
   const script = fs.readFileSync(new URL("../public/visit/maintenance.js", import.meta.url), "utf8");
-  assert.match(script, /box\.hidden = contacts\.length === 0/);
+  assert.match(script, /box\.hidden = contacts\.length === 0 && !\(email && href\)/);
   assert.match(script, /textContent = row\.display/);
   assert.doesNotMatch(script, /innerHTML/);
   assert.match(script, /\^tel:\\\+\?\[0-9\]\{6,15\}\$/);
@@ -112,7 +112,7 @@ test("admin settings are Joshua-only: 401 signed out, 403 for the shared passwor
   const joshua = await otpCookie(JOSHUA);
   const crossSite = await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, origin: "https://evil.example", body: { numbers: ["0400 000 000"] } }));
   assert.equal(crossSite.status, 403);
-  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [] });
+  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [], contactEmail: "pumprepairs@libertyretail.com.au", contactEmailHref: "mailto:pumprepairs@libertyretail.com.au" });
 });
 
 test("Joshua saves up to 4 numbers; only set lines are public with labels, display and tel: link only", async () => {
@@ -125,7 +125,7 @@ test("Joshua saves up to 4 numbers; only set lines are public with labels, displ
   assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, body: { numbers: ["1", "2", "3", "4", "5"] } })))).status, 400);
   assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, body: { numbers: "0400 000 000" } })))).status, 400);
   assert.equal((await read(await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, body: { numbers: [400000000] } })))).status, 400);
-  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [] }, "rejected saves change nothing");
+  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [], contactEmail: "pumprepairs@libertyretail.com.au", contactEmailHref: "mailto:pumprepairs@libertyretail.com.au" }, "rejected saves change nothing");
 
   const saved = await read(await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, body: { numbers: [" 0400  000 000 ", "", "+61 400 000 002", ""] } })));
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
@@ -135,8 +135,8 @@ test("Joshua saves up to 4 numbers; only set lines are public with labels, displ
   assert.deepEqual(pub.body, { contacts: [
     { label: "Maintenance line 1", display: "0400 000 000", href: "tel:0400000000" },
     { label: "Maintenance line 3", display: "+61 400 000 002", href: "tel:+61400000002" },
-  ] });
-  assert.deepEqual(Object.keys(pub.body), ["contacts"]);
+  ], contactEmail: "pumprepairs@libertyretail.com.au", contactEmailHref: "mailto:pumprepairs@libertyretail.com.au" });
+  assert.deepEqual(Object.keys(pub.body).sort(), ["contactEmail", "contactEmailHref", "contacts"]);
   for (const row of pub.body.contacts) assert.deepEqual(Object.keys(row), ["label", "display", "href"]);
   assert.ok((await auditActions()).includes("maintenance-numbers"));
   assert.equal(sent.length, 0, "no notification mail");
@@ -147,7 +147,7 @@ test("Joshua saves up to 4 numbers; only set lines are public with labels, displ
   // Clearing all four hides the block again.
   const cleared = await read(await adminFn(req("POST", "/api/visitor-log/maintenance", { cookie: joshua, body: { numbers: ["", "", "", ""] } })));
   assert.equal(cleared.status, 200);
-  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [] });
+  assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body, { contacts: [], contactEmail: "pumprepairs@libertyretail.com.au", contactEmailHref: "mailto:pumprepairs@libertyretail.com.au" });
   // A tampered stored value is never published.
   await lib.visitorStore().setJSON("maintenance/contacts", { numbers: ["javascript:alert(1)", "0400 000 009"] });
   assert.deepEqual((await read(await publicFn(req("GET", "/api/visit/contacts")))).body.contacts, [{ label: "Maintenance line 2", display: "0400 000 009", href: "tel:0400000009" }]);

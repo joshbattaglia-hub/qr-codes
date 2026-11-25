@@ -962,7 +962,29 @@ function settingsPage() {
     '<label class="field"><span>Default QR background</span><span class="color-row"><input name="defaultBg" type="color" value="' + esc(s.defaultBg) + '"><input name="defaultBgText" type="text" value="' + esc(s.defaultBg) + '"></span></label></div>' +
     '<label class="field"><span>Public URL</span><input type="text" readonly value="' + esc(s.publicUrl) + '"></label>' +
     '<p class="muted small">Short links stay on ' + esc(base()) + "/r/&lt;slug&gt;. The admin password is the ADMIN_PASSWORD environment variable and is not changed here. This session cookie lasts 7 days.</p>" +
-    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + tvSettings() + staffSettings();
+    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + footerSettings() + tvSettings() + staffSettings();
+}
+async function paintFooterSettings() {
+  try {
+    state.footer = await api("/api/footer");
+  } catch {
+    return;
+  }
+  const lead = document.getElementById("footer-lead");
+  const linkText = document.getElementById("footer-link-text");
+  const email = document.getElementById("footer-email");
+  if (lead) lead.value = state.footer.lead || "";
+  if (linkText) linkText.value = state.footer.linkText || "";
+  if (email) email.value = state.footer.email || "";
+}
+function footerSettings() {
+  const f = state.footer || { lead: "Cowabunga - please hesitate to reach out", linkText: "email me here", email: "jbattaglia@libertyretail.com.au" };
+  return '<div class="card" data-testid="footer-settings"><h2>Footer</h2><p class="muted">The small line at the bottom of every Express Help page, and in emails. Leave a field blank to keep the usual wording: "Cowabunga - please hesitate to reach out" and "email me here".</p>'
+    + '<label class="field"><span>Line of text</span><input id="footer-lead" maxlength="200" value="' + esc(f.lead || "") + '" data-testid="footer-lead"></label>'
+    + '<label class="field"><span>Link label</span><input id="footer-link-text" maxlength="80" value="' + esc(f.linkText || "") + '" data-testid="footer-link-text"></label>'
+    + '<label class="field"><span>Email</span><input id="footer-email" type="email" maxlength="120" value="' + esc(f.email || "") + '" data-testid="footer-email"></label>'
+    + '<div class="row"><button class="btn" type="button" data-act="footer-save" data-testid="footer-save">Save footer</button></div>'
+    + '<p id="footer-note" class="small" role="status"></p></div>';
 }
 const PAGE_COLORS = [
   ["background", "Background"],
@@ -1996,22 +2018,26 @@ async function paintSiteDetails() {
   const types = data.pickerTypes || ["unattended"];
   state.visitorSites = data.sites || [];
   state.visitorSitesDefaultPhone = data.defaultPhone || "";
+  state.visitorSitesDefaultContactEmail = data.defaultContactEmail || "pumprepairs@libertyretail.com.au";
   box.removeAttribute("aria-busy");
   box.innerHTML = '<h3 id="company-details">Company details for VEA Retail sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail site. Leave blank until you have them: blank fields are simply not shown. LOC CA and Unattended sites each have their own trading name and ABN, edited on the site.</p>'
     + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
     + '<label class="field"><span>ABN</span><input id="company-abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn"></label></div>'
     + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="company-save">Save company details</button></div><p id="company-note" class="small" role="status"></p>'
+    + '<h3 id="default-contact-email">Default contact email</h3><p class="muted small">Shown under the phone number on the visitor sign-in and sign-out card, and under the maintenance numbers after sign-in. A site can use a different address, or hide the email. If you have not set one, visitors see pumprepairs@libertyretail.com.au.</p>'
+    + '<label class="field"><span>Contact email</span><input id="default-contact-email-input" type="email" maxlength="120" value="' + esc(state.visitorSitesDefaultContactEmail || "") + '" placeholder="pumprepairs@libertyretail.com.au" data-testid="default-contact-email"></label>'
+    + '<div class="form-actions"><button class="btn" type="button" data-act="contact-email-save" data-testid="contact-email-save">Save default contact email</button></div><p id="contact-email-note" class="small" role="status"></p>'
     + '<h3 id="picker-types">Visitor picker</h3><p class="muted small">Tick the site types visitors can pick on sign-in and sign-out. The default is Unattended only. Hidden and removed sites never appear, even if their type is ticked.</p>'
     + '<div class="picker-type-checks" data-testid="picker-types">'
     + [['company', 'VEA Retail'], ['commission_agent', 'LOC CA'], ['unattended', 'Unattended']].map(([id, label]) => '<label class="check"><input type="checkbox" name="picker-type" value="' + id + '" data-testid="picker-type-' + id + '"' + (types.includes(id) ? " checked" : "") + '> ' + label + '</label>').join("")
     + '</div>'
     + '<div class="form-actions"><button class="btn" type="button" data-act="picker-types-save" data-testid="picker-types-save">Save picker types</button></div><p id="picker-types-note" class="small" role="status"></p>'
-    + '<h3 id="sites-manager">Site list</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.hidden || 0)) + ' hidden, ' + esc(String(c.removed || 0)) + ' removed. ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1).</p>'
+    + '<h3 id="sites-manager">Site list</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.hidden || 0)) + ' hidden, ' + esc(String(c.removed || 0)) + ' removed. ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1). ' + esc(String(c.emailOverrides || 0)) + ' have their own contact email; the rest show ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '.</p>'
     + '<div class="asset-dims sites-filters"><label class="field"><span>Search</span><input id="site-mgr-search" type="search" placeholder="Name, site number or address" data-testid="site-mgr-search"></label>'
     + '<label class="field"><span>Type</span><select id="site-mgr-type" data-testid="site-mgr-type"><option value="all">All types</option><option value="company">VEA Retail</option><option value="commission_agent">LOC CA</option><option value="unattended">Unattended</option><option value="untyped">Not set</option></select></label>'
     + '<label class="field"><span>Visibility</span><select id="site-mgr-visibility" data-testid="site-mgr-visibility"><option value="visible">Visible</option><option value="hidden">Hidden</option><option value="removed">Removed</option><option value="held">Held</option><option value="all">All</option></select></label></div>'
     + '<div class="asset-actions"><button class="btn" type="button" data-act="site-add-open" data-testid="site-add-open">➕ Add site</button></div>'
-    + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Address</th><th>Phone</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
+    + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Address</th><th>Phone</th><th>Email</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
     + '<p id="sites-table-empty" class="muted small" hidden>No sites match these filters.</p>'
     + '<h3>Download site list (CSV)</h3><p class="muted small">Same columns as the import, so you can edit the file and bring it back. Tick the types to include. All ticked is the full list. Hidden sites are included; removed and held sites are not. The ticks start as the visitor picker types, so Unattended only is the usual starting point.</p>'
     + '<div class="picker-type-checks" data-testid="csv-types">'
@@ -2020,7 +2046,7 @@ async function paintSiteDetails() {
     + '<div class="row csv-type-presets"><button class="text-btn" type="button" data-act="csv-types-unattended" data-testid="csv-types-unattended">Unattended only</button><button class="text-btn" type="button" data-act="csv-types-all" data-testid="csv-types-all">All types</button></div>'
     + '<div class="row"><button class="btn ghost" type="button" id="site-details-download" data-act="site-details-download" data-testid="site-details-download">Download current list as CSV</button></div>'
     + '<p id="csv-types-hint" class="muted small" hidden data-testid="csv-types-hint">Tick at least one site type to download.</p>'
-    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
+    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it (for contact_email, that means the default address). The word <code>HIDE</code> in contact_email shows no email on that site. Older files without a contact_email column still work. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv,text/plain" data-testid="site-details-file"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
     + '<div class="row"><button class="btn" type="button" data-act="site-details-preview" data-testid="site-details-preview-btn">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
@@ -2059,7 +2085,7 @@ function filteredVisitorSites() {
     if (type !== "all" && type !== "untyped" && site.siteType !== type) return false;
     if (vis !== "all" && (site.visibility || "visible") !== vis) return false;
     if (!q) return true;
-    const blob = [site.name, site.loc, site.address, site.tradingName, site.abn, site.phone].join(" ").toLowerCase();
+    const blob = [site.name, site.loc, site.address, site.tradingName, site.abn, site.phone, site.contactEmail].join(" ").toLowerCase();
     return blob.includes(q);
   });
 }
@@ -2083,6 +2109,7 @@ function paintSitesTable() {
     return '<tr data-testid="site-row" data-id="' + esc(site.id) + '" data-visibility="' + esc(site.visibility || "visible") + '">'
       + '<td>' + esc(site.name) + '</td><td>' + esc(site.loc || "") + '</td><td>' + siteTypeChip(site.siteType) + '</td>'
       + '<td class="site-address">' + esc(site.address || "") + '</td><td>' + esc(phone) + '</td>'
+      + '<td>' + esc(site.contactEmail === "HIDE" ? "Hidden" : (site.contactEmail || state.visitorSitesDefaultContactEmail || "")) + '</td>'
       + '<td>' + esc(site.tradingName || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td><td>' + esc(site.abn || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td>'
       + '<td>' + (site.lat != null ? esc(String(site.lat) + ", " + String(site.lng)) : "—") + '</td>'
       + '<td>' + siteVisibilityChip(site) + '</td>'
@@ -2104,6 +2131,8 @@ function siteFormHtml(site) {
     + '<label class="field"><span>Longitude</span><input name="lng" id="site-form-lng" inputmode="decimal" value="' + esc(site?.lng != null ? String(site.lng) : "") + '" data-testid="site-form-lng"></label></div>'
     + '<div class="row"><button class="btn ghost" type="button" data-act="site-geocode" data-testid="site-geocode">📍 Find coordinates</button></div><p id="site-geocode-note" class="small" role="status"></p>'
     + '<label class="field"><span>Phone</span><input name="phone" maxlength="24" value="' + esc(site?.phone || "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultPhone || "the default") + '" data-testid="site-form-phone"></label>'
+    + '<label class="field"><span>Contact email</span><input name="contactEmail" id="site-form-contact-email" type="email" maxlength="120" value="' + esc(site?.contactEmail && site.contactEmail !== "HIDE" ? site.contactEmail : "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '" data-testid="site-form-contact-email"></label>'
+    + '<label class="check"><input type="checkbox" name="hideContactEmail" id="site-form-hide-email" data-testid="site-form-hide-email"' + (site?.contactEmail === "HIDE" ? " checked" : "") + '> Don\'t show a contact email on this site</label>'
     + '<div id="site-own-details"' + (own ? "" : " hidden") + '><p class="muted small">This type shows its own trading name and ABN on the visitor form. Leave blank until you have them.</p>'
     + '<div class="split"><label class="field"><span>Trading name</span><input name="tradingName" maxlength="120" value="' + esc(site?.tradingName || "") + '" data-testid="site-form-trading-name"></label>'
     + '<label class="field"><span>ABN</span><input name="abn" inputmode="numeric" maxlength="14" value="' + esc(site?.abn || "") + '" placeholder="11 digits" data-testid="site-form-abn"></label></div></div>'
@@ -2124,6 +2153,11 @@ function wireSiteFormType() {
   };
   sel.addEventListener("change", sync);
   sync();
+  const hide = document.getElementById("site-form-hide-email");
+  const email = document.getElementById("site-form-contact-email");
+  const syncEmail = () => { if (email) email.disabled = !!(hide && hide.checked); };
+  hide?.addEventListener("change", syncEmail);
+  syncEmail();
 }
 function siteFormBody(form) {
   const fd = new FormData(form);
@@ -2135,6 +2169,8 @@ function siteFormBody(form) {
     lat: fd.get("lat") || "",
     lng: fd.get("lng") || "",
     phone: fd.get("phone") || "",
+    contactEmail: fd.get("contactEmail") || "",
+    hideContactEmail: !!form.querySelector('[name="hideContactEmail"]')?.checked,
     tradingName: fd.get("tradingName") || "",
     abn: fd.get("abn") || "",
   };
@@ -2529,6 +2565,17 @@ async function visitorAction(button) {
     document.getElementById("company-abn").value = body.abn || "";
     showNote(note, "Saved. VEA Retail sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
     toast("Company details saved");
+    return;
+  }
+  if (act === "contact-email-save") {
+    const note = document.getElementById("contact-email-note");
+    const body = await api("/api/visitor-log/contact-email", { method: "POST", body: JSON.stringify({ email: document.getElementById("default-contact-email-input")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
+    if (!body) return;
+    state.visitorSitesDefaultContactEmail = body.email || "pumprepairs@libertyretail.com.au";
+    const input = document.getElementById("default-contact-email-input");
+    if (input) input.value = state.visitorSitesDefaultContactEmail;
+    showNote(note, "Saved. Visitors will see " + (body.email || "pumprepairs@libertyretail.com.au") + " unless a site has its own address.", "ok");
+    toast("Default contact email saved");
     return;
   }
   if (act === "csv-types-unattended") { setCsvDownloadTypes(["unattended"]); return; }
@@ -2927,7 +2974,7 @@ async function render(opts = {}) {
     if (r.name === "warehouse") paintWarehouse().catch((err) => { const box = document.getElementById("warehouse-body"); if (box) box.textContent = err.message; });
     if (r.name === "visitors") paintVisitor();
     if (r.name === "users") paintUsers();
-    if (r.name === "settings") paintTvSettings();
+    if (r.name === "settings") { paintTvSettings(); paintFooterSettings(); }
     if (r.name === "tickets") paintTickets(r.id, state).catch((err) => { const box = document.getElementById("ticket-body"); if (box) box.textContent = err.message; });
   }
   if (state.focus) {
@@ -3129,6 +3176,21 @@ async function handleAction(el) {
   }
   if (act === "email-signin" || act === "visitor-email-signin") {
     await switchToEmailSignin();
+    return;
+  }
+  if (act === "footer-save") {
+    const note = document.getElementById("footer-note");
+    const body = await api("/api/footer", { method: "POST", body: JSON.stringify({ lead: document.getElementById("footer-lead")?.value || "", linkText: document.getElementById("footer-link-text")?.value || "", email: document.getElementById("footer-email")?.value || "" }) }).catch((err) => { if (note) showNote(note, err.message, "error"); else toast.error(err.message); return null; });
+    if (!body) return;
+    state.footer = body;
+    const lead = document.getElementById("footer-lead");
+    const linkText = document.getElementById("footer-link-text");
+    const email = document.getElementById("footer-email");
+    if (lead) lead.value = body.lead || "";
+    if (linkText) linkText.value = body.linkText || "";
+    if (email) email.value = body.email || "";
+    if (note) showNote(note, "Saved. This wording now shows on Express Help pages and in emails.", "ok");
+    toast("Footer saved");
     return;
   }
   if (act === "logout") {

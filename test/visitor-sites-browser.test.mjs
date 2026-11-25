@@ -81,9 +81,12 @@ test("type-ahead: suggestions as you type, keyboard pick, Unattended card shows 
   assert.equal(await p.$eval("input[name=siteId]", (e) => e.value), "s00000b04");
   const card = await p.$eval("#site-card", (c) => ({ hidden: c.hidden, text: c.innerText, terms: [...c.querySelectorAll("dt")].map((d) => d.textContent), tel: c.querySelector("a[href^='tel:']")?.getAttribute("href") }));
   assert.equal(card.hidden, false);
-  assert.deepEqual(card.terms, ["Trading name", "ABN", "Address", "Phone"]);
+  assert.deepEqual(card.terms, ["Trading name", "ABN", "Address", "Phone", "Email"]);
   assert.match(card.text, /Synthetic Unattended Pty Ltd/); assert.match(card.text, /20 000 000 190/); assert.match(card.text, /Unattended/); assert.ok(!/Liberty site/.test(card.text) && !/VEA Retail/.test(card.text) && !/Synthetic Liberty Trading/.test(card.text));
   assert.equal(card.tel, "tel:0391137191");
+  const mail = await p.$eval("#site-card a[href^='mailto:']", (a) => ({ href: a.getAttribute("href"), text: a.textContent }));
+  assert.equal(mail.href, "mailto:pumprepairs@libertyretail.com.au");
+  assert.equal(mail.text, "pumprepairs@libertyretail.com.au");
   await p.type("#site-q", "x");
   assert.equal(await p.$eval("input[name=siteId]", (e) => e.value), "", "editing the text drops the pick");
   assert.equal(await p.$eval("#site-card", (c) => c.hidden), true);
@@ -124,6 +127,9 @@ test("use my location: asked only on tap, nearest Unattended sites listed, card 
   const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
   const visit = (await Promise.all(blobs.map((b) => lib.visitorStore().get(b.key, { type: "json" })))).find((v) => v.name === "Synthetic Browser Visitor");
   assert.equal(visit.site.siteType, "unattended"); assert.equal(visit.site.abn, "20 000 000 190");
+  assert.equal(visit.site.contactEmail, "pumprepairs@libertyretail.com.au");
+  await p.waitForSelector('[data-testid="visit-contact-email"]', { timeout: 8000 });
+  assert.equal(await p.$eval('[data-testid="visit-contact-email"]', (a) => a.getAttribute("href")), "mailto:pumprepairs@libertyretail.com.au");
   assert.equal(H.mailbox.filter((m) => !/code is \d{8}/.test(m.text || "")).length, 0, "no notification email");
   await p.close();
 });
@@ -355,14 +361,14 @@ test("clicking a field in the site Edit or Add dialog does not close it; typing 
   assert.equal(await p.$eval('[data-testid="company-abn"]', (el) => el.value), companyAbn);
 
   await openEdit();
-  for (const id of ["site-form-name", "site-form-loc", "site-form-address", "site-form-phone", "site-form-trading-name", "site-form-abn"]) {
+  for (const id of ["site-form-name", "site-form-loc", "site-form-address", "site-form-phone", "site-form-contact-email", "site-form-trading-name", "site-form-abn"]) {
     const sel = '[data-testid="' + id + '"]';
     await p.$eval(sel, (el) => el.scrollIntoView({ block: "center" }));
     await p.click(sel);
     assert.equal(await modalOpen(), true, "edit dialog closed when clicking " + id);
     const room = await p.$eval(sel, (el) => !el.maxLength || el.maxLength < 0 || el.value.length < el.maxLength);
     if (room) {
-      await p.$eval(sel, (el) => { el.focus(); const end = el.value.length; el.setSelectionRange(end, end); });
+      await p.$eval(sel, (el) => { el.focus(); if (el.type !== "email" && typeof el.setSelectionRange === "function") { const end = el.value.length; el.setSelectionRange(end, end); } });
       await p.type(sel, "x");
       assert.equal(await modalOpen(), true, "edit dialog closed when typing in " + id);
       assert.match(await p.$eval(sel, (el) => el.value), /x$/, "typed value was lost in " + id);
@@ -433,4 +439,60 @@ test("CSV import: an Excel-style file with formula-guarded latitudes and spaced 
   assert.equal(saved.lat, -38.1736);
   assert.equal(saved.lng, 146.2588);
   await s.close();
+});
+
+test("admin: default contact email, edit-form email field, and Settings footer; screenshots", { skip: SKIP, timeout: 90000 }, async () => {
+  await boot();
+  const dir = "/workspace/qr-codes-data/contact-email-screenshots";
+  fs.mkdirSync(dir, { recursive: true });
+  async function shot(page, file, sel) {
+    const el = sel ? await page.$(sel) : null;
+    if (sel) assert.ok(el, "screenshot target " + sel);
+    await (el || page).screenshot({ path: path.join(dir, file) });
+  }
+
+  const signIn = await openPublic("/visit/sign-in");
+  await signIn.type("#site-q", "ballarat");
+  await signIn.waitForSelector("#site-options:not([hidden]) .site-option");
+  await signIn.keyboard.press("Enter");
+  await signIn.waitForSelector("#site-card:not([hidden])");
+  await signIn.waitForFunction(() => {
+    const card = document.getElementById("site-card");
+    return card && /pumprepairs@libertyretail\.com\.au/.test(card.innerText) && /03 9113 7191/.test(card.innerText);
+  }, { timeout: 8000 });
+  await shot(signIn, "signin-card-390.png", "#site-card");
+  await signIn.close();
+
+  const sites = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 1100, log: false });
+  await sites.waitForSelector('[data-testid="default-contact-email"]', { timeout: 8000 });
+  assert.equal(await sites.$eval('[data-testid="default-contact-email"]', (el) => el.value), "pumprepairs@libertyretail.com.au");
+  await sites.click('[data-testid="default-contact-email"]');
+  assert.ok(await sites.$('[data-testid="default-contact-email"]'), "default email field disappeared when clicked");
+  await sites.$eval('[data-testid="contact-email-save"]', (el) => el.scrollIntoView({ block: "center" }));
+  await sites.screenshot({ path: path.join(dir, "admin-sites-default-email-1440.png") });
+  await sites.evaluate(() => {
+    const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+    row?.querySelector('[data-testid="site-edit"]')?.click();
+  });
+  await sites.waitForSelector('[data-testid="site-form-contact-email"]', { timeout: 8000 });
+  await sites.click('[data-testid="site-form-contact-email"]');
+  assert.equal(await sites.$eval("#modal", (m) => !m.classList.contains("hidden")), true, "edit dialog closed when clicking the contact email field");
+  await sites.$eval('[data-testid="site-form-contact-email"]', (el) => el.scrollIntoView({ block: "center" }));
+  await shot(sites, "admin-sites-edit-email-1440.png", ".modal-card");
+  await sites.click('[data-testid="site-form-hide-email"]');
+  assert.equal(await sites.$eval("#modal", (m) => !m.classList.contains("hidden")), true, "edit dialog closed when clicking hide email");
+  assert.equal(await sites.$eval('[data-testid="site-form-contact-email"]', (el) => el.disabled), true);
+  await sites.close();
+
+  const settings = await H.openPage(browser, owner, "settings", { w: 1440, h: 1100, log: false });
+  await settings.waitForSelector('[data-testid="footer-settings"]', { timeout: 8000 });
+  await settings.waitForFunction(() => document.getElementById("footer-lead") && document.getElementById("footer-lead").value, { timeout: 8000 });
+  assert.equal(await settings.$eval('[data-testid="footer-lead"]', (el) => el.value), "Cowabunga - please hesitate to reach out");
+  assert.equal(await settings.$eval('[data-testid="footer-link-text"]', (el) => el.value), "email me here");
+  assert.equal(await settings.$eval('[data-testid="footer-email"]', (el) => el.value), "jbattaglia@libertyretail.com.au");
+  await settings.click('[data-testid="footer-lead"]');
+  assert.ok(await settings.$('[data-testid="footer-settings"]'), "footer settings disappeared when clicking a field");
+  await settings.$eval('[data-testid="footer-settings"]', (el) => el.scrollIntoView({ block: "center" }));
+  await shot(settings, "admin-settings-footer-1440.png", '[data-testid="footer-settings"]');
+  await settings.close();
 });

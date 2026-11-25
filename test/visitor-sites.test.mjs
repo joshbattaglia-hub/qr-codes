@@ -63,6 +63,11 @@ test("display rules: company sites use the one Liberty setting, agents their own
   const a = sd.displaySite({ id: "s1", name: "A", siteType: "company", abn: SYN_AGENT_ABN, tradingName: "Ignored" }, company);
   assert.equal(a.tradingName, "Synthetic Liberty Trading"); assert.equal(a.abn, SYN_LIBERTY_ABN, "a company site never shows its own ABN");
   assert.equal(a.phone, "03 9113 7191"); assert.equal(a.phoneHref, "tel:0391137191");
+  assert.equal(a.contactEmail, sd.DEFAULT_CONTACT_EMAIL); assert.equal(a.contactEmailHref, "mailto:" + sd.DEFAULT_CONTACT_EMAIL);
+  const override = sd.displaySite({ id: "s1b", name: "A2", siteType: "unattended", contactEmail: "site.repairs@libertyretail.com.au" }, company);
+  assert.equal(override.contactEmail, "site.repairs@libertyretail.com.au");
+  const hidden = sd.displaySite({ id: "s1c", name: "A3", siteType: "unattended", contactEmail: "HIDE" }, company);
+  assert.equal(hidden.contactEmail, ""); assert.equal(hidden.contactEmailHref, "");
   const untyped = sd.displaySite({ id: "s2", name: "B" }, company);
   assert.equal(untyped.type, "company", "a site without a type counts as a Liberty site");
   const agent = sd.displaySite({ id: "s3", name: "C", siteType: "commission_agent", tradingName: "Agent Co", abn: SYN_AGENT_ABN, phone: "0412 345 678" }, company);
@@ -100,7 +105,7 @@ test("public site directory: the visitor picker lists only Unattended sites, not
   assert.deepEqual(names, ["Synthetic Unattended Moe"]);
   assert.equal(r.body.sites[0].type, "unattended");
   const keys = new Set(r.body.sites.flatMap((s) => Object.keys(s)));
-  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "lat", "lng", "picker", "proposed"].includes(k), "unexpected public field " + k);
+  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "contactEmail", "contactEmailHref", "lat", "lng", "picker", "proposed"].includes(k), "unexpected public field " + k);
   const full = await sd.publicSiteDirectory({ picker: false });
   assert.ok(full.sites.some((s) => s.name === "Synthetic Ballarat North"), "the master list still has retail sites");
   assert.ok(full.sites.some((s) => s.type === "company"));
@@ -139,7 +144,7 @@ test("sign-in with a picked site stores a snapshot (name, LOC, type, trading nam
   const visits = await Promise.all(blobs.map((x) => lib.visitorStore().get(x.key, { type: "json" })));
   const agentVisit = visits.find((v) => v.name === "Synthetic Visitor");
   assert.equal(agentVisit.location, "Synthetic Bendigo East (LOC0102)");
-  assert.deepEqual(agentVisit.site, { siteId: "s00000a02", loc: "LOC0102", name: "Synthetic Bendigo East", siteType: "commission_agent", tradingName: "Synthetic Agent Pty Ltd", abn: SYN_AGENT_ABN });
+  assert.deepEqual(agentVisit.site, { siteId: "s00000a02", loc: "LOC0102", name: "Synthetic Bendigo East", siteType: "commission_agent", tradingName: "Synthetic Agent Pty Ltd", abn: SYN_AGENT_ABN, contactEmail: sd.DEFAULT_CONTACT_EMAIL });
   assert.ok(!JSON.stringify(visits).includes("-37.1") && !JSON.stringify(visits).includes("144.1"), "visitor coordinates are never stored");
   assert.equal(visits.find((v) => v.name === "Typed Visitor").site, undefined);
   assert.equal(visits.find((v) => v.name === "Bogus Id").location, "Typed fallback");
@@ -224,6 +229,7 @@ test("CSV import: preview writes nothing, flags problems, needs an explicit appl
   assert.ok(!dl.body.includes("Synthetic Held Site"));
   const view = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
   assert.equal(view.body.defaultPhone, "03 9113 7191");
+  assert.equal(view.body.defaultContactEmail, sd.DEFAULT_CONTACT_EMAIL);
   assert.equal(view.body.counts.total, 5);
   assert.equal(view.body.counts.unattended, 1);
 });
@@ -638,4 +644,92 @@ test("CSV export round-trips through an Excel-style edit: BOM, CRLF, spaced ABNs
   assert.equal(semi.status, 200, JSON.stringify(semi.body));
   assert.deepEqual(semi.body.rows[0].errors, []);
   assert.deepEqual(semi.body.rows[0].changes.trading_name, ["Synthetic VIVA", "Still VIVA"]);
+});
+
+const DEFAULT_EMAIL = sd.DEFAULT_CONTACT_EMAIL;
+
+test("contact email: default when unset, override, HIDE, validation, and snapshot stores the displayed address", async () => {
+  assert.equal(sd.normaliseContactEmail(""), "");
+  assert.equal(sd.normaliseContactEmail("  PumpRepairs@LibertyRetail.com.au "), DEFAULT_EMAIL);
+  assert.equal(sd.normaliseContactEmail("HIDE"), "HIDE");
+  assert.equal(sd.normaliseContactEmail("hidden"), "HIDE");
+  assert.equal(sd.normaliseContactEmail("not-an-email"), null);
+  assert.equal(sd.normaliseContactEmail("has space@libertyretail.com.au"), null);
+  assert.equal(await sd.readDefaultContactEmail(), DEFAULT_EMAIL, "unset setting uses the code default; no live write needed");
+  const bad = await j(H.call("POST", "/api/visitor-log/contact-email", { cookie: owner, body: { email: "not-valid" } }));
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /not valid/i);
+  const anon = await j(H.call("POST", "/api/visitor-log/contact-email", { body: { email: DEFAULT_EMAIL } }));
+  assert.equal(anon.status, 401);
+  const saved = await j(H.call("POST", "/api/visitor-log/contact-email", { cookie: owner, body: { email: "  PUMPREPAIRS@libertyretail.com.au " } }));
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.email, DEFAULT_EMAIL);
+  const blank = await j(H.call("POST", "/api/visitor-log/contact-email", { cookie: owner, body: { email: "" } }));
+  assert.equal(blank.status, 200);
+  assert.equal(blank.body.email, DEFAULT_EMAIL, "an empty save keeps the default rather than blanking it");
+
+  await lib.sitesStore().setJSON("s00000e01", { id: "s00000e01", name: "Synthetic Email Override", loc: "LOC0E01", siteType: "unattended", contactEmail: "yard@libertyretail.com.au" });
+  await lib.sitesStore().setJSON("s00000e02", { id: "s00000e02", name: "Synthetic Email Hidden", loc: "LOC0E02", siteType: "unattended", contactEmail: "HIDE" });
+  sd.clearSiteDirectoryCache();
+  const dir = (await sd.publicSiteDirectory({ picker: false })).sites;
+  const over = dir.find((s) => s.id === "s00000e01");
+  const hide = dir.find((s) => s.id === "s00000e02");
+  assert.equal(over.contactEmail, "yard@libertyretail.com.au");
+  assert.equal(over.contactEmailHref, "mailto:yard@libertyretail.com.au");
+  assert.equal(hide.contactEmail, "");
+  assert.equal(hide.contactEmailHref, "");
+  const snapOver = await sd.siteSnapshot("s00000e01");
+  const snapHide = await sd.siteSnapshot("s00000e02");
+  const snapDefault = await sd.siteSnapshot("s00000a06");
+  assert.equal(snapOver.contactEmail, "yard@libertyretail.com.au");
+  assert.equal(snapHide.contactEmail, "");
+  assert.equal(snapDefault.contactEmail, DEFAULT_EMAIL);
+
+  const signed = await j(H.call("POST", "/api/visit/sign-in", { body: { name: "Email Snapshot Visitor", phone: "0400 000 021", company: "Synthetic Co", location: "typed", siteId: "s00000e01", photo: photo(), idempotencyKey: "k-email-1-aaaaaaaaaaaaaaaa" } }));
+  assert.equal(signed.status, 200, JSON.stringify(signed.body));
+  const { blobs } = await lib.visitorStore().list({ prefix: "visit/" });
+  const visits = await Promise.all(blobs.map((x) => lib.visitorStore().get(x.key, { type: "json" })));
+  const visit = visits.find((v) => v.name === "Email Snapshot Visitor");
+  assert.ok(visit); assert.equal(visit.site.contactEmail, "yard@libertyretail.com.au");
+  await lib.sitesStore().setJSON("s00000e01", { id: "s00000e01", name: "Synthetic Email Override", loc: "LOC0E01", siteType: "unattended", contactEmail: "later@libertyretail.com.au" });
+  const again = await lib.visitorStore().get("visit/" + visit.id, { type: "json" });
+  assert.equal(again.site.contactEmail, "yard@libertyretail.com.au", "later edits never rewrite the snapshot");
+});
+
+test("contact email CSV: new column, blank keeps, CLEAR reverts to default, HIDE hides, old files still work", async () => {
+  await lib.sitesStore().setJSON("s00000e10", { id: "s00000e10", name: "Synthetic CSV Email", loc: "LOC0E10", siteType: "unattended", phone: "03 9113 7191" });
+  const csv = "loc,contact_email\nLOC0E10,site.csv@libertyretail.com.au";
+  const prev = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv, dryRun: true } }));
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.deepEqual(prev.body.rows[0].errors, []);
+  assert.deepEqual(prev.body.rows[0].changes.contact_email, ["", "site.csv@libertyretail.com.au"]);
+  const applied = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv, dryRun: false, confirm: "APPLY" } }));
+  assert.equal(applied.status, 200);
+  assert.equal((await lib.sitesStore().get("s00000e10", { type: "json" })).contactEmail, "site.csv@libertyretail.com.au");
+
+  const keep = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "loc,contact_email\nLOC0E10,", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(keep.status, 200);
+  assert.equal((await lib.sitesStore().get("s00000e10", { type: "json" })).contactEmail, "site.csv@libertyretail.com.au", "a blank cell keeps the stored email");
+
+  const hide = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "loc,contact_email\nLOC0E10,HIDE", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(hide.status, 200);
+  assert.equal((await lib.sitesStore().get("s00000e10", { type: "json" })).contactEmail, "HIDE");
+
+  const cleared = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "loc,contact_email\nLOC0E10,CLEAR", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(cleared.status, 200);
+  assert.equal((await lib.sitesStore().get("s00000e10", { type: "json" })).contactEmail, undefined, "CLEAR removes the override so the default shows again");
+
+  const old = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "loc,site_name,site_type,trading_name,abn,phone,address,lat,lng\nLOC0E10,Synthetic CSV Email,unattended,,,03 9113 7191,,,", dryRun: true } }));
+  assert.equal(old.status, 200, JSON.stringify(old.body));
+  assert.deepEqual(old.body.rows[0].errors, []);
+  assert.ok(!("contact_email" in (old.body.rows[0].changes || {})), "older CSVs without the column leave the email alone");
+
+  const bad = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "loc,contact_email\nLOC0E10,not-an-email", dryRun: true } }));
+  assert.equal(bad.status, 200);
+  assert.match(bad.body.rows[0].errors[0], /[Cc]ontact email/);
+  assert.equal(bad.body.summary.errors, 1);
+
+  const dl = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended", { cookie: owner }));
+  assert.equal(dl.body.split("\n")[0], sd.CSV_COLUMNS.join(","));
+  assert.ok(dl.body.split("\n")[0].includes("contact_email"));
 });
