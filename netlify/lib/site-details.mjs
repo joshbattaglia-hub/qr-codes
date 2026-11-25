@@ -9,9 +9,7 @@
  */
 import crypto from "node:crypto";
 import { settingsStore, sitesStore } from "./lib.mjs";
-import { fileURLToPath } from "node:url";
-import fs from "node:fs";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { suburbFromAddress, validCoords } from "./tv.mjs";
 
 export const SITE_TYPES = ["company", "commission_agent", "unattended"];
@@ -158,9 +156,10 @@ export async function publicSiteDirectory({ readFirstMaintenance, picker = false
   return body;
 }
 
-const PROPOSED_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "proposed-unattended-sites.json");
+// Static require so the function bundle includes this file (fs.readFile is not traced).
+const requireProposed = createRequire(import.meta.url);
 function loadProposedUnattendedRaw() {
-  try { return JSON.parse(fs.readFileSync(PROPOSED_PATH, "utf8")); }
+  try { return requireProposed("./proposed-unattended-sites.json"); }
   catch { return []; }
 }
 function proposedId(index) {
