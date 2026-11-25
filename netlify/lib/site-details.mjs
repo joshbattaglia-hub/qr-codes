@@ -9,7 +9,7 @@
  */
 import crypto from "node:crypto";
 import { settingsStore, sitesStore } from "./lib.mjs";
-import { createRequire } from "node:module";
+import { proposedUnattendedSites } from "./proposed-unattended-sites.mjs";
 import { suburbFromAddress, validCoords } from "./tv.mjs";
 
 export const SITE_TYPES = ["company", "commission_agent", "unattended"];
@@ -156,11 +156,8 @@ export async function publicSiteDirectory({ readFirstMaintenance, picker = false
   return body;
 }
 
-// Static require so the function bundle includes this file (fs.readFile is not traced).
-const requireProposed = createRequire(import.meta.url);
 function loadProposedUnattendedRaw() {
-  try { return requireProposed("./proposed-unattended-sites.json"); }
-  catch { return []; }
+  return Array.isArray(proposedUnattendedSites) ? proposedUnattendedSites : [];
 }
 function proposedId(index) {
   const hex = (0xe000000 + index).toString(16).slice(-8);
