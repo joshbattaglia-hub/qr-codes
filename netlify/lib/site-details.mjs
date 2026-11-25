@@ -53,10 +53,14 @@ export function normaliseSiteType(value) {
   return null;
 }
 
-/** ABN: 11 digits that pass the ATO checksum. Returns "12 345 678 901", "" for blank, or null when invalid. */
+/** Temporary placeholder Joshua asked to use for the shared VIVA Unattended ABN until the real number is known. Not a valid ABN. */
+export const PLACEHOLDER_ABN = "1111";
+
+/** ABN: 11 digits that pass the ATO checksum, or the temporary placeholder 1111. Returns "12 345 678 901", "1111", "" for blank, or null when invalid. */
 export function normaliseAbn(value) {
   const digits = String(value ?? "").replace(/[\s.\-]/g, "");
   if (!digits) return "";
+  if (digits === PLACEHOLDER_ABN) return PLACEHOLDER_ABN;
   if (!/^\d{11}$/.test(digits)) return null;
   const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
   const sum = digits.split("").reduce((total, d, i) => total + (Number(d) - (i === 0 ? 1 : 0)) * weights[i], 0);

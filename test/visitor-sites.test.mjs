@@ -36,6 +36,10 @@ test("normalisers: ABN checksum, AU phone, site type words, CSV quoting", () => 
   assert.equal(sd.normaliseAbn("51824753556"), SYN_LIBERTY_ABN);
   assert.equal(sd.normaliseAbn("51 824 753 557"), null, "checksum fails");
   assert.equal(sd.normaliseAbn("1234"), null);
+  assert.equal(sd.normaliseAbn("11111"), null, "only the exact 1111 placeholder is allowed");
+  assert.equal(sd.normaliseAbn("11111111111"), null, "11 ones still fail the checksum");
+  assert.equal(sd.normaliseAbn("1111"), sd.PLACEHOLDER_ABN);
+  assert.equal(sd.normaliseAbn(" 1111 "), sd.PLACEHOLDER_ABN, "placeholder spacing is ignored");
   assert.equal(sd.normaliseAbn(""), "");
   assert.equal(sd.normaliseSitePhone("(03) 9113-7191"), "03 9113 7191");
   assert.equal(sd.normaliseSitePhone("+61 412 345 678"), "0412 345 678");
@@ -65,6 +69,9 @@ test("display rules: company sites use the one Liberty setting, agents their own
   assert.equal(u.phone, "03 9113 7191");
   const bareU = sd.displaySite({ id: "s6", name: "F", siteType: "unattended" }, company);
   assert.equal(bareU.tradingName, ""); assert.equal(bareU.abn, "");
+  const viva = sd.displaySite({ id: "s7", name: "G", siteType: "unattended", abn: "1111" }, company);
+  assert.equal(viva.abn, "1111", "the 1111 placeholder is shown on Unattended cards");
+  assert.equal(viva.tradingName, "");
   assert.equal(sd.usesCompanyDetails("unattended"), false);
   assert.equal(sd.usesCompanyDetails("company"), true);
   assert.equal(sd.usesCompanyDetails(""), true, "untyped sites count as VEA Retail");
@@ -326,6 +333,33 @@ test("CSV import can add a new Unattended site after preview, and will not add a
   assert.deepEqual(picker, ["Synthetic Unattended Horsham", "Synthetic Unattended Moe"]);
   const view = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
   assert.equal(view.body.counts.unattended, 2);
+});
+
+test("CSV import accepts the 1111 placeholder ABN on an Unattended site and still rejects other invalid ABNs", async () => {
+  const csv = [
+    "site_name,abn",
+    "Synthetic Unattended Moe,1111",
+    "Synthetic Unattended Moe,1234",
+  ].join("\n");
+  const prev = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,abn\nSynthetic Unattended Moe,1111" } }));
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.dryRun, true);
+  assert.equal(prev.body.summary.changed, 1);
+  assert.deepEqual(prev.body.rows[0].changes.abn, ["", "1111"]);
+  assert.deepEqual(Object.keys(prev.body.rows[0].changes), ["abn"]);
+  const bad = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,abn\nSynthetic Unattended Moe,1234" } }));
+  assert.equal(bad.status, 200);
+  assert.match(bad.body.rows[0].errors[0], /ABN/);
+  const applied = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,abn\nSynthetic Unattended Moe,1111", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(applied.status, 200, JSON.stringify(applied.body));
+  assert.equal(applied.body.written, 1);
+  const moe = await lib.sitesStore().get("s00000a06", { type: "json" });
+  assert.equal(moe.abn, "1111");
+  assert.equal(moe.address, SITES[5].address, "only ABN is written");
+  assert.equal(moe.phone, SITES[5].phone);
+  sd.clearSiteDirectoryCache();
+  const card = (await j(H.call("GET", "/api/visit/sites"))).body.sites.find((s) => s.name === "Synthetic Unattended Moe");
+  assert.equal(card.abn, "1111");
 });
 
 
