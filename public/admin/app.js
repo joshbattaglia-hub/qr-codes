@@ -2021,19 +2021,27 @@ async function paintSiteDetails() {
     + '<div class="row"><button class="btn ghost" type="button" id="site-details-download" data-act="site-details-download" data-testid="site-details-download">Download current list as CSV</button></div>'
     + '<p id="csv-types-hint" class="muted small" hidden data-testid="csv-types-hint">Tick at least one site type to download.</p>'
     + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
-    + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv"></label>'
+    + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv,text/plain" data-testid="site-details-file"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
-    + '<div class="row"><button class="btn" type="button" data-act="site-details-preview">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
+    + '<div class="row"><button class="btn" type="button" data-act="site-details-preview" data-testid="site-details-preview-btn">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
     + '<div id="site-details-preview" data-testid="site-details-preview"></div>';
   const file = document.getElementById("site-details-file");
   file?.addEventListener("change", async () => {
     const f = file.files?.[0];
     if (!f) return;
     if (f.size > 400000) { toast.error("That CSV is too large."); return; }
-    document.getElementById("site-details-csv").value = await f.text();
+    const text = await readSiteDetailsCsvFile(f);
+    const ta = document.getElementById("site-details-csv");
+    if (ta) ta.value = text;
+    state.siteDetailsCsv = text;
     document.getElementById("site-details-apply").disabled = true;
   });
-  document.getElementById("site-details-csv")?.addEventListener("input", () => { document.getElementById("site-details-apply").disabled = true; });
+  const csvBox = document.getElementById("site-details-csv");
+  if (csvBox && state.siteDetailsCsv) csvBox.value = state.siteDetailsCsv;
+  csvBox?.addEventListener("input", () => {
+    state.siteDetailsCsv = csvBox.value;
+    document.getElementById("site-details-apply").disabled = true;
+  });
   document.querySelectorAll('input[name="csv-type"]').forEach((el) => el.addEventListener("change", syncCsvDownloadButton));
   syncCsvDownloadButton();
   const redraw = () => paintSitesTable();
@@ -2136,9 +2144,27 @@ function siteDetailPreview(body) {
   const fmt = (v) => v === "" || v == null ? "(blank)" : String(v);
   const rows = (body.rows || []).map((r) => '<tr class="' + (r.errors.length ? "bad" : r.action === "add" || Object.keys(r.changes || {}).length ? "chg" : "same") + '"><td>' + esc(String(r.line)) + '</td><td>' + (r.site && r.site.added ? '<span data-testid="site-preview-add">New site:</span> ' + esc(r.site.name) + (r.site.loc ? ' <span class="muted">' + esc(r.site.loc) + '</span>' : "") : r.site ? esc(r.site.name) + (r.site.loc ? ' <span class="muted">' + esc(r.site.loc) + '</span>' : "") : '<span class="muted">No match</span>') + '</td><td>'
     + (r.action === "add" && !r.errors.length ? '<div><strong>Add</strong></div>' : "") + (Object.entries(r.changes || {}).map(([k, [a, b]]) => '<div><strong>' + esc(k) + '</strong>: ' + esc(fmt(a)) + ' → ' + esc(fmt(b)) + '</div>').join("") || (r.action === "add" && !r.errors.length ? "" : '<span class="muted">No change</span>')) + '</td><td>'
-    + r.errors.map((e) => '<div class="err-text">' + esc(e) + '</div>').join("") + r.warnings.map((w) => '<div class="muted small">' + esc(w) + '</div>').join("") + '</td></tr>').join("");
-  return '<p data-testid="site-details-summary"><strong>' + (body.dryRun ? "Preview only, nothing saved." : "Saved " + esc(String(body.written)) + " site" + (body.written === 1 ? "" : "s") + ".") + '</strong> ' + esc(String(s.rows || 0)) + ' rows · ' + esc(String(s.added || 0)) + ' to add · ' + esc(String(s.changed || 0)) + ' to change · ' + esc(String(s.unchanged || 0)) + ' unchanged · ' + esc(String(s.errors || 0)) + ' with problems (skipped).' + ((body.ignoredColumns || []).length ? ' Ignored columns: ' + esc(body.ignoredColumns.join(", ")) + '.' : "") + '</p>'
+    + (r.errors.length ? '<div class="err-text" data-testid="site-preview-row-error"><strong>Not saved:</strong> ' + esc(r.errors.join(" ")) + ' Any other changes on this row are also skipped.</div>' : "") + r.warnings.map((w) => '<div class="muted small">' + esc(w) + '</div>').join("") + '</td></tr>').join("");
+  const saved = body.dryRun ? "Preview only, nothing saved." : ((body.written || 0) ? "Saved " + esc(String(body.written)) + " site" + (body.written === 1 ? "" : "s") + "." : "Nothing was saved.");
+  const errBit = (s.errors || 0)
+    ? ' <span class="err-text" role="alert" data-testid="site-details-errors">' + esc(String(s.errors)) + ' with problems (those rows are skipped, including any ABN or trading name on the same row).</span>'
+    : ' 0 with problems (skipped).';
+  return '<p data-testid="site-details-summary"><strong>' + saved + '</strong> ' + esc(String(s.rows || 0)) + ' rows · ' + esc(String(s.added || 0)) + ' to add · ' + esc(String(s.changed || 0)) + ' to change · ' + esc(String(s.unchanged || 0)) + ' unchanged ·' + errBit + ((body.ignoredColumns || []).length ? ' Ignored columns: ' + esc(body.ignoredColumns.join(", ")) + '.' : "") + '</p>'
     + '<div class="table-wrap"><table class="visitor-sheet site-preview"><thead><tr><th>Row</th><th>Site</th><th>Changes</th><th>Notes</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">No rows.</td></tr>') + '</tbody></table></div>';
+}
+/** Read a chosen CSV as text, including UTF-16 files Excel on a Mac sometimes writes. */
+async function readSiteDetailsCsvFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const enc = bytes[0] === 0xFF && bytes[1] === 0xFE ? "utf-16le" : bytes[0] === 0xFE && bytes[1] === 0xFF ? "utf-16be" : "utf-8";
+  return new TextDecoder(enc).decode(bytes);
+}
+function currentSiteDetailsCsv() {
+  const typed = document.getElementById("site-details-csv")?.value;
+  if (typed != null && String(typed).length) {
+    state.siteDetailsCsv = typed;
+    return typed;
+  }
+  return state.siteDetailsCsv || "";
 }
 function usersPage() {
   return '<div id="users-page" data-testid="users-page"><div class="page-head"><div><h1>Users</h1><p class="muted">Email-code sign-ins and what each person can use. Only you (the owner) can see this page. Every change is logged. The head-office password is separate and unchanged.</p></div></div><div id="users-body" class="card">Loading…</div></div>';
@@ -2525,7 +2551,7 @@ async function visitorAction(button) {
     return;
   }
   if (act === "site-details-preview" || act === "site-details-apply") {
-    const csv = document.getElementById("site-details-csv")?.value || "";
+    const csv = currentSiteDetailsCsv();
     const out = document.getElementById("site-details-preview");
     const applyBtn = document.getElementById("site-details-apply");
     const apply = act === "site-details-apply";
@@ -2534,7 +2560,22 @@ async function visitorAction(button) {
       const body = await api("/api/visitor-log/site-details/import", { method: "POST", body: JSON.stringify(apply ? { csv, dryRun: false, confirm: "APPLY" } : { csv, dryRun: true }) });
       out.innerHTML = siteDetailPreview(body);
       applyBtn.disabled = apply || !((body.summary?.willWrite || 0) > 0 || (body.summary?.changed || 0) + (body.summary?.added || 0) > 0);
-      if (apply) { toast("Site details saved"); paintSiteDetails().then(() => { const o = document.getElementById("site-details-preview"); if (o) o.innerHTML = siteDetailPreview(body); }).catch(() => {}); }
+      if (apply) {
+        const written = body.written || 0;
+        const errs = body.summary?.errors || 0;
+        if (written && !errs) toast("Site details saved");
+        else if (written && errs) toast("Saved " + written + " site" + (written === 1 ? "" : "s") + ". " + errs + " row" + (errs === 1 ? "" : "s") + " had problems and were skipped.");
+        else if (errs) toast.error("Nothing was saved. " + errs + " row" + (errs === 1 ? "" : "s") + " had problems. See the notes in the table.");
+        else toast("No changes to save.");
+        const kept = csv;
+        paintSiteDetails().then(() => {
+          const o = document.getElementById("site-details-preview");
+          if (o) o.innerHTML = siteDetailPreview(body);
+          const ta = document.getElementById("site-details-csv");
+          if (ta && kept) ta.value = kept;
+          state.siteDetailsCsv = kept;
+        }).catch(() => {});
+      }
     } catch (err) { out.innerHTML = '<p class="err-text" role="alert">' + esc(err.message) + '</p>'; applyBtn.disabled = true; }
     return;
   }

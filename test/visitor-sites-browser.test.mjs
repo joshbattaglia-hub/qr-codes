@@ -400,3 +400,37 @@ test("clicking a field in the site Edit or Add dialog does not close it; typing 
   assert.equal(saved.name, "Synthetic Unattended Ballarat", "Save from the button must not have been a stale click-save");
   await p.close();
 });
+
+test("CSV import: an Excel-style file with formula-guarded latitudes and spaced ABNs previews and applies, and row errors stay visible", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  await lib.sitesStore().setJSON("s00000b20", { id: "s00000b20", name: "Synthetic Unattended Import Apply", loc: "LOC0290", address: "1 Import Rd, Moe VIC 3825", lat: -38.1736, lng: 146.2588, siteType: "unattended" });
+  const excel = "\ufeff" + [
+    "loc,site_name,site_type,trading_name,abn,phone,address,lat,lng",
+    "LOC0290,Synthetic Unattended Import Apply,unattended,Synthetic VIVA,51 824 753 556,,\"1 Import Rd, Moe VIC 3825\",\"'-38.1736\",146.2588",
+    "LOC0999,Missing Site,unattended,Nope,1234,,,\"'-37.5\",144.9",
+  ].join("\r\n") + "\r\n";
+  const s = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, log: false });
+  await s.waitForSelector('[data-testid="site-details-csv"]', { timeout: 8000 });
+  await s.evaluate((csv) => { document.querySelector('[data-testid="site-details-csv"]').value = csv; }, excel);
+  await s.click('[data-act="site-details-preview"]');
+  await s.waitForSelector('[data-testid="site-details-summary"]');
+  const preview = await s.$eval('[data-testid="site-details-summary"]', (e) => e.textContent);
+  assert.match(preview, /Preview only, nothing saved/);
+  assert.match(preview, /1 to change/);
+  assert.match(preview, /1 with problems/);
+  assert.ok(!/lat\/lng must both be set/.test(await s.$eval('[data-testid="site-details-preview"]', (e) => e.textContent)), "formula-guarded latitudes are accepted");
+  const rowErr = await s.$eval('[data-testid="site-preview-row-error"]', (e) => e.textContent);
+  assert.match(rowErr, /Not saved:/);
+  assert.match(rowErr, /ABN 1234 is not valid/);
+  assert.equal(await s.$eval('[data-testid="site-details-apply"]', (b) => b.disabled), false);
+  assert.equal((await lib.sitesStore().get("s00000b20", { type: "json" })).abn, undefined, "preview did not write");
+  s.once("dialog", (d) => d.accept());
+  await s.click('[data-testid="site-details-apply"]');
+  await s.waitForFunction(() => /Saved 1 site/.test(document.querySelector('[data-testid="site-details-summary"]')?.textContent || ""), { timeout: 8000 });
+  const saved = await lib.sitesStore().get("s00000b20", { type: "json" });
+  assert.equal(saved.abn, "51 824 753 556");
+  assert.equal(saved.tradingName, "Synthetic VIVA");
+  assert.equal(saved.lat, -38.1736);
+  assert.equal(saved.lng, 146.2588);
+  await s.close();
+});
