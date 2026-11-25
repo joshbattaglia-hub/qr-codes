@@ -3316,7 +3316,11 @@ document.body.addEventListener("click", (e) => {
   if (e.target.id === "overlay") { setSidebar(false, true); return; }
   if (e.target.id === "slug-toggle") { $("#slug-wrap")?.classList.toggle("hidden"); return; }
   const goEl = e.target.closest("[data-go]");
-  const actEl = e.target.closest("[data-act]");
+  // Forms keep data-act for the submit handler. A click in a field must not run
+  // that action, or the Edit site dialog saves and closes as soon as you click
+  // the ABN, trading name, or any other input.
+  const actElRaw = e.target.closest("[data-act]");
+  const actEl = actElRaw && actElRaw.tagName === "FORM" ? null : actElRaw;
   if (!e.target.closest(".pop") && !e.target.closest(".menu-wrap") && !e.target.closest(".range-wrap") && !e.target.closest(".search")) {
     document.querySelectorAll(".menu,#date-pop").forEach((m) => m.classList.add("hidden"));
     closePops();

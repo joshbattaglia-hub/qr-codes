@@ -329,3 +329,74 @@ test("Sites CSV download has type ticks, defaults to Unattended (the picker type
   assert.equal(await p.$eval('[data-testid="site-details-download"]', (b) => b.disabled), false);
   await p.close();
 });
+
+test("clicking a field in the site Edit or Add dialog does not close it; typing sticks; Cancel and Save still work", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  const p = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 1100, log: false });
+  await p.waitForSelector('[data-testid="sites-table"]', { timeout: 8000 });
+
+  async function openEdit() {
+    await p.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+      row?.querySelector('[data-testid="site-edit"]')?.click();
+    });
+    await p.waitForSelector('[data-testid="site-edit-form"]', { timeout: 8000 });
+  }
+  async function modalOpen(sel = "[data-testid=site-edit-form]") {
+    return p.$eval("#modal", (m, s) => !m.classList.contains("hidden") && !!m.querySelector(s), sel);
+  }
+
+  await p.click('[data-testid="company-abn"]');
+  assert.ok(await p.$('[data-testid="company-trading-name"]') && await p.$('[data-testid="company-abn"]'), "VEA Retail details disappeared after clicking ABN");
+  const companyAbn = await p.$eval('[data-testid="company-abn"]', (el) => el.value);
+  await p.$eval('[data-testid="company-trading-name"]', (el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length); });
+  await p.type('[data-testid="company-trading-name"]', "x");
+  assert.match(await p.$eval('[data-testid="company-trading-name"]', (el) => el.value), /x$/);
+  assert.equal(await p.$eval('[data-testid="company-abn"]', (el) => el.value), companyAbn);
+
+  await openEdit();
+  for (const id of ["site-form-name", "site-form-loc", "site-form-address", "site-form-phone", "site-form-trading-name", "site-form-abn"]) {
+    const sel = '[data-testid="' + id + '"]';
+    await p.$eval(sel, (el) => el.scrollIntoView({ block: "center" }));
+    await p.click(sel);
+    assert.equal(await modalOpen(), true, "edit dialog closed when clicking " + id);
+    const room = await p.$eval(sel, (el) => !el.maxLength || el.maxLength < 0 || el.value.length < el.maxLength);
+    if (room) {
+      await p.$eval(sel, (el) => { el.focus(); const end = el.value.length; el.setSelectionRange(end, end); });
+      await p.type(sel, "x");
+      assert.equal(await modalOpen(), true, "edit dialog closed when typing in " + id);
+      assert.match(await p.$eval(sel, (el) => el.value), /x$/, "typed value was lost in " + id);
+    }
+  }
+  await p.click('[data-testid="site-form-type"]');
+  assert.equal(await modalOpen(), true, "edit dialog closed when clicking the type menu");
+
+  await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+  await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+  const afterCancel = await lib.sitesStore().get("s00000b04", { type: "json" });
+  assert.equal(afterCancel.name, "Synthetic Unattended Ballarat", "Cancel must not save");
+
+  await p.click('[data-testid="site-add-open"]');
+  await p.waitForSelector('[data-testid="site-add-form"]');
+  await p.click('[data-testid="site-form-name"]');
+  await p.type('[data-testid="site-form-name"]', "Synthetic Add Click Check");
+  assert.equal(await modalOpen("[data-testid=site-add-form]"), true, "Add dialog closed when clicking a field");
+  assert.equal(await p.$eval('[data-testid="site-form-name"]', (el) => el.value), "Synthetic Add Click Check");
+  await p.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+  await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+  await openEdit();
+  const abn = await p.$('[data-testid="site-form-abn"]');
+  await abn.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await abn.click({ clickCount: 3 });
+  await p.keyboard.press("Backspace");
+  await p.type('[data-testid="site-form-abn"]', "1111");
+  assert.equal(await modalOpen(), true);
+  assert.equal(await p.$eval('[data-testid="site-form-abn"]', (el) => el.value), "1111");
+  await p.click('[data-testid="site-form-save"]');
+  await p.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+  const saved = await lib.sitesStore().get("s00000b04", { type: "json" });
+  assert.equal(saved.abn, "1111");
+  assert.equal(saved.name, "Synthetic Unattended Ballarat", "Save from the button must not have been a stale click-save");
+  await p.close();
+});
