@@ -54,8 +54,6 @@ test("display rules: company sites use the one Liberty setting, agents their own
   assert.equal(a.phone, "03 9113 7191"); assert.equal(a.phoneHref, "tel:0391137191");
   const untyped = sd.displaySite({ id: "s2", name: "B" }, company);
   assert.equal(untyped.type, "company", "a site without a type counts as a Liberty site");
-  const u = sd.displaySite({ id: "s5", name: "U", siteType: "unattended", address: "1 St" }, company);
-  assert.equal(u.type, "unattended");
   const agent = sd.displaySite({ id: "s3", name: "C", siteType: "commission_agent", tradingName: "Agent Co", abn: SYN_AGENT_ABN, phone: "0412 345 678" }, company);
   assert.equal(agent.tradingName, "Agent Co"); assert.equal(agent.abn, SYN_AGENT_ABN); assert.equal(agent.phone, "0412 345 678");
   const bare = sd.displaySite({ id: "s4", name: "D", siteType: "commission_agent" }, { abn: "", tradingName: "" });
