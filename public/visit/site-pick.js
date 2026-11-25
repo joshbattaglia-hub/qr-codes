@@ -8,15 +8,26 @@
   if (!roots.length) return;
   // One shared copy of the site list for every picker on the page (sign-in and sign-out on /visit).
   var shared = { sites: [], withCoords: 0, ready: false, waiting: [] };
+  function failLoad() {
+    shared.failed = true;
+    shared.sites = [];
+    shared.withCoords = 0;
+    shared.ready = true;
+    for (var r = 0; r < roots.length; r++) roots[r].setAttribute("data-ready", "error");
+    for (var j = 0; j < shared.waiting.length; j++) shared.waiting[j]();
+  }
   function loadShared() {
     if (!window.fetch) return;
-    fetch("/api/visit/sites", { credentials: "same-origin" }).then(function (res) { return res.json(); }).then(function (data) {
-      shared.sites = (data && data.sites) || [];
-      shared.withCoords = (data && data.withCoordinates) || 0;
-      for (var i = 0; i < shared.sites.length; i++) shared.sites[i]._hay = " " + norm([shared.sites[i].name, shared.sites[i].loc, shared.sites[i].suburb, shared.sites[i].address, shared.sites[i].tradingName].join(" "));
-      shared.ready = true;
-      for (var j = 0; j < shared.waiting.length; j++) shared.waiting[j]();
-    })["catch"](function () { for (var r = 0; r < roots.length; r++) roots[r].setAttribute("data-ready", "error"); });
+    fetch("/api/visit/sites", { credentials: "same-origin" }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok || !data || !Array.isArray(data.sites)) { failLoad(); return; }
+        shared.sites = data.sites;
+        shared.withCoords = data.withCoordinates || 0;
+        for (var i = 0; i < shared.sites.length; i++) shared.sites[i]._hay = " " + norm([shared.sites[i].name, shared.sites[i].loc, shared.sites[i].suburb, shared.sites[i].address, shared.sites[i].tradingName].join(" "));
+        shared.ready = true;
+        for (var j = 0; j < shared.waiting.length; j++) shared.waiting[j]();
+      }, function () { failLoad(); });
+    })["catch"](function () { failLoad(); });
   }
   function norm(text) { return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/^\s+|\s+$/g, ""); }
   for (var r = 0; r < roots.length; r++) init(roots[r]);
@@ -65,6 +76,8 @@
     if (privacy) privacy.hidden = !!empty;
     if (nearList) nearList.hidden = !!empty;
     if (nearNote) nearNote.hidden = !!empty;
+    var emptyNote = root.querySelector(".site-pick-empty-note");
+    if (emptyNote) emptyNote.hidden = !empty;
     var lab = input && input.id ? document.querySelector('label[for="' + input.id + '"]') : null;
     if (lab && !lab.getAttribute("data-full-label")) lab.setAttribute("data-full-label", lab.innerHTML);
     if (empty) {
@@ -74,7 +87,7 @@
       input.removeAttribute("aria-controls");
       if (lab) {
         var hint = input.required ? "Type the site name or number." : "Optional. Type the site name or number.";
-        lab.innerHTML = "Site<span class=\"muted\">" + hint + "</span>";
+        lab.innerHTML = "<span class=\"muted\">" + hint + "</span>";
       }
     } else {
       input.setAttribute("role", "combobox");
@@ -87,8 +100,16 @@
 
   shared.waiting.push(function () {
     sites = shared.sites; withCoords = shared.withCoords;
-    setEmptyMode(!sites.length);
-    root.setAttribute("data-ready", "1");
+    if (shared.failed) {
+      setEmptyMode(false);
+      if (nearNote) {
+        nearNote.hidden = false;
+        nearNote.textContent = "The site list could not be loaded. Type the site name, or try again in a moment.";
+      }
+    } else {
+      setEmptyMode(!sites.length);
+      root.setAttribute("data-ready", "1");
+    }
     if (input.value && !chosen) search();
   });
 
@@ -226,6 +247,8 @@
 
   nearBtn.addEventListener("click", function () {
     nearList.innerHTML = "";
+    if (shared.failed || !shared.ready) { nearNote.textContent = "The site list could not be loaded. Type the site name, or try again in a moment."; return; }
+    if (!sites.length) { nearNote.textContent = "No listed sites are set up for location matching. Type the site name."; return; }
     if (!navigator.geolocation) { nearNote.textContent = "This browser cannot share location. Search for your site below."; return; }
     if (sites.length && !withCoords) { nearNote.textContent = "Nearest-site matching is not set up yet. Search for your site below."; return; }
     nearNote.textContent = "Finding sites near you…";

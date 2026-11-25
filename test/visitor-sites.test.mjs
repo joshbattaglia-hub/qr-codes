@@ -250,6 +250,9 @@ test("privacy: location is only asked for on the button tap, worked out in the b
     assert.ok(!/\blat\b|coords/.test(html.slice(html.indexOf("build: async"))), "the sign-in payload carries no coordinates");
   }
   assert.ok(!/=>|\bconst\b|\blet\b|`/.test(js), "plain ES5 for older browsers");
+  assert.ok(!/innerHTML\s*=\s*"Site/.test(js), "empty mode does not add a second Site heading");
+  assert.match(js, /site-pick-empty-note/);
+  assert.match(js, /The site list could not be loaded/);
 });
 
 test("deploy previews are look-only for the Visitor Log: POSTs are refused before anything runs; production and GETs are unaffected", async () => {
