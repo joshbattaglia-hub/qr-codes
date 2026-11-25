@@ -42,8 +42,47 @@
   function label(site) { return site.name + (site.loc ? " (" + site.loc + ")" : ""); }
   function sub(site) { return [site.loc, site.suburb].filter(Boolean).join(" · "); }
 
+  function typeLabel(site) {
+    if (site.type === "commission_agent") return "LOC CA";
+    if (site.type === "unattended") return "Unattended";
+    return "VEA Retail";
+  }
+  function typeClass(site) {
+    if (site.type === "commission_agent") return "agent";
+    if (site.type === "unattended") return "unattended";
+    return "company";
+  }
+
+  function setEmptyMode(empty) {
+    root.setAttribute("data-empty", empty ? "1" : "0");
+    if (nearBtn) nearBtn.hidden = !!empty;
+    var privacy = root.querySelector(".near-privacy");
+    if (privacy) privacy.hidden = !!empty;
+    if (nearList) nearList.hidden = !!empty;
+    if (nearNote) nearNote.hidden = !!empty;
+    var lab = input && input.id ? document.querySelector('label[for="' + input.id + '"]') : null;
+    if (lab && !lab.getAttribute("data-full-label")) lab.setAttribute("data-full-label", lab.innerHTML);
+    if (empty) {
+      input.removeAttribute("role");
+      input.removeAttribute("aria-autocomplete");
+      input.removeAttribute("aria-expanded");
+      input.removeAttribute("aria-controls");
+      if (lab) {
+        var hint = input.required ? "Type the site name or number." : "Optional. Type the site name or number.";
+        lab.innerHTML = "Site<span class=\"muted\">" + hint + "</span>";
+      }
+    } else {
+      input.setAttribute("role", "combobox");
+      input.setAttribute("aria-autocomplete", "list");
+      input.setAttribute("aria-expanded", "false");
+      if (list && list.id) input.setAttribute("aria-controls", list.id);
+      if (lab && lab.getAttribute("data-full-label")) lab.innerHTML = lab.getAttribute("data-full-label");
+    }
+  }
+
   shared.waiting.push(function () {
     sites = shared.sites; withCoords = shared.withCoords;
+    setEmptyMode(!sites.length);
     root.setAttribute("data-ready", "1");
     if (input.value && !chosen) search();
   });
@@ -114,7 +153,7 @@
     card.innerHTML = "";
     var head = el("div", "site-card-head");
     head.appendChild(el("h3", "", site.name));
-    head.appendChild(el("span", "site-type " + (site.type === "commission_agent" ? "agent" : "company"), site.type === "commission_agent" ? "LOC CA" : "VEA Retail"));
+    head.appendChild(el("span", "site-type " + typeClass(site), typeLabel(site)));
     card.appendChild(head);
     var dl = el("dl");
     row(dl, "Trading name", site.tradingName);

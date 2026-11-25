@@ -10,7 +10,9 @@
 import { settingsStore, sitesStore } from "./lib.mjs";
 import { suburbFromAddress, validCoords } from "./tv.mjs";
 
-export const SITE_TYPES = ["company", "commission_agent"];
+export const SITE_TYPES = ["company", "commission_agent", "unattended"];
+/** Visitor sign-in/sign-out picker: only these types. Retail sites stay in the master list. */
+export const PICKER_SITE_TYPES = ["unattended"];
 export const DEFAULT_SITE_PHONE = "03 9113 7191";
 export const COMPANY_KEY = "company-details";
 export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "address", "lat", "lng"];
@@ -29,6 +31,7 @@ export function normaliseSiteType(value) {
   if (!text) return "";
   if (["company", "liberty", "corporate", "company_run", "company_site", "co", "vea", "vea_retail", "vea_retail_site"].includes(text)) return "company";
   if (["commission_agent", "agent", "commission", "ca", "commissionagent", "commission_agents", "loc_ca", "locca", "loc_ca_site"].includes(text)) return "commission_agent";
+  if (["unattended", "unattended_site", "unattended_sites", "unmanned"].includes(text)) return "unattended";
   return null;
 }
 
@@ -122,13 +125,21 @@ export async function defaultSitePhone(readFirstMaintenance) {
   return normaliseSitePhone(first) || DEFAULT_SITE_PHONE;
 }
 
-/** Public directory for the visitor forms: active sites only, display fields only. Cached for a minute. */
-export async function publicSiteDirectory({ readFirstMaintenance } = {}) {
-  if (cache && clock() - cache.at < CACHE_MS) return cache.body;
-  const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
-  const sites = records.filter((r) => !r.hold).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
-  const body = { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length };
-  cache = { at: clock(), body };
+/** Public directory: active sites only, display fields only. Cached for a minute.
+ *  Pass picker:true for the visitor sign-in/sign-out list (Unattended only by default).
+ *  Admin callers omit picker so the master list, including retail sites, is unchanged. */
+export async function publicSiteDirectory({ readFirstMaintenance, picker = false } = {}) {
+  if (!(cache && clock() - cache.at < CACHE_MS)) {
+    const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
+    const sites = records.filter((r) => !r.hold).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
+    cache = { at: clock(), body: { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length } };
+  }
+  let body = cache.body;
+  if (picker) {
+    const types = PICKER_SITE_TYPES;
+    const sites = body.sites.filter((s) => types.includes(s.type));
+    body = { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length, picker: types.join(",") };
+  }
   return body;
 }
 

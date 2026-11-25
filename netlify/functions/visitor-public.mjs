@@ -31,7 +31,8 @@ export default async (req, context) => {
   if (path === "/api/visit/sites" && req.method === "GET") {
     // Public site directory for the site picker: names, LOC, address, phone, ABN / trading name and map points of
     // our own sites. Nothing about visitors. "Use my location" is worked out in the browser; coordinates are never sent here.
-    const directory = await publicSiteDirectory({ readFirstMaintenance }).catch(() => ({ sites: [], total: 0, withCoordinates: 0 }));
+    // The visitor picker lists only the enabled types (Unattended by default). Retail sites stay in the master list.
+    const directory = await publicSiteDirectory({ readFirstMaintenance, picker: true }).catch(() => ({ sites: [], total: 0, withCoordinates: 0, picker: "unattended" }));
     return json(200, directory, { "cache-control": "public, max-age=60", "referrer-policy": "no-referrer" });
   }
   if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);

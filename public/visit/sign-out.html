@@ -37,6 +37,10 @@
   .ok { color:#067647; }
   .muted { color:var(--muted); font-weight:400; }
   .site-pick { margin:12px 0; }
+  .site-pick[data-empty="1"] .near-btn,
+  .site-pick[data-empty="1"] .near-privacy,
+  .site-pick[data-empty="1"] .near-note,
+  .site-pick[data-empty="1"] .site-near-list { display:none; }
   .site-pick-title { font-weight:700; margin:0 0 8px; }
   .site-pick label { margin:12px 0 6px; }
   button.near-btn { background:#fff; color:var(--blue); border:1px solid var(--blue); }
@@ -59,6 +63,7 @@
   .site-card h3 { font-size:17px; margin:0; }
   .site-type { font-size:13px; font-weight:700; padding:2px 10px; border-radius:999px; background:#e7ecfb; color:#1f3a9e; }
   .site-type.agent { background:#fdead7; color:#93370d; }
+  .site-type.unattended { background:#e6f4ea; color:#0d6b3d; }
   .site-card dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; margin:10px 0 0; }
   .site-card dt { color:var(--muted); font-weight:600; }
   .site-card dd { margin:0; overflow-wrap:anywhere; }
