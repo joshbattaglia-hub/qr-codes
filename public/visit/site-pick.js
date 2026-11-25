@@ -39,6 +39,11 @@
   var chosen = null;
 
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function typeInfo(type) {
+    if (type === "commission_agent") return { cls: "agent", label: "LOC CA" };
+    if (type === "unattended") return { cls: "unattended", label: "Unattended" };
+    return { cls: "company", label: "VEA Retail" };
+  }
   function label(site) { return site.name + (site.loc ? " (" + site.loc + ")" : ""); }
   function sub(site) { return [site.loc, site.suburb].filter(Boolean).join(" · "); }
 
@@ -153,7 +158,8 @@
     card.innerHTML = "";
     var head = el("div", "site-card-head");
     head.appendChild(el("h3", "", site.name));
-    head.appendChild(el("span", "site-type " + typeClass(site), typeLabel(site)));
+    var info = typeInfo(site.type);
+    head.appendChild(el("span", "site-type " + info.cls, info.label));
     card.appendChild(head);
     var dl = el("dl");
     row(dl, "Trading name", site.tradingName);
@@ -162,6 +168,7 @@
     row(dl, "Phone", site.phone, site.phoneHref);
     if (dl.childNodes.length) card.appendChild(dl);
     if (site.type === "commission_agent") card.appendChild(el("p", "muted small", "This site is run by an independently owned commission agent."));
+    if (site.proposed) card.appendChild(el("p", "muted small", "Preview only. This site is not on the live list yet."));
     card.hidden = false;
     root.setAttribute("data-chosen", site.type);
   }

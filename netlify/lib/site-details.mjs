@@ -7,12 +7,18 @@
  * - Empty fields are simply left out, so nothing half-filled is shown.
  * - Visitor coordinates never reach this module: "Use my location" is worked out in the visitor's browser.
  */
+import crypto from "node:crypto";
 import { settingsStore, sitesStore } from "./lib.mjs";
+import { proposedUnattendedSites } from "./proposed-unattended-sites.mjs";
 import { suburbFromAddress, validCoords } from "./tv.mjs";
 
 export const SITE_TYPES = ["company", "commission_agent", "unattended"];
 /** Visitor sign-in/sign-out picker: only these types. Retail sites stay in the master list. */
 export const PICKER_SITE_TYPES = ["unattended"];
+export const PICKER_SITE_TYPE = "unattended";
+export const SITE_TYPE_LABEL = { company: "VEA Retail", commission_agent: "LOC CA", unattended: "Unattended" };
+/** Company and Unattended sites show the central trading name and ABN; LOC CA sites show their own. */
+export const usesCompanyDetails = (type) => type !== "commission_agent";
 export const DEFAULT_SITE_PHONE = "03 9113 7191";
 export const COMPANY_KEY = "company-details";
 export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "address", "lat", "lng"];
@@ -31,7 +37,7 @@ export function normaliseSiteType(value) {
   if (!text) return "";
   if (["company", "liberty", "corporate", "company_run", "company_site", "co", "vea", "vea_retail", "vea_retail_site"].includes(text)) return "company";
   if (["commission_agent", "agent", "commission", "ca", "commissionagent", "commission_agents", "loc_ca", "locca", "loc_ca_site"].includes(text)) return "commission_agent";
-  if (["unattended", "unattended_site", "unattended_sites", "unmanned"].includes(text)) return "unattended";
+  if (["unattended", "unattended_site", "unattended_sites", "unmanned", "unattended_service_station", "unattended_service_stations"].includes(text)) return "unattended";
   return null;
 }
 
@@ -104,8 +110,9 @@ export function siteDetailFields(site) {
 export function displaySite(site, company, defaultPhone = DEFAULT_SITE_PHONE) {
   const f = siteDetailFields(site);
   const type = f.siteType || "company";
-  const tradingName = type === "company" ? company.tradingName : f.tradingName;
-  const abn = type === "company" ? company.abn : f.abn;
+  const central = usesCompanyDetails(type);
+  const tradingName = central ? company.tradingName : f.tradingName;
+  const abn = central ? company.abn : f.abn;
   const phone = f.phone || defaultPhone || "";
   const out = { id: site.id, loc: clean(site.loc, 40), name: clean(site.name, 120), suburb: suburbFromAddress(site.address), type, address: f.address, tradingName, abn, phone, phoneHref: phoneHref(phone) };
   if (f.lat != null) { out.lat = f.lat; out.lng = f.lng; }
@@ -125,22 +132,52 @@ export async function defaultSitePhone(readFirstMaintenance) {
   return normaliseSitePhone(first) || DEFAULT_SITE_PHONE;
 }
 
+function directoryBody(sites, extra = {}) {
+  return { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length, ...extra };
+}
+
 /** Public directory: active sites only, display fields only. Cached for a minute.
  *  Pass picker:true for the visitor sign-in/sign-out list (Unattended only by default).
- *  Admin callers omit picker so the master list, including retail sites, is unchanged. */
-export async function publicSiteDirectory({ readFirstMaintenance, picker = false } = {}) {
+ *  Admin callers omit picker so the master list, including retail sites, is unchanged.
+ *  Pass includeProposed:true on deploy previews to overlay the proposed Unattended list (never written). */
+export async function publicSiteDirectory({ readFirstMaintenance, picker = false, includeProposed = false } = {}) {
   if (!(cache && clock() - cache.at < CACHE_MS)) {
     const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
     const sites = records.filter((r) => !r.hold).map((r) => displaySite(r, company, defaultPhone)).sort((a, b) => a.name.localeCompare(b.name));
-    cache = { at: clock(), body: { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length } };
+    cache = { at: clock(), body: directoryBody(sites), company, defaultPhone };
   }
   let body = cache.body;
   if (picker) {
     const types = PICKER_SITE_TYPES;
     const sites = body.sites.filter((s) => types.includes(s.type));
-    body = { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length, picker: types.join(",") };
+    body = directoryBody(sites, { picker: types.join(",") });
+    if (includeProposed) body = mergeProposedUnattended(body, cache.body.sites, cache.company, cache.defaultPhone);
   }
   return body;
+}
+
+function loadProposedUnattendedRaw() {
+  return Array.isArray(proposedUnattendedSites) ? proposedUnattendedSites : [];
+}
+function proposedId(index) {
+  const hex = (0xe000000 + index).toString(16).slice(-8);
+  return "s" + hex;
+}
+function mergeProposedUnattended(pickerBody, allLive, company, defaultPhone) {
+  const taken = new Set((allLive || []).map((s) => (s.name || "").trim().toLowerCase()));
+  const raw = loadProposedUnattendedRaw();
+  const extra = [];
+  raw.forEach((row, i) => {
+    const name = clean(row.name, 120);
+    if (!name || taken.has(name.toLowerCase())) return;
+    const id = SITE_ID.test(String(row.id || "")) ? row.id : proposedId(i + 1);
+    const view = displaySite({ ...row, siteType: "unattended", name, id }, company || {}, defaultPhone || DEFAULT_SITE_PHONE);
+    view.proposed = true;
+    extra.push(view);
+    taken.add(name.toLowerCase());
+  });
+  const sites = pickerBody.sites.concat(extra).sort((a, b) => a.name.localeCompare(b.name));
+  return directoryBody(sites, { picker: PICKER_SITE_TYPE, proposed: extra.length });
 }
 
 /** The snapshot stored on a sign-in: the site as shown at that moment, so later edits never rewrite history. */
@@ -197,7 +234,8 @@ export const CLEAR = "CLEAR";
 
 /**
  * Plans an import without writing. Rows match an existing site by LOC, otherwise by exact site name.
- * A blank cell leaves the field alone; the word CLEAR empties it. Nothing is created or renamed.
+ * A blank cell leaves the field alone; the word CLEAR empties it. Existing sites are not renamed.
+ * A row that matches no site is planned as a new site when it has a site_name (preview first, then Apply).
  */
 export function planDetailImport(records, csvText) {
   const rows = parseCsv(csvText);
@@ -220,8 +258,15 @@ export function planDetailImport(records, csvText) {
     const loc = get("loc").toUpperCase();
     const name = get("site_name");
     const site = (loc && byLoc.get(loc)) || (!loc && name && byName.get(clean(name, 200).toLowerCase())) || null;
-    if (!site) errors.push(loc ? "No site with LOC " + loc + "." : name ? "No site named \"" + name + "\"." : "No LOC or site name.");
-    else if (seen.has(site.id)) errors.push("This site is already in an earlier row.");
+    let action = "update";
+    if (!site) {
+      const named = name ? byName.get(clean(name, 200).toLowerCase()) : null;
+      if (!name) errors.push(loc ? "No site with LOC " + loc + "." : "No LOC or site name.");
+      else if (loc && named) errors.push("LOC " + loc + " is new, but the name already belongs to \"" + named.name + "\"" + (named.loc ? " (" + named.loc + ")" : "") + ". Not added or changed.");
+      else if (seen.has("name:" + clean(name, 200).toLowerCase())) errors.push("A new site with this name is already in an earlier row.");
+      else if (loc && seen.has("loc:" + loc)) errors.push("A new site with this LOC is already in an earlier row.");
+      else action = "add";
+    } else if (seen.has(site.id)) errors.push("This site is already in an earlier row.");
     if (site && loc && name && clean(name, 200).toLowerCase() !== clean(site.name, 200).toLowerCase()) warnings.push("Name differs from the site list (\"" + site.name + "\"); the site is not renamed.");
     const current = site ? siteDetailFields(site) : siteDetailFields({});
     const patch = {}, changes = {};
@@ -232,7 +277,7 @@ export function planDetailImport(records, csvText) {
     const typeRaw = get("site_type");
     if (typeRaw) {
       const type = typeRaw.toUpperCase() === CLEAR ? "" : normaliseSiteType(typeRaw);
-      if (type === null) errors.push("site_type must be company or commission_agent.");
+      if (type === null) errors.push("site_type must be company, commission_agent or unattended.");
       else set("siteType", type, "site_type");
     }
     const tn = get("trading_name");
@@ -263,18 +308,26 @@ export function planDetailImport(records, csvText) {
     const nextType = "siteType" in patch ? patch.siteType : current.siteType;
     const nextTn = "tradingName" in patch ? patch.tradingName : current.tradingName;
     const nextAbn = "abn" in patch ? patch.abn : current.abn;
-    if (nextType !== "commission_agent" && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push("VEA Retail sites show the central company ABN and trading name; this row's own ABN / trading name are saved but not shown.");
+    if (usesCompanyDetails(nextType || "company") && (tn && tn.toUpperCase() !== CLEAR || abnRaw && abnRaw.toUpperCase() !== CLEAR)) warnings.push((nextType === "unattended" ? "Unattended" : "VEA Retail") + " sites show the central company ABN and trading name; this row's own ABN / trading name are saved but not shown.");
     if (nextType === "commission_agent" && (!nextTn || !nextAbn)) warnings.push("LOC CA site without " + (!nextTn && !nextAbn ? "trading name or ABN" : !nextTn ? "trading name" : "ABN") + " yet; the missing part is hidden on the form.");
+    if (action === "add" && !nextType) warnings.push("This new site has no site_type; it will be shown as VEA Retail and will not appear in the visitor picker.");
     if (site) seen.add(site.id);
-    plan.push({ line, site: site ? { id: site.id, loc: site.loc || "", name: site.name } : null, changes, patch: errors.length ? {} : patch, errors, warnings });
+    else if (action === "add") {
+      if (name) seen.add("name:" + clean(name, 200).toLowerCase());
+      if (loc) seen.add("loc:" + loc);
+    }
+    const ref = site ? { id: site.id, loc: site.loc || "", name: site.name } : action === "add" ? { id: "", loc: loc || "", name: clean(name, 120), added: true } : null;
+    plan.push({ line, action, site: ref, changes, patch: errors.length ? {} : patch, errors, warnings });
   });
   const summary = {
     rows: plan.length,
-    matched: plan.filter((p) => p.site).length,
-    changed: plan.filter((p) => !p.errors.length && Object.keys(p.changes).length).length,
-    unchanged: plan.filter((p) => !p.errors.length && p.site && !Object.keys(p.changes).length).length,
+    matched: plan.filter((p) => p.site && !p.site.added).length,
+    added: plan.filter((p) => p.action === "add" && !p.errors.length).length,
+    changed: plan.filter((p) => p.action !== "add" && !p.errors.length && Object.keys(p.changes).length).length,
+    unchanged: plan.filter((p) => !p.errors.length && p.site && !p.site.added && !Object.keys(p.changes).length).length,
     errors: plan.filter((p) => p.errors.length).length,
   };
+  summary.willWrite = summary.added + summary.changed;
   return { plan, summary, ignoredColumns: unknown };
 }
 
@@ -282,14 +335,34 @@ export async function previewDetailImport(csvText) {
   return planDetailImport(await allSiteRecords(), csvText);
 }
 
-/** Writes only rows without errors, one site record at a time, keeping every other field on the record. */
+function locGateKey(loc) {
+  return "loc/" + crypto.createHash("sha256").update(String(loc).trim().toUpperCase()).digest("hex");
+}
+async function allocateSiteId(store) {
+  for (let i = 0; i < 8; i++) {
+    const id = "s" + crypto.randomBytes(4).toString("hex");
+    const existing = await store.get(id, { type: "json" }).catch(() => null);
+    if (!existing) return id;
+  }
+  return "";
+}
+
+/** Writes only rows without errors, one site record at a time, keeping every other field on the record. New unmatched rows are created. */
 export async function applyDetailImport(csvText) {
   const store = sitesStore();
   const report = planDetailImport(await allSiteRecords(), csvText);
   if (report.error) return report;
   let written = 0;
   for (const row of report.plan) {
-    if (!row.site || row.errors.length || !Object.keys(row.patch).length) continue;
+    if (row.errors.length) continue;
+    if (row.action === "add") {
+      const created = await createSiteFromImport(store, row);
+      if (created.error) { row.errors.push(created.error); row.patch = {}; continue; }
+      row.site = created.site;
+      written += 1;
+      continue;
+    }
+    if (!row.site || !Object.keys(row.patch).length) continue;
     const current = await store.get(row.site.id, { type: "json" });
     if (!current) continue;
     const next = { ...current };
@@ -302,7 +375,30 @@ export async function applyDetailImport(csvText) {
     written += 1;
   }
   cache = null;
+  report.summary.errors = report.plan.filter((p) => p.errors.length).length;
   return { ...report, written };
+}
+
+async function createSiteFromImport(store, row) {
+  const id = await allocateSiteId(store);
+  if (!id) return { error: "Could not allocate a new site id." };
+  const loc = row.site?.loc || "";
+  const now = new Date(clock()).toISOString();
+  const site = { id, name: row.site.name, created: now, loc, detailsUpdatedAt: now };
+  for (const [field, value] of Object.entries(row.patch)) {
+    if (value === "" || value === null) continue;
+    site[field] = value;
+  }
+  if (loc) {
+    const gate = await store.setJSON(locGateKey(loc), { id }, { onlyIfNew: true });
+    if (gate && gate.modified === false) return { error: "LOC " + loc + " was taken while applying." };
+  }
+  const saved = await store.setJSON(id, site, { onlyIfNew: true });
+  if (saved && saved.modified === false) {
+    if (loc) await store.delete(locGateKey(loc)).catch(() => {});
+    return { error: "Could not store the new site." };
+  }
+  return { site: { id, loc, name: site.name } };
 }
 
 function csvCell(value) {
@@ -325,7 +421,7 @@ export async function detailCsv() {
 export async function adminSiteDetails({ readFirstMaintenance } = {}) {
   const [records, company, defaultPhone] = await Promise.all([allSiteRecords(), readCompany(), defaultSitePhone(readFirstMaintenance)]);
   const sites = records.filter((r) => !r.hold).sort((a, b) => String(a.name).localeCompare(String(b.name))).map((r) => ({ ...siteDetailFields(r), id: r.id, loc: r.loc || "", name: r.name }));
-  const counts = { total: sites.length, company: sites.filter((s) => s.siteType === "company").length, agents: sites.filter((s) => s.siteType === "commission_agent").length, untyped: sites.filter((s) => !s.siteType).length, withCoordinates: sites.filter((s) => s.lat != null).length, phoneOverrides: sites.filter((s) => s.phone).length };
+  const counts = { total: sites.length, company: sites.filter((s) => s.siteType === "company").length, agents: sites.filter((s) => s.siteType === "commission_agent").length, unattended: sites.filter((s) => s.siteType === "unattended").length, untyped: sites.filter((s) => !s.siteType).length, withCoordinates: sites.filter((s) => s.lat != null).length, phoneOverrides: sites.filter((s) => s.phone).length };
   return { company, defaultPhone, columns: CSV_COLUMNS, counts, sites };
 }
 

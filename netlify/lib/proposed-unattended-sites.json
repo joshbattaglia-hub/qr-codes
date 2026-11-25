@@ -1,0 +1,252 @@
+[
+  {
+    "id": "s0e000001",
+    "name": "Reddy Express Moe",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "92-98 Albert St, Moe VIC 3825",
+    "phone": "03 9113 7191",
+    "lat": -38.173646,
+    "lng": 146.258821
+  },
+  {
+    "id": "s0e000002",
+    "name": "Reddy Express Campbelltown",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "27 Queen Street, Campbelltown NSW 2560",
+    "phone": "03 9113 7191",
+    "lat": -34.060412,
+    "lng": 150.819345
+  },
+  {
+    "id": "s0e000003",
+    "name": "Reddy Express Forest Hill Chase",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "260 Canterbury Road (Cnr Glebe St), Forest Hill VIC 3131",
+    "phone": "03 9113 7191",
+    "lat": -37.833983,
+    "lng": 145.163771
+  },
+  {
+    "id": "s0e000004",
+    "name": "Reddy Express Mernda",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "1444 Plenty Rd, Mernda VIC 3754",
+    "phone": "03 9113 7191",
+    "lat": -37.600137,
+    "lng": 145.096564
+  },
+  {
+    "id": "s0e000005",
+    "name": "Reddy Express Birkdale",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "143-153 Birkdale Rd (Cnr Napier St), Birkdale QLD 4159",
+    "phone": "03 9113 7191",
+    "lat": -27.490233,
+    "lng": 153.225854
+  },
+  {
+    "id": "s0e000006",
+    "name": "Reddy Express Edmonton",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "9-11 Walker Rd (Cnr Hambledon Dr), Edmonton QLD 4869",
+    "phone": "03 9113 7191",
+    "lat": -17.023542,
+    "lng": 145.729676
+  },
+  {
+    "id": "s0e000007",
+    "name": "Reddy Express Horsham",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "170-172 Baillie St (Cnr David St & Dimboola Rd), Horsham VIC 3400",
+    "phone": "03 9113 7191",
+    "lat": -36.711316,
+    "lng": 142.198809
+  },
+  {
+    "id": "s0e000008",
+    "name": "Reddy Express Dianella",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "67 Walter Rd West (Cnr Grande Promenade), Dianella WA 6059",
+    "phone": "03 9113 7191",
+    "lat": -31.905787,
+    "lng": 115.882731
+  },
+  {
+    "id": "s0e000009",
+    "name": "Mount Gambier",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "100 Commercial Street West, Mount Gambier SA 5290",
+    "phone": "03 9113 7191",
+    "lat": -37.824912,
+    "lng": 140.769591
+  },
+  {
+    "id": "s0e00000a",
+    "name": "Highfields",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "10526 New England Highway, Highfields QLD 4352",
+    "phone": "03 9113 7191",
+    "lat": -27.45163,
+    "lng": 151.985958
+  },
+  {
+    "id": "s0e00000b",
+    "name": "Belmont Maude (NSW)",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "504 Pacific Hwy (Cnr Maude St), Belmont NSW 2280",
+    "phone": "03 9113 7191",
+    "lat": -33.027421,
+    "lng": 151.661583
+  },
+  {
+    "id": "s0e00000c",
+    "name": "Brookdale",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "131 Eighth Rd, Armadale WA 6112",
+    "phone": "03 9113 7191",
+    "lat": -32.151661,
+    "lng": 115.988665
+  },
+  {
+    "id": "s0e00000d",
+    "name": "West Lakes",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "113 West Lakes Boulevard, West Lakes SA 5021",
+    "phone": "03 9113 7191",
+    "lat": -34.871545,
+    "lng": 138.48585
+  },
+  {
+    "id": "s0e00000e",
+    "name": "Charlestown",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "128 Pacific Hwy, Charlestown NSW 2290",
+    "phone": "03 9113 7191",
+    "lat": -32.958717,
+    "lng": 151.698948
+  },
+  {
+    "id": "s0e00000f",
+    "name": "Bremer",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "73 Blackstone Rd, Silkstone QLD 4304",
+    "phone": "03 9113 7191",
+    "lat": -27.621183,
+    "lng": 152.780778
+  },
+  {
+    "id": "s0e000010",
+    "name": "Sandy Bay",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "142 Sandy Bay Rd, Sandy Bay TAS 7005",
+    "phone": "03 9113 7191",
+    "lat": -42.893753,
+    "lng": 147.32611
+  },
+  {
+    "id": "s0e000011",
+    "name": "Reddy Express Launceston",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "69 Wellington St, Launceston TAS 7250",
+    "phone": "03 9113 7191",
+    "lat": -41.440291,
+    "lng": 147.137404
+  },
+  {
+    "id": "s0e000012",
+    "name": "Reddy Express Devonport",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "22 Formby Rd, Devonport TAS 7310",
+    "phone": "03 9113 7191",
+    "lat": -41.188719,
+    "lng": 146.362034
+  },
+  {
+    "id": "s0e000013",
+    "name": "Nowra",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "55 Kinghorne St (Cnr Worrigee St), Nowra NSW 2541",
+    "phone": "03 9113 7191",
+    "lat": -34.882794,
+    "lng": 150.60138
+  },
+  {
+    "id": "s0e000014",
+    "name": "Reddy Express Phillip",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "172 Melrose Dr, Phillip ACT 2606",
+    "phone": "03 9113 7191",
+    "lat": -35.350018,
+    "lng": 149.08509
+  },
+  {
+    "id": "s0e000015",
+    "name": "Reddy Express Geelong West",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "21-25 Church Street, Geelong West VIC 3218",
+    "phone": "03 9113 7191",
+    "lat": -38.132224,
+    "lng": 144.348921
+  },
+  {
+    "id": "s0e000016",
+    "name": "Reddy Express Belmont (VIC)",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "3 Settlement Road, Belmont VIC 3216",
+    "phone": "03 9113 7191",
+    "lat": -38.17678,
+    "lng": 144.352183
+  },
+  {
+    "id": "s0e000017",
+    "name": "Reddy Express Pleasant Corner",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "1319 Sturt St (Cnr Pleasant St), Ballarat VIC 3350",
+    "phone": "03 9113 7191",
+    "lat": -37.560388,
+    "lng": 143.848059
+  },
+  {
+    "id": "s0e000018",
+    "name": "Reddy Express Ponderosa",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "465-469 Raglan St, Warrnambool VIC 3280",
+    "phone": "03 9113 7191",
+    "lat": -38.383568,
+    "lng": 142.491354
+  },
+  {
+    "id": "s0e000019",
+    "name": "Reddy Express Hamilton",
+    "loc": "",
+    "siteType": "unattended",
+    "address": "161 Thompson St, Hamilton VIC 3300",
+    "phone": "03 9113 7191",
+    "lat": -37.741478,
+    "lng": 142.020889
+  }
+]
