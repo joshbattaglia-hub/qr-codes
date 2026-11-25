@@ -19,6 +19,7 @@ const SITES = [
   { id: "s00000a03", name: "Synthetic Geelong West", loc: "LOC0103", address: "3 Test Ave, Geelong West VIC 3218", siteType: "company" },
   { id: "s00000a04", name: "Synthetic Held Site", loc: "LOC0104", hold: true },
   { id: "s00000a05", name: "Synthetic Agent No Details", loc: "LOC0105", siteType: "commission_agent" },
+  { id: "s00000a06", name: "Synthetic Unattended Moe", loc: "LOC0106", address: "92-98 Albert St, Moe VIC 3825", lat: -38.17, lng: 146.26, siteType: "unattended" },
 ];
 for (const s of SITES) await lib.sitesStore().setJSON(s.id, s);
 async function storeDump() {
@@ -41,6 +42,7 @@ test("normalisers: ABN checksum, AU phone, site type words, CSV quoting", () => 
   assert.equal(sd.normaliseSitePhone("call me"), null);
   for (const w of ["Commission Agent", "agent", "commission_agent", "CA", "LOC CA", "loc-ca"]) assert.equal(sd.normaliseSiteType(w), "commission_agent", w);
   for (const w of ["Liberty", "company", "Company run", "VEA Retail", "VEA"]) assert.equal(sd.normaliseSiteType(w), "company", w);
+  for (const w of ["Unattended", "unattended_site", "unmanned"]) assert.equal(sd.normaliseSiteType(w), "unattended", w);
   assert.equal(sd.normaliseSiteType("franchise"), null);
   assert.deepEqual(sd.parseCsv('\ufeffloc,trading_name\r\nLOC1,"Smith, Jones ""& Co"""\n\n'), [["loc", "trading_name"], ["LOC1", 'Smith, Jones "& Co"']]);
 });
@@ -52,24 +54,33 @@ test("display rules: company sites use the one Liberty setting, agents their own
   assert.equal(a.phone, "03 9113 7191"); assert.equal(a.phoneHref, "tel:0391137191");
   const untyped = sd.displaySite({ id: "s2", name: "B" }, company);
   assert.equal(untyped.type, "company", "a site without a type counts as a Liberty site");
+  const u = sd.displaySite({ id: "s5", name: "U", siteType: "unattended", address: "1 St" }, company);
+  assert.equal(u.type, "unattended");
   const agent = sd.displaySite({ id: "s3", name: "C", siteType: "commission_agent", tradingName: "Agent Co", abn: SYN_AGENT_ABN, phone: "0412 345 678" }, company);
   assert.equal(agent.tradingName, "Agent Co"); assert.equal(agent.abn, SYN_AGENT_ABN); assert.equal(agent.phone, "0412 345 678");
   const bare = sd.displaySite({ id: "s4", name: "D", siteType: "commission_agent" }, { abn: "", tradingName: "" });
   assert.equal(bare.tradingName, ""); assert.equal(bare.abn, ""); assert.equal(bare.address, "");
 });
 
-test("public site directory: active sites only, display fields only, nothing about visitors, map points when known", async () => {
+test("public site directory: the visitor picker lists only Unattended sites, not VEA Retail or LOC CA", async () => {
   sd.clearSiteDirectoryCache();
   const r = await j(H.call("GET", "/api/visit/sites"));
   assert.equal(r.status, 200);
   assert.match(r.headers.get("cache-control"), /public/);
   const names = r.body.sites.map((s) => s.name);
   assert.ok(!names.includes("Synthetic Held Site"), "held sites are not offered");
-  assert.equal(r.body.total, 4); assert.equal(r.body.withCoordinates, 2);
+  assert.ok(!names.includes("Synthetic Ballarat North") && !names.includes("Synthetic Bendigo East"), "retail sites stay out of the picker");
+  assert.equal(r.body.picker, "unattended");
+  assert.equal(r.body.total, 1); assert.equal(r.body.withCoordinates, 1);
+  assert.deepEqual(names, ["Synthetic Unattended Moe"]);
+  assert.equal(r.body.sites[0].type, "unattended");
   const keys = new Set(r.body.sites.flatMap((s) => Object.keys(s)));
-  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "lat", "lng"].includes(k), "unexpected public field " + k);
-  const agent = r.body.sites.find((s) => s.loc === "LOC0102");
-  assert.equal(agent.type, "commission_agent"); assert.equal(agent.tradingName, "Synthetic Agent Pty Ltd"); assert.equal(agent.phone, "0412 345 678");
+  for (const k of keys) assert.ok(["id", "loc", "name", "suburb", "type", "address", "tradingName", "abn", "phone", "phoneHref", "lat", "lng", "picker"].includes(k), "unexpected public field " + k);
+  const full = await sd.publicSiteDirectory({ picker: false });
+  assert.ok(full.sites.some((s) => s.name === "Synthetic Ballarat North"), "the master list still has retail sites");
+  assert.ok(full.sites.some((s) => s.type === "commission_agent"));
+  const emptyStore = await sd.publicSiteDirectory({ picker: true });
+  assert.equal(emptyStore.sites.every((s) => s.type === "unattended"), true);
 });
 
 test("company details: owner-only setting, ABN checked, saved centrally and shown on every company site", async () => {
@@ -80,8 +91,11 @@ test("company details: owner-only setting, ABN checked, saved centrally and show
   const ok = await j(H.call("POST", "/api/visitor-log/company", { cookie: owner, body: { abn: "51824753556", tradingName: "Synthetic Liberty Trading" } }));
   assert.equal(ok.status, 200); assert.equal(ok.body.abn, SYN_LIBERTY_ABN);
   sd.clearSiteDirectoryCache();
-  const dir = (await j(H.call("GET", "/api/visit/sites"))).body.sites;
+  const dir = (await sd.publicSiteDirectory({ picker: false })).sites;
+  assert.ok(dir.some((s) => s.type === "company"));
   for (const s of dir.filter((x) => x.type === "company")) { assert.equal(s.abn, SYN_LIBERTY_ABN); assert.equal(s.tradingName, "Synthetic Liberty Trading"); }
+  const picker = (await j(H.call("GET", "/api/visit/sites"))).body.sites;
+  assert.ok(!picker.some((s) => s.type === "company" || s.type === "commission_agent"));
 });
 
 test("sign-in with a picked site stores a snapshot (name, LOC, type, trading name, ABN); typed sites still work; no coordinates are accepted or stored", async () => {
@@ -181,7 +195,7 @@ test("CSV import: preview writes nothing, flags problems, needs an explicit appl
   assert.ok(!dl.body.includes("Synthetic Held Site"));
   const view = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
   assert.equal(view.body.defaultPhone, "03 9113 7191");
-  assert.equal(view.body.counts.total, 4);
+  assert.equal(view.body.counts.total, 5);
 });
 
 test("privacy: location is only asked for on the button tap, worked out in the browser, and never sent", () => {
@@ -243,9 +257,11 @@ test("sign-out: the picked site narrows duplicate name matches, is optional, is 
   assert.equal(H.mailbox.filter((m) => !/code is \d{8}/.test(m.text || "")).length, 0);
 });
 
-test("labels: visitors and admins see VEA Retail and LOC CA, never the old Liberty site / Commission agent tags", () => {
+test("labels: visitors and admins see VEA Retail, LOC CA and Unattended, never the old Liberty site / Commission agent tags", () => {
   const js = fs.readFileSync("public/visit/site-pick.js", "utf8");
-  assert.match(js, /"LOC CA" : "VEA Retail"/);
+  assert.match(js, /"LOC CA"/);
+  assert.match(js, /"VEA Retail"/);
+  assert.match(js, /"Unattended"/);
   assert.ok(!js.includes('"Liberty site"') && !js.includes('"Commission agent"'));
   const app = fs.readFileSync("public/admin/app.js", "utf8");
   for (const t of ["VEA Retail sites", "All LOC CA sites", "LOC CA sites", ">VEA Retail</span>", "LOC CA site"]) assert.ok(app.includes(t), t);
