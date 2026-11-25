@@ -242,6 +242,12 @@ test("deploy previews are look-only for the Visitor Log: POSTs are refused befor
   assert.equal(r3.status, 200, "the site list can still be viewed on a preview");
   assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), { deploy: { context: "production" } }), false);
   assert.equal(pub.previewReadOnly(new Request("https://x/api/visit/sign-in", { method: "POST" }), undefined), false);
+  assert.equal(pub.previewReadOnly(new Request("https://expresshelp.site/api/visit/sign-in", { method: "POST" }), { deploy: { context: "production" } }), false);
+  const aliasPost = new Request("https://visitor-unattended-pr67--liberty-qr-353.netlify.app/api/visit/sign-in", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(pub.previewReadOnly(aliasPost, { deploy: { context: "production" } }), true, "CLI draft/alias URLs are look-only even if context says production");
+  assert.equal(pub.previewReadOnly(aliasPost, undefined), true);
+  const aliasBlocked = await pub.default(aliasPost, { deploy: { context: "production" } });
+  assert.equal(aliasBlocked.status, 403);
   assert.deepEqual(await storeDump(), before);
 });
 
@@ -336,4 +342,10 @@ test("deploy previews overlay proposed Unattended sites on the picker without wr
   sd.clearSiteDirectoryCache();
   const live = await j(H.call("GET", "/api/visit/sites"));
   assert.ok(!live.body.sites.some((s) => s.name === "Reddy Express Moe"), "production/test list is only stored Unattended sites");
+  sd.clearSiteDirectoryCache();
+  const alias = await pub.default(new Request("https://visitor-unattended-pr67--liberty-qr-353.netlify.app/api/visit/sites"), { deploy: { context: "production" } });
+  const aliasBody = await alias.json();
+  assert.ok(aliasBody.proposed >= 25, "CLI draft/alias URLs overlay proposed sites even if context says production");
+  assert.ok(aliasBody.sites.some((s) => s.name === "Reddy Express Moe" && s.proposed));
+  assert.deepEqual(await storeDump(), before);
 });

@@ -2,6 +2,8 @@ import { json } from "../lib/lib.mjs";
 import { forbidden, originBlocked } from "../lib/access.mjs";
 import { idempotentSubmit, publicMaintenanceContacts, readFirstMaintenance, signIn, signOut, visitorReadiness } from "../lib/visitor-log.mjs";
 import { publicSiteDirectory } from "../lib/site-details.mjs";
+import { isPreviewDeploy, previewReadOnly } from "../lib/preview-deploy.mjs";
+export { previewReadOnly };
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer" };
 
@@ -10,13 +12,6 @@ async function bodyOf(req) {
   if (text.length > 12_000_000) return { error: "The photo is too large." };
   try { return { body: text ? JSON.parse(text) : {} }; }
   catch { return { error: "Request was rejected" }; }
-}
-
-// Deploy previews and draft deploys share the live site's data, so on anything that is not the production deploy
-// the Visitor Log is look-only: no sign-ins, sign-outs or settings changes can be saved there.
-export function previewReadOnly(req, context) {
-  const ctx = context?.deploy?.context;
-  return !!ctx && ctx !== "production" && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET");
 }
 
 export default async (req, context) => {
@@ -33,7 +28,7 @@ export default async (req, context) => {
     // our own sites. Nothing about visitors. "Use my location" is worked out in the browser; coordinates are never sent here.
     // The visitor picker lists only the enabled types (Unattended by default). Retail sites stay in the master list.
     // On a deploy preview, proposed Unattended sites are overlaid for review and are never written to the live list.
-    const preview = !!context?.deploy?.context && context.deploy.context !== "production";
+    const preview = isPreviewDeploy(req, context);
     const directory = await publicSiteDirectory({ readFirstMaintenance, picker: true, includeProposed: preview }).catch(() => ({ sites: [], total: 0, withCoordinates: 0, picker: "unattended" }));
     return json(200, directory, { "cache-control": "public, max-age=60", "referrer-policy": "no-referrer" });
   }
