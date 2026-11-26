@@ -555,3 +555,22 @@ html[data-theme="dark"] .op-tag-loc-ca{border-color:#3a4150}
 .modal-card [data-testid="site-edit-form"] #site-own-details,
 .modal-card [data-testid="site-add-form"] #site-central-note,
 .modal-card [data-testid="site-edit-form"] #site-central-note{padding-bottom:16px}
+
+/* ---- Side menu editor (Admin → Settings) ---- */
+.menu-editor{list-style:none;margin:12px 0;padding:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);max-width:900px}
+.menu-editor-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--card);min-height:44px}
+.menu-editor-row:last-child{border-bottom:0}
+.menu-editor-row.is-hidden{background:var(--stage-bg);opacity:.78}
+.menu-editor-row.is-dragging{opacity:.55}
+.menu-editor-row.is-drop{outline:2px solid var(--blue);outline-offset:-2px}
+.menu-drag{flex:none;width:44px;min-width:44px;min-height:44px;border:0;background:transparent;color:var(--muted);cursor:grab;letter-spacing:-2px;font-size:14px;line-height:1;border-radius:8px}
+.menu-drag:active{cursor:grabbing}
+.menu-editor-label{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.menu-editor-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-left:auto}
+.menu-editor .menu-move,.menu-editor .menu-vis{min-height:44px;min-width:44px;padding:8px 12px}
+.menu-editor-pinned{padding:0 8px}
+html[data-theme="crazy"] .menu-editor{border-color:var(--c3, var(--line))}
+@media(max-width:700px){
+  .menu-editor-row{flex-wrap:wrap}
+  .menu-editor-actions{width:100%;margin-left:0;padding-left:44px}
+}

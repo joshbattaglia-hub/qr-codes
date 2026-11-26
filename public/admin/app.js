@@ -3,7 +3,7 @@ import { warehousePage, paintWarehouse, warehouseAction } from "./warehouse-ui.m
 import { ASSET_LABELS, HEAD_ONLY_TABS, effectiveAssets, tabsFor } from "./permissions.mjs";
 import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
-import { TOOL_ICONS } from "./tool-icons.mjs";
+import { TOOL_ICONS, TOOL_LABELS } from "./tool-icons.mjs";
 import { anticipate, normaliseEmail, optimistic, reducedMotion, showNote, skeleton, trapTab, wireTidyInputs } from "./ux.mjs";
 import { issuesFromApiError, SITE_FORM_FIELD_ORDER, validateCompanyForm, validateDefaultContactEmail, validateSiteForm } from "./site-form-validate.mjs";
 
@@ -969,8 +969,145 @@ function settingsPage() {
     '<label class="field"><span>Default QR background</span><span class="color-row"><input name="defaultBg" type="color" value="' + esc(s.defaultBg) + '"><input name="defaultBgText" type="text" value="' + esc(s.defaultBg) + '"></span></label></div>' +
     '<label class="field"><span>Public URL</span><input type="text" readonly value="' + esc(s.publicUrl) + '"></label>' +
     '<p class="muted small">Short links stay on ' + esc(base()) + "/r/&lt;slug&gt;. The admin password is the ADMIN_PASSWORD environment variable and is not changed here. This session cookie lasts 7 days.</p>" +
-    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + footerSettings() + tvSettings() + staffSettings();
+    '<div class="row"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" data-act="logout">Log out</button></div></form>' + sideMenuSettings() + footerSettings() + tvSettings() + staffSettings();
 }
+function defaultAdminMenu() {
+  const order = Object.keys(TOOL_ICONS);
+  return { order, hidden: [], tools: order.map((id) => ({ id, label: TOOL_LABELS[id] || id, hidden: false, pinned: id === "settings" })), canEdit: false };
+}
+function canEditSideMenu() {
+  return !!(state.adminMenu?.canEdit || state.actor?.role === "head" || state.actor?.owner);
+}
+function sideMenuListHtml(menu) {
+  const tools = menu?.tools || defaultAdminMenu().tools;
+  return '<ul class="menu-editor" id="side-menu-list" data-testid="side-menu-list">' + tools.map((tool, i) => {
+    const label = tool.label || TOOL_LABELS[tool.id] || tool.id;
+    const icon = TOOL_ICONS[tool.id] || "";
+    const first = i === 0;
+    const last = i === tools.length - 1;
+    const hideBtn = tool.pinned
+      ? '<span class="muted small menu-editor-pinned" data-testid="side-menu-pinned-' + esc(tool.id) + '">Always in the menu</span>'
+      : '<button class="btn ghost menu-vis" type="button" data-act="' + (tool.hidden ? "menu-show" : "menu-hide") + '" data-tool="' + esc(tool.id) + '" aria-pressed="' + (tool.hidden ? "true" : "false") + '" data-testid="side-menu-vis-' + esc(tool.id) + '">' + (tool.hidden ? "Show" : "Hide") + "</button>";
+    return '<li class="menu-editor-row' + (tool.hidden ? " is-hidden" : "") + (tool.pinned ? " is-pinned" : "") + '" draggable="true" data-tool="' + esc(tool.id) + '" data-testid="side-menu-row-' + esc(tool.id) + '">'
+      + '<button class="menu-drag" type="button" aria-label="Drag to reorder ' + esc(label) + '" data-testid="side-menu-drag-' + esc(tool.id) + '" tabindex="-1">⋮⋮</button>'
+      + (icon ? '<span class="nav-ico" aria-hidden="true">' + icon + "</span>" : "")
+      + '<span class="menu-editor-label">' + esc(label) + "</span>"
+      + '<span class="menu-editor-actions">'
+      + '<button class="btn ghost menu-move" type="button" data-act="menu-up" data-tool="' + esc(tool.id) + '" aria-label="Move ' + esc(label) + ' up" data-testid="side-menu-up-' + esc(tool.id) + '"' + (first ? " disabled" : "") + ">Up</button>"
+      + '<button class="btn ghost menu-move" type="button" data-act="menu-down" data-tool="' + esc(tool.id) + '" aria-label="Move ' + esc(label) + ' down" data-testid="side-menu-down-' + esc(tool.id) + '"' + (last ? " disabled" : "") + ">Down</button>"
+      + hideBtn
+      + "</span></li>";
+  }).join("") + "</ul>";
+}
+function sideMenuSettings() {
+  if (!canEditSideMenu()) return "";
+  const menu = state.adminMenu || defaultAdminMenu();
+  return '<div class="card" data-testid="side-menu-settings"><h2>Side menu</h2>'
+    + '<p class="muted">Choose which tools show in the admin side menu, and in what order. This applies to everyone on Express Help. Hidden tools stay available and still work if you open them with a link. Settings cannot be hidden, so you can always get back here.</p>'
+    + sideMenuListHtml(menu)
+    + '<div class="row"><button class="btn ghost" type="button" data-act="menu-reset" data-testid="side-menu-reset">Reset to default</button></div>'
+    + '<p id="side-menu-note" class="small" role="status"></p></div>';
+}
+function paintSideMenuList() {
+  const list = document.getElementById("side-menu-list");
+  if (!list) return;
+  list.outerHTML = sideMenuListHtml(state.adminMenu || defaultAdminMenu());
+  wireSideMenuDrag();
+}
+function menuPayload(order, hidden, canEdit) {
+  return { order, hidden, tools: order.map((id) => ({ id, label: TOOL_LABELS[id] || id, hidden: hidden.includes(id), pinned: id === "settings" })), canEdit: !!canEdit };
+}
+async function persistSideMenu({ reset = false, order, hidden, focus, message } = {}) {
+  const note = document.getElementById("side-menu-note");
+  const current = state.adminMenu || defaultAdminMenu();
+  const nextOrder = reset ? Object.keys(TOOL_ICONS) : (order || current.order.slice());
+  const nextHidden = reset ? [] : (hidden || current.hidden.slice());
+  const body = reset ? { reset: true } : { order: nextOrder, hidden: nextHidden };
+  let previewOnly = false;
+  try {
+    state.adminMenu = await api("/api/admin-menu", { method: "POST", body: JSON.stringify(body) });
+  } catch (err) {
+    if (err.status === 403 && /preview/i.test(err.message || "")) {
+      previewOnly = true;
+      state.adminMenu = menuPayload(nextOrder, nextHidden, true);
+    } else {
+      if (note) showNote(note, err.message, "error");
+      else toast.error(err.message);
+      return;
+    }
+  }
+  applyAdminChrome();
+  paintSideMenuList();
+  if (focus) document.querySelector(focus)?.focus();
+  const msg = previewOnly
+    ? "This is a preview, so the change is only on this page. Nothing is saved to the live site."
+    : (message || "Menu saved. Everyone on Express Help will see this side menu.");
+  if (note) showNote(note, msg, "ok");
+  toast(previewOnly ? "Preview only — not saved to the live site" : (reset ? "Menu reset to default" : "Menu saved"));
+}
+async function moveSideMenu(id, dir) {
+  const menu = state.adminMenu || defaultAdminMenu();
+  const next = menu.order.slice();
+  const i = next.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= next.length) return;
+  const [row] = next.splice(i, 1);
+  next.splice(j, 0, row);
+  await persistSideMenu({ order: next, hidden: menu.hidden.slice(), focus: '[data-act="' + (dir < 0 ? "menu-up" : "menu-down") + '"][data-tool="' + id + '"]' });
+}
+async function toggleSideMenuHidden(id, hide) {
+  if (id === "settings") return;
+  const menu = state.adminMenu || defaultAdminMenu();
+  const set = new Set(menu.hidden);
+  if (hide) set.add(id); else set.delete(id);
+  const label = TOOL_LABELS[id] || id;
+  await persistSideMenu({
+    order: menu.order.slice(),
+    hidden: [...set],
+    focus: '[data-testid="side-menu-vis-' + id + '"]',
+    message: hide ? (label + " is hidden from the menu. It still works if you open it with a link.") : (label + " is back in the menu."),
+  });
+}
+function wireSideMenuDrag() {
+  const list = document.getElementById("side-menu-list");
+  if (!list) return;
+  let dragging = null;
+  list.querySelectorAll(".menu-editor-row").forEach((row) => {
+    row.addEventListener("dragstart", (e) => {
+      dragging = row.dataset.tool;
+      row.classList.add("is-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", dragging); } catch { /* some browsers */ }
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("is-dragging");
+      dragging = null;
+      list.querySelectorAll(".is-drop").forEach((el) => el.classList.remove("is-drop"));
+    });
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      row.classList.add("is-drop");
+      e.dataTransfer.dropEffect = "move";
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("is-drop"));
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      row.classList.remove("is-drop");
+      const from = dragging || e.dataTransfer.getData("text/plain");
+      const to = row.dataset.tool;
+      if (!from || from === to) return;
+      const menu = state.adminMenu || defaultAdminMenu();
+      const order = menu.order.slice();
+      const fromI = order.indexOf(from);
+      const toI = order.indexOf(to);
+      if (fromI < 0 || toI < 0) return;
+      const [item] = order.splice(fromI, 1);
+      order.splice(toI, 0, item);
+      persistSideMenu({ order, hidden: menu.hidden.slice(), focus: '[data-testid="side-menu-row-' + from + '"]' });
+    });
+  });
+}
+
 async function paintFooterSettings() {
   try {
     state.footer = await api("/api/footer");
@@ -3123,7 +3260,7 @@ async function render(opts = {}) {
     if (r.name === "warehouse") paintWarehouse().catch((err) => { const box = document.getElementById("warehouse-body"); if (box) box.textContent = err.message; });
     if (r.name === "visitors") paintVisitor();
     if (r.name === "users") paintUsers();
-    if (r.name === "settings") { paintTvSettings(); paintFooterSettings(); }
+    if (r.name === "settings") { paintTvSettings(); paintFooterSettings(); wireSideMenuDrag(); }
     if (r.name === "tickets") paintTickets(r.id, state).catch((err) => { const box = document.getElementById("ticket-body"); if (box) box.textContent = err.message; });
   }
   if (state.focus) {
@@ -3327,6 +3464,11 @@ async function handleAction(el) {
     await switchToEmailSignin();
     return;
   }
+  if (act === "menu-up") { await moveSideMenu(el.dataset.tool, -1); return; }
+  if (act === "menu-down") { await moveSideMenu(el.dataset.tool, 1); return; }
+  if (act === "menu-hide") { await toggleSideMenuHidden(el.dataset.tool, true); return; }
+  if (act === "menu-show") { await toggleSideMenuHidden(el.dataset.tool, false); return; }
+  if (act === "menu-reset") { await persistSideMenu({ reset: true, message: "Menu reset to the default order, with every tool shown." }); return; }
   if (act === "footer-save") {
     const note = document.getElementById("footer-note");
     const body = await api("/api/footer", { method: "POST", body: JSON.stringify({ lead: document.getElementById("footer-lead")?.value || "", linkText: document.getElementById("footer-link-text")?.value || "", email: document.getElementById("footer-email")?.value || "" }) }).catch((err) => { if (note) showNote(note, err.message, "error"); else toast.error(err.message); return null; });
@@ -3877,27 +4019,71 @@ function limitedRoutes() { return accessRoutes() || []; }
 const REQUEST_NAMES = { home: "Home", links: "Links", qrcodes: "QR Codes", pages: "Pages", analytics: "Analytics", competitions: "Competitions", pos: "POS setup", assets: "Asset Barcodes", warehouse: "Warehouse Stickers", visitors: "Visitor Log", tickets: "Support", users: "Users", sites: "Sites", domains: "Custom domains", settings: "Settings" };
 const REQUEST_GRANTABLE = ["pos", "sites", "assets", "warehouse", "visitors", "tickets"];
 let navOrder = null;
+async function loadAdminMenu() {
+  try {
+    state.adminMenu = await api("/api/admin-menu");
+  } catch {
+    if (!state.adminMenu) state.adminMenu = defaultAdminMenu();
+  }
+}
 /** Puts every menu item back in the main menu (used before each sign-in so one person's menu never leaks into the next). */
 function restoreNav() {
   const nav = document.getElementById("nav");
   if (!nav) return;
   if (!navOrder) navOrder = [...nav.querySelectorAll("[data-go]")];
-  navOrder.forEach((btn) => { btn.hidden = btn.dataset.go === "users"; btn.classList.remove("locked"); nav.append(btn); });
+  navOrder.forEach((btn) => { btn.hidden = btn.dataset.go === "users"; btn.classList.remove("locked"); delete btn.dataset.siteHidden; nav.append(btn); });
   const other = document.getElementById("other-tools");
   if (other) { other.hidden = true; other.open = false; }
+  const otherList = document.getElementById("other-tools-list");
+  if (otherList) otherList.innerHTML = "";
   document.querySelector(".create-wrap")?.removeAttribute("hidden");
   document.querySelector(".search")?.removeAttribute("hidden");
 }
+function siteMenuState() {
+  const menu = state.adminMenu || defaultAdminMenu();
+  const order = [...(menu.order || [])].filter((id) => TOOL_ICONS[id]);
+  for (const id of Object.keys(TOOL_ICONS)) if (!order.includes(id)) order.push(id);
+  const hidden = new Set((menu.hidden || []).filter((id) => id !== "settings"));
+  return { order, hidden };
+}
+function applySiteMenu() {
+  const nav = document.getElementById("nav");
+  if (!nav || !navOrder) return;
+  const { order, hidden } = siteMenuState();
+  const byId = new Map(navOrder.map((btn) => [btn.dataset.go, btn]));
+  for (const id of order) {
+    const btn = byId.get(id);
+    if (!btn) continue;
+    if (hidden.has(id)) btn.dataset.siteHidden = "1";
+    else delete btn.dataset.siteHidden;
+    nav.append(btn);
+  }
+}
+function applyPermissionHides() {
+  const limited = accessRoutes();
+  document.querySelectorAll("#nav [data-go]").forEach((btn) => {
+    if (btn.dataset.siteHidden === "1") { btn.hidden = true; return; }
+    if (btn.dataset.go === "users") btn.hidden = !state.actor?.owner;
+    else btn.hidden = false;
+  });
+  const identity = state.actor?.kind === "verified-identity";
+  const warehouseNav = document.querySelector("#sidebar [data-go=\"warehouse\"]");
+  if (!limited && warehouseNav && warehouseNav.dataset.siteHidden !== "1" && identity && !(state.actor?.owner || state.actor?.warehouse === true)) {
+    warehouseNav.hidden = true;
+  }
+}
 /** Limited email-code users: only granted tools in the menu; everything else under a collapsed "Other tools". No Create new or search. */
 function applyLimitedChrome(allowed) {
-  restoreNav();
-  const nav = document.getElementById("nav");
   const list = document.getElementById("other-tools-list");
   const other = document.getElementById("other-tools");
-  navOrder.forEach((btn) => {
+  if (!list || !navOrder) return;
+  const { order } = siteMenuState();
+  const buttons = navOrder.slice().sort((a, b) => order.indexOf(a.dataset.go) - order.indexOf(b.dataset.go));
+  buttons.forEach((btn) => {
     const granted = allowed.includes(btn.dataset.go);
-    btn.hidden = false;
     if (granted) return;
+    if (btn.dataset.siteHidden === "1") return;
+    btn.hidden = false;
     btn.classList.add("locked");
     list.append(btn);
   });
@@ -3905,7 +4091,22 @@ function applyLimitedChrome(allowed) {
   document.querySelector(".create-wrap")?.setAttribute("hidden", "");
   document.querySelector(".search")?.setAttribute("hidden", "");
   document.getElementById("search-results")?.classList.add("hidden");
-  void nav;
+}
+/** Apply the site-wide menu, then permission rules, then the limited-user "Other tools" list. */
+function applyAdminChrome() {
+  restoreNav();
+  applySiteMenu();
+  applyPermissionHides();
+  const allowed = accessRoutes();
+  if (allowed) applyLimitedChrome(allowed);
+  const r = (() => { try { return route(); } catch { return null; } })();
+  if (r?.name) {
+    document.querySelectorAll("#sidebar [data-go]").forEach((btn) => {
+      const on = btn.dataset.go === r.name;
+      btn.classList.toggle("active", on);
+      if (on) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
+    });
+  }
 }
 function requestPage(name, allowed) {
   const tool = REQUEST_NAMES[name] || name;
@@ -3970,7 +4171,7 @@ async function enter() {
   window.EHTheme?.setAccount(state.actor?.email);
   loadNavState(state.actor?.email);
   syncThemeUi();
-  restoreNav();
+  await loadAdminMenu();
   if (isBuildingMaintenance()) {
     // Visitor Log view-only: load nothing else and show only the Visitor log nav item.
     state.settings = { workspaceName: "Liberty" };
@@ -3980,8 +4181,8 @@ async function enter() {
     $("#shell").classList.remove("hidden");
     $("#brand-name").textContent = BRAND;
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
+    applyAdminChrome();
     const allowed = limitedRoutes();
-    applyLimitedChrome(allowed);
     const label = state.actor?.visitor === "settings" ? "Visitor log settings" : state.actor?.visitor && state.actor.visitor !== "none" ? "Visitor log view" : state.limitedTickets ? "Support" : state.actor?.warehouse ? "Warehouse Stickers" : state.actor?.assets && state.actor.assets !== "none" ? "Asset Barcodes" : "Support";
     $("#account-label").innerHTML = "<strong>" + esc(state.actor?.email || "Email code user") + "</strong><div class='muted small'>" + esc(label) + " · email code</div>";
     paintAvatar();
@@ -4023,24 +4224,19 @@ async function enter() {
   $("#account-label").innerHTML = "<strong>" + esc(state.actor?.name || BRAND) + "</strong><div class='muted small'>" + roleLabel + "</div>";
   paintAvatar();
   ensureRanges();
-  restoreNav();
-  document.querySelectorAll("#nav [data-go]").forEach((btn) => { btn.hidden = false; });
-  const usersNav = document.querySelector('#nav [data-go="users"]');
-  if (usersNav) usersNav.hidden = !state.actor?.owner;
-  const warehouseNav = document.querySelector('#nav [data-go="warehouse"]');
-  if (warehouseNav && identity) warehouseNav.hidden = !(state.actor?.owner || state.actor?.warehouse === true);
   if (identity && state.actor?.provider === "otp" && !state.actor?.owner) {
     state.limitedTickets = await fetch("/api/tickets/access", { credentials: "same-origin" }).then((res) => res.ok).catch(() => false);
   }
+  applyAdminChrome();
   const allowedNav = accessRoutes();
   if (allowedNav) {
-    applyLimitedChrome(allowedNav);
     if (stayOrLand(allowedNav)) render();
     return;
   }
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
 }
+
 async function boot() {
   try {
     const me = await api("/api/auth");
