@@ -57,6 +57,8 @@
   .site-pick[data-empty="1"] .near-note,
   .site-pick[data-empty="1"] .site-near-list { display:none; }
   .site-pick-title { font-weight:700; margin:0 0 8px; }
+  .site-pick-empty-note { display:none; margin:0 0 8px; }
+  .site-pick[data-empty="1"] .site-pick-empty-note { display:block; }
   .site-pick label { margin:12px 0 6px; }
   button.near-btn { background:#fff; color:var(--blue); border:1px solid var(--blue); }
   button.near-btn:disabled { opacity:.6; }
@@ -101,6 +103,7 @@
     <h2>Sign in</h2>
     <div class="site-pick" data-site-pick="in" data-testid="site-pick">
       <p class="site-pick-title">Site</p>
+      <p class="muted small site-pick-empty-note" data-testid="site-pick-empty-note" hidden>No sites are listed to pick. Type the site name or number.</p>
       <button type="button" class="near-btn" id="site-near" data-sp="near" data-testid="site-near"><span aria-hidden="true">📍</span> Use my location</button>
       <p class="muted small near-privacy">Your location is only used on this phone to find nearby sites. It is not sent or saved.</p>
       <p class="muted small near-note" id="site-near-note" data-sp="near-note" role="status" data-testid="site-near-note"></p>
@@ -153,6 +156,7 @@
     <label>Company<input name="company" required maxlength="80" data-testid="visit-out-company"></label>
     <div class="site-pick" data-site-pick="out-" data-testid="out-site-pick">
       <p class="site-pick-title">Site you are leaving</p>
+      <p class="muted small site-pick-empty-note" data-testid="out-site-pick-empty-note" hidden>No sites are listed to pick. Type the site name or number.</p>
       <button type="button" class="near-btn" id="out-site-near" data-sp="near" data-testid="out-site-near"><span aria-hidden="true">📍</span> Use my location</button>
       <p class="muted small near-privacy">Your location is only used on this phone to find nearby sites. It is not sent or saved.</p>
       <p class="muted small near-note" id="out-site-near-note" data-sp="near-note" role="status" data-testid="out-site-near-note"></p>

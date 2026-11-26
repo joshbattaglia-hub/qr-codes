@@ -29,7 +29,7 @@ async function boot() {
 after(async () => { if (browser) await browser.close(); });
 
 async function openPublic(p, opts = {}) { return openPublicRaw(p, { ready: "#in-form:not([hidden])", pick: "in", ...opts }); }
-async function openPublicRaw(p, { w = 390, h = 900, init = "", ready, pick, sites } = {}) {
+async function openPublicRaw(p, { w = 390, h = 900, init = "", ready, pick, sites, sitesError, readyAttr = "1" } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: w, height: h, deviceScaleFactor: w < 500 ? 2 : 1 });
   if (init) await page.evaluateOnNewDocument(init);
@@ -40,7 +40,10 @@ async function openPublicRaw(p, { w = 390, h = 900, init = "", ready, pick, site
     if (u.origin !== "https://expresshelp.site") return r.abort();
     page.sent.push(r.url() + " " + (r.postData() || "").slice(0, 2000));
     if (u.pathname.startsWith("/api/")) {
-      if (sites !== undefined && u.pathname.replace(/\/+$/, "") === "/api/visit/sites" && r.method() === "GET") {
+      if (u.pathname.replace(/\/+$/, "") === "/api/visit/sites" && r.method() === "GET" && (sites !== undefined || sitesError)) {
+        if (sitesError === "network") return r.abort("failed");
+        if (sitesError === "http") return r.respond({ status: 500, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "unavailable" }) });
+        if (sitesError === "json") return r.respond({ status: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "unavailable" }) });
         const body = { sites, total: sites.length, withCoordinates: sites.filter((s) => s.lat != null).length, picker: "unattended" };
         return r.respond({ status: 200, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       }
@@ -55,7 +58,7 @@ async function openPublicRaw(p, { w = 390, h = 900, init = "", ready, pick, site
   page.on("pageerror", (e) => console.log("pageerror", e.message));
   await page.goto("https://expresshelp.site" + p);
   await page.waitForSelector(ready, { timeout: 8000 });
-  await page.waitForSelector('[data-site-pick="' + pick + '"][data-ready="1"]', { timeout: 8000 });
+  await page.waitForSelector('[data-site-pick="' + pick + '"][data-ready="' + readyAttr + '"]', { timeout: 8000 });
   return page;
 }
 async function openPublicOut(p) {
@@ -210,7 +213,7 @@ test("combined /visit page: two pickers (sign-in and sign-out) work independentl
   await p.close();
 });
 
-test("when no Unattended sites are listed, search and Use my location are hidden and the typed site field still works", { skip: SKIP, timeout: 60000 }, async () => {
+test("when no Unattended sites are listed, Use my location is hidden, there is only one Site heading, and the typed site field still works", { skip: SKIP, timeout: 60000 }, async () => {
   await boot();
   const errors = [];
   const p = await openPublic("/visit/sign-in", { sites: [] });
@@ -220,7 +223,12 @@ test("when no Unattended sites are listed, search and Use my location are hidden
   assert.equal(await p.$eval(".near-privacy", (e) => e.hidden || getComputedStyle(e).display === "none"), true);
   assert.equal(await p.$eval("#site-q", (e) => e.required), true);
   assert.equal(await p.$eval("#site-q", (e) => e.getAttribute("role")), null);
-  assert.match(await p.$eval('label[for="site-q"]', (e) => e.textContent), /Type the site name or number/);
+  assert.deepEqual(await p.$$eval(".site-pick-title", (els) => els.map((e) => e.textContent.trim())), ["Site"]);
+  const lab = await p.$eval('label[for="site-q"]', (e) => e.textContent.trim());
+  assert.match(lab, /Type the site name or number/);
+  assert.ok(!/^Site/.test(lab), "the field label does not repeat the Site heading: " + lab);
+  assert.equal(await p.$eval('[data-testid="site-pick-empty-note"]', (e) => e.hidden || getComputedStyle(e).display === "none"), false);
+  assert.match(await p.$eval('[data-testid="site-pick-empty-note"]', (e) => e.textContent), /No sites are listed to pick/);
   await p.type("#site-q", "typed site");
   assert.equal(await p.$eval("#site-options", (e) => e.hidden), true);
   assert.equal(await p.$eval("input[name=siteId]", (e) => e.value), "");
@@ -230,9 +238,72 @@ test("when no Unattended sites are listed, search and Use my location are hidden
   await out.waitForSelector('[data-site-pick="out-"][data-ready="1"][data-empty="1"]');
   assert.equal(await out.$eval("#out-site-q", (e) => e.required), false);
   assert.equal(await out.$eval("#out-site-near", (e) => e.hidden || getComputedStyle(e).display === "none"), true);
+  assert.deepEqual(await out.$$eval(".site-pick-title", (els) => els.map((e) => e.textContent.trim())), ["Site you are leaving"]);
+  const outLab = await out.$eval('label[for="out-site-q"]', (e) => e.textContent.trim());
+  assert.ok(!/^Site/.test(outLab), outLab);
+  assert.match(await out.$eval('[data-testid="out-site-pick-empty-note"]', (e) => e.textContent), /No sites are listed to pick/);
   await out.type("#out-site-q", "typed out");
   assert.equal(await out.$eval("#out-site-q", (e) => e.value), "typed out");
   await out.close();
+});
+
+
+test("when the site list fails to load, Use my location stays visible and the form does not fall back to a doubled Site heading", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  for (const kind of ["http", "json", "network"]) {
+    const errors = [];
+    const p = await openPublic("/visit/sign-in", { sitesError: kind, readyAttr: "error", init: GEO_SPY });
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.waitForSelector('[data-site-pick="in"][data-ready="error"]');
+    assert.equal(await p.$eval('[data-site-pick="in"]', (e) => e.getAttribute("data-empty") || "0"), "0", kind);
+    assert.equal(await p.$eval("#site-near", (e) => e.hidden || getComputedStyle(e).display === "none"), false, "button stays for " + kind);
+    assert.deepEqual(await p.$$eval(".site-pick-title", (els) => els.map((e) => e.textContent.trim())), ["Site"]);
+    const lab = await p.$eval('label[for="site-q"]', (e) => e.textContent.trim());
+    assert.ok(!/^Site/.test(lab) || /Or search/.test(lab), lab);
+    assert.match(await p.$eval("#site-near-note", (e) => e.textContent), /could not be loaded/);
+    assert.equal(await p.evaluate(() => window.__geoCalls), 0);
+    await p.click("#site-near");
+    assert.equal(await p.evaluate(() => window.__geoCalls), 0, "a failed list does not ask for location (" + kind + ")");
+    assert.match(await p.$eval("#site-near-note", (e) => e.textContent), /could not be loaded/);
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+  const out = await openPublicRaw("/visit/sign-out", { ready: "#out-form", pick: "out-", sitesError: "http", readyAttr: "error" });
+  await out.waitForSelector('[data-site-pick="out-"][data-ready="error"]');
+  assert.equal(await out.$eval("#out-site-near", (e) => e.hidden || getComputedStyle(e).display === "none"), false);
+  assert.match(await out.$eval("#out-site-near-note", (e) => e.textContent), /could not be loaded/);
+  await out.close();
+});
+
+test("when listed sites have no coordinates, Use my location stays visible and explains on tap without asking for location", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  const sites = [{ id: "s00000c01", name: "Synthetic No Coords", loc: "LOC0301", type: "unattended", address: "1 Example Rd" }];
+  const p = await openPublic("/visit/sign-in", { sites, init: GEO_SPY });
+  assert.equal(await p.$eval("#site-near", (e) => e.hidden || getComputedStyle(e).display === "none"), false);
+  assert.equal(await p.$eval('[data-site-pick="in"]', (e) => e.getAttribute("data-empty") || "0"), "0");
+  await p.click("#site-near");
+  await p.waitForFunction(() => document.querySelector("#site-near-note")?.textContent.includes("not set up yet"));
+  assert.equal(await p.evaluate(() => window.__geoCalls), 0);
+  await p.close();
+});
+
+test("QR sign-in and sign-out URLs at 390px show Use my location and a single heading, with no page errors", { skip: SKIP, timeout: 60000 }, async () => {
+  await boot();
+  for (const [path, pick, ready, near, title] of [
+    ["/visit/sign-in", "in", "#in-form:not([hidden])", "#site-near", "Site"],
+    ["/visit/sign-out", "out-", "#out-form", "#out-site-near", "Site you are leaving"],
+  ]) {
+    const errors = [];
+    const p = await openPublicRaw(path, { w: 390, h: 844, ready, pick, init: GEO_SPY });
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.waitForSelector('[data-site-pick="' + pick + '"][data-ready="1"]');
+    assert.equal(await p.$eval(near, (e) => e.hidden || getComputedStyle(e).display === "none"), false, path);
+    assert.deepEqual(await p.$$eval(".site-pick-title", (els) => els.map((e) => e.textContent.trim())), [title]);
+    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no sideways scroll at 390px on " + path);
+    assert.equal(await p.evaluate(() => window.__geoCalls), 0, "location is not asked for on load of " + path);
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
 });
 
 test("admin sites manager: table, add form, Unattended edit form, hide and remove confirms; screenshots at 390 and 1440", { skip: SKIP, timeout: 90000 }, async () => {
@@ -314,6 +385,12 @@ test("Sites CSV download has type ticks, defaults to Unattended (the picker type
   await boot();
   const p = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, log: false });
   await p.waitForSelector('[data-testid="csv-types"]', { timeout: 8000 });
+  assert.equal(await p.$eval("#picker-types", (e) => e.textContent.trim()), "Show on visitor sign-in");
+  const pickerLabels = await p.$$eval('[data-testid="picker-types"] label', (els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
+  assert.deepEqual(pickerLabels, ["Shell Express / 24Xpress (Unattended)", "VEA Retail (retail sites)", "LOC CA (retail sites)"]);
+  assert.match(await p.$eval("#picker-types + p", (e) => e.textContent), /90 retail sites/);
+  assert.equal(await p.$eval("#csv-download", (e) => e.textContent.trim()), "Include in CSV download");
+  assert.ok(await p.$('[data-testid="csv-download"]'), "the CSV ticks sit in a separate section");
   assert.equal(await p.$eval('[data-testid="csv-type-unattended"]', (e) => e.checked), true, "Unattended starts ticked, matching the picker");
   assert.equal(await p.$eval('[data-testid="csv-type-company"]', (e) => e.checked), false);
   assert.equal(await p.$eval('[data-testid="csv-type-commission_agent"]', (e) => e.checked), false);
