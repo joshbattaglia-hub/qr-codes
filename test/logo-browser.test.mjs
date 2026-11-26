@@ -38,7 +38,7 @@ test("logo in a real browser: sidebar variant per theme, sign-in and set-passwor
         if (u.pathname === "/api/identity/entra/status") return send(200, { configured: false });
         if (u.pathname === "/api/warehouse") { const x = await wh.warehouseOverview(OWNER); return send(x.status, x.body || { error: x.error }); }
         if (u.pathname === "/api/tickets/access") return send(200, { role: "admin", queues: [] });
-        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts") return send(200, []);
+        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts" || u.pathname === "/api/pages") return send(200, []);
         if (u.pathname.startsWith("/api/")) return send(403, { error: "Forbidden" });
         const file = u.pathname === "/admin/" ? "public/admin/index.html" : u.pathname === "/set-password" ? "public/set-password.html" : "public" + u.pathname;
         if (fs.existsSync(file) && fs.statSync(file).isFile()) return r.respond({ contentType: MIME[file.split(".").pop()] || "application/octet-stream", body: fs.readFileSync(file) });
