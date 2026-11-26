@@ -4,22 +4,14 @@ import {
   pagesStore, pageViews, submissionsStore,
 } from "../lib/lib.mjs";
 import { assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
-import { actorFromRequest } from "../lib/identity.mjs";
+import { actorFromRequest, officeActor } from "../lib/identity.mjs";
 import { isPreviewDeploy, previewReadOnly } from "../lib/preview-deploy.mjs";
-import { isOwner } from "../lib/users.mjs";
 import {
   defaultPage, applyPagePatch, readSubmission, recordView, publicPage,
   renderPublicPage, unavailablePage,
 } from "../lib/pages.mjs";
 
 const PREVIEW_BLOCKED = "This is a preview for review. Nothing can be saved here.";
-
-/** The owner signed in with an email code has the same Pages rights as the head-office password. */
-function officeActor(actor) {
-  if (!actor) return null;
-  if (isOwner(actor)) return { ...actor, role: "head", siteIds: null };
-  return actor;
-}
 
 const gen = () => Array.from(crypto.randomBytes(6), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
 

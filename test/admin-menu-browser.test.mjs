@@ -41,7 +41,8 @@ test("sidebar in a real browser: limited user sees only granted tools; the rest 
         if (u.pathname === "/api/access-request" && r.method() === "POST") { const x = await ar.submitRequest(actor, JSON.parse(r.postData() || "{}")); return send(x.status, x.body || { error: x.error }); }
         if (u.pathname === "/api/access-request") { const x = await ar.requestStatus(actor, u.searchParams.get("tool")); return send(x.status, x.body || { error: x.error }); }
         if (u.pathname === "/api/tickets/access") return send(actor.owner ? 200 : 403, { role: "admin", queues: ["screens", "signage"] });
-        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts" || u.pathname === "/api/pages") return send(200, []);
+        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts" || u.pathname === "/api/pages" || u.pathname === "/api/codes" || u.pathname === "/api/competitions" || u.pathname === "/api/templates") return send(200, []);
+        if (u.pathname === "/api/settings") return send(200, { workspaceName: "Liberty", defaultFg: "#111827", defaultBg: "#ffffff", publicUrl: "https://expresshelp.site" });
         if (u.pathname === "/api/warehouse") return send(403, { error: "no" });
         if (u.pathname.startsWith("/api/")) return send(403, { error: "Forbidden" });
         const file = u.pathname === "/admin/" ? "public/admin/index.html" : "public" + u.pathname;

@@ -3,7 +3,10 @@ import {
   json, env, publicBase, validSlug, visitorHash,
   competitionsStore, compEntries, compFiles, compViews, vouchersStore, conditionalIncrement,
 } from "../lib/lib.mjs";
-import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFromRequest, officeActor } from "../lib/identity.mjs";
+import { previewReadOnly } from "../lib/preview-deploy.mjs";
+
 import { competitionReminders } from "../lib/reminders.mjs";
 import { posterHtml } from "../lib/posters.mjs";
 import { issueVoucher, voucherConfig } from "../lib/vouchers.mjs";
@@ -15,6 +18,8 @@ import {
   chooseWinner, melbourneDate, melbourneStamp, accepting, entryNotice, periodCount, publicCompetition,
   renderCompetitionPage, unavailableCompetition, parseImportRows, summariseEntry, normaliseEmail, normalisePhone,
 } from "../lib/competitions.mjs";
+
+const PREVIEW_BLOCKED = "This is a preview for review. Nothing can be saved here.";
 
 const gen = () => Array.from(crypto.randomBytes(6), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
 
@@ -232,8 +237,10 @@ export default async (req, context) => {
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const pub = path.match(/^\/c\/([^/]+)$/);
   if (pub) return handlePublic(req, context, decodeURIComponent(pub[1]).toLowerCase());
-  const actor = await actorFrom(req);
+  const actor = officeActor(await actorFromRequest(req));
   if (!actor) return unauthorised();
+  if (actor.role !== "head" && actor.role !== "manager") return forbidden();
+  if (previewReadOnly(req, context)) return json(403, { error: PREVIEW_BLOCKED });
 
   if (path === "/api/competitions" && req.method === "GET") {
     const { blobs } = await competitionsStore().list();

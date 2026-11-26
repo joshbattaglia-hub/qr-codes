@@ -183,9 +183,10 @@ test("a building maintenance user signs in with an email code and can only view 
   assert.equal((await sitesFn(req("GET", "/api/sites", { cookie: maint }))).status, 403);
   assert.equal((await posFn(req("GET", "/api/pos-drafts", { cookie: maint }))).status, 403);
   assert.equal((await identityFn(req("GET", "/api/identity/status", { cookie: maint }))).status, 403);
-  for (const [f, url] of [[codesFn, "/api/codes"], [settingsFn, "/api/settings"], [vouchersFn, "/api/vouchers"], [staffFn, "/api/staff"]]) {
-    assert.equal((await f(req("GET", url, { cookie: maint }))).status, 401, url);
+  for (const [f, url] of [[codesFn, "/api/codes"], [settingsFn, "/api/settings"], [vouchersFn, "/api/vouchers"]]) {
+    assert.equal((await f(req("GET", url, { cookie: maint }))).status, 403, url);
   }
+  assert.equal((await staffFn(req("GET", "/api/staff", { cookie: maint }))).status, 401, "/api/staff");
   assert.equal((await authFn(req("GET", "/api/auth", { cookie: maint })).then((res) => res.json())).authenticated, false);
   // Nothing changed on the visit or settings.
   const visit = await lib.visitorStore().get("visit/" + visitId, { type: "json" });

@@ -22,6 +22,7 @@ const state = {
   pageDetail: null,
   pageDraft: null,
   keepPageDraft: false,
+  keepCompDraft: false,
   competitions: [],
   compDetail: null,
   compDraft: null,
@@ -105,6 +106,101 @@ function restorePendingPageDraft() {
   }
   return false;
 }
+const COMP_DRAFT_KEY = "eh-comp-draft";
+const CREATE_DRAFT_KEY = "eh-create-draft";
+const SETTINGS_DRAFT_KEY = "eh-settings-draft";
+function persistCompDraft() {
+  try {
+    if (document.getElementById("comp-editor")) captureCompDraft();
+    const d = state.compDraft;
+    if (!d) return;
+    const useful = d.name || d.heading || d.body || d.prize || d.slug;
+    if (!useful) return;
+    sessionStorage.setItem(COMP_DRAFT_KEY, JSON.stringify({ draft: d, hash: location.hash, at: Date.now() }));
+  } catch { /* private mode */ }
+}
+function restorePendingCompDraft() {
+  try {
+    const raw = sessionStorage.getItem(COMP_DRAFT_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(COMP_DRAFT_KEY);
+    const pending = JSON.parse(raw);
+    if (!pending?.draft || Date.now() - (pending.at || 0) > 24 * 3600 * 1000) return false;
+    state.compDraft = pending.draft;
+    state.keepCompDraft = true;
+    const dest = "#/" + (pending.draft.slug ? "competitions/" + encodeURIComponent(pending.draft.slug) : "competitions/new");
+    if (location.hash !== dest) {
+      location.replace(dest);
+      return true;
+    }
+    return false;
+  } catch { return false; }
+}
+function persistCreateDraft() {
+  try {
+    const url = document.getElementById("dest-url")?.value || "";
+    const slug = document.getElementById("custom-slug")?.value || "";
+    const name = document.getElementById("link-title")?.value || "";
+    if (!url && !slug && !name) return;
+    sessionStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify({
+      url, slug, name, mode: state.createMode || "qr", alsoLink: !!document.getElementById("also-link")?.checked, at: Date.now(),
+    }));
+  } catch { /* private mode */ }
+}
+function restorePendingCreateDraft() {
+  try {
+    const raw = sessionStorage.getItem(CREATE_DRAFT_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(CREATE_DRAFT_KEY);
+    const pending = JSON.parse(raw);
+    if (!pending || Date.now() - (pending.at || 0) > 24 * 3600 * 1000) return false;
+    state.draftUrl = pending.url || "";
+    state.createMode = pending.mode || "qr";
+    state.alsoLink = !!pending.alsoLink;
+    state.draftSlug = pending.slug || "";
+    state.draftName = pending.name || "";
+    if (location.hash !== "#/home") {
+      location.replace("#/home");
+      return true;
+    }
+    return false;
+  } catch { return false; }
+}
+function persistSettingsDraft() {
+  try {
+    const form = document.querySelector("form[data-act=save-settings]");
+    if (!form) return;
+    const data = Object.fromEntries(new FormData(form));
+    sessionStorage.setItem(SETTINGS_DRAFT_KEY, JSON.stringify({ data, at: Date.now() }));
+  } catch { /* private mode */ }
+}
+function restorePendingSettingsDraft() {
+  try {
+    const raw = sessionStorage.getItem(SETTINGS_DRAFT_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(SETTINGS_DRAFT_KEY);
+    const pending = JSON.parse(raw);
+    if (!pending?.data || Date.now() - (pending.at || 0) > 24 * 3600 * 1000) return false;
+    const fg = pending.data.defaultFgText || pending.data.defaultFg;
+    const bg = pending.data.defaultBgText || pending.data.defaultBg;
+    if (fg) state.settings = { ...(state.settings || {}), defaultFg: fg };
+    if (bg) state.settings = { ...(state.settings || {}), defaultBg: bg };
+    if (location.hash !== "#/settings") {
+      location.replace("#/settings");
+      return true;
+    }
+    return false;
+  } catch { return false; }
+}
+function persistEditorDraft() {
+  persistPageDraft();
+  persistCompDraft();
+  persistCreateDraft();
+  persistSettingsDraft();
+}
+function restorePendingEditorDraft() {
+  return restorePendingPageDraft() || restorePendingCompDraft() || restorePendingCreateDraft() || restorePendingSettingsDraft();
+}
 function requestFailedMessage(status, fallback) {
   if (status === 413) return "That page is too large to save. Try a smaller hero image.";
   if (status === 502 || status === 504) return "Save did not complete. Try again, or use a smaller hero image.";
@@ -116,8 +212,11 @@ async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers, credentials: "same-origin" });
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && path !== "/api/auth") {
-    persistPageDraft();
-    showLogin("Your session ended. Sign in again and your unsaved page will come back.");
+    persistEditorDraft();
+    const pageKept = !!(state.pageDraft && (state.pageDraft.name || state.pageDraft.title || state.pageDraft.heading || state.pageDraft.body || state.pageDraft.heroData || state.pageDraft.slug));
+    showLogin(pageKept
+      ? "Your session ended. Sign in again and your unsaved page will come back."
+      : "Your session ended. Sign in again and your unsaved work will come back.");
     const err = new Error("Unauthorized");
     err.status = 401;
     throw err;
@@ -748,8 +847,8 @@ function homeHtml() {
     '<form id="create-form" data-act="create"><label class="field"><span>Enter your destination URL</span></label>' +
     '<div class="url-row"><input id="dest-url" type="url" required placeholder="https://example.com/my-long-url" autocomplete="off" value="' + esc(state.draftUrl || "") + '">' +
     '<button class="btn" type="submit">' + (mode === "qr" ? "Create QR code" : "Create short link") + "</button></div>" +
-    (mode === "link" ? '<label class="field"><span>Title (optional)</span><input id="link-title" type="text" maxlength="120" placeholder="Homepage"></label>' : "") +
-    '<button class="text-btn" type="button" id="slug-toggle">Custom back-half</button><div id="slug-wrap" class="hidden"><label class="field"><span>Back-half</span><input id="custom-slug" type="text" maxlength="41" placeholder="auto-generated" autocomplete="off"></label></div>' +
+    (mode === "link" ? '<label class="field"><span>Title (optional)</span><input id="link-title" type="text" maxlength="120" placeholder="Homepage" value="' + esc(state.draftName || "") + '"></label>' : "") +
+    '<button class="text-btn" type="button" id="slug-toggle">Custom back-half</button><div id="slug-wrap" class="' + (state.draftSlug ? "" : "hidden") + '"><label class="field"><span>Back-half</span><input id="custom-slug" type="text" maxlength="41" placeholder="auto-generated" autocomplete="off" value="' + esc(state.draftSlug || "") + '"></label></div>' +
     (mode === "qr" ? '<label class="check"><input id="also-link" type="checkbox"' + (state.alsoLink ? " checked" : "") + "> Also create a link for this QR Code</label>" : "") +
     '<p class="err" id="create-error"></p></form>' +
     '<div class="info-banner">Short links and QR codes use ' + esc(host()) + '. <a href="#/domains">Domain details</a></div></div>' +
@@ -1707,6 +1806,7 @@ async function saveCompetition() {
     else saved = await api("/api/competitions/" + encodeURIComponent(d.slug), { method: "PATCH", body: JSON.stringify(compPayload(d)) });
     saved = await ensureCompCode(saved);
     state.competitions = await api("/api/competitions");
+    try { sessionStorage.removeItem("eh-comp-draft"); } catch { /* private mode */ }
     toast("Saved");
     if (!d.slug) go("competitions/" + saved.slug);
     else render();
@@ -3314,11 +3414,14 @@ async function render(opts = {}) {
     }
     view.innerHTML = pageEditor();
   } else if (r.name === "competitions" && r.id === "new") {
-    if (routeChanged) state.compDraft = blankCompetition();
+    if (routeChanged && !state.keepCompDraft) state.compDraft = blankCompetition();
+    state.keepCompDraft = false;
     state.compDetail = null;
     view.innerHTML = competitionEditor();
   } else if (r.name === "competitions" && r.id) {
-    if (!(opts.refetch === false && state.compDraft?.slug === r.id)) {
+    if (state.keepCompDraft && state.compDraft) {
+      state.keepCompDraft = false;
+    } else if (!(opts.refetch === false && state.compDraft?.slug === r.id)) {
       if (!keep) view.innerHTML = '<div class="card" aria-busy="true">' + skeleton(3) + "</div>";
       try {
         const data = await api("/api/competitions/" + encodeURIComponent(r.id));
@@ -4296,24 +4399,13 @@ async function enter() {
   const owner = !!state.actor?.owner;
   const jobs = identity && !owner
     ? [api("/api/sites"), api("/api/pos-drafts")]
-    : identity && owner
-      ? [api("/api/sites"), api("/api/pos-drafts"), api("/api/pages")]
-      : [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates"), api("/api/pos-drafts")];
+    : [api("/api/settings"), api("/api/codes"), api("/api/pages"), api("/api/competitions"), api("/api/sites"), api("/api/templates"), api("/api/pos-drafts")];
   if (state.actor?.role === "head") jobs.push(api("/api/staff"));
   const loaded = await Promise.all(jobs);
   if (identity && !owner) {
     state.settings = { workspaceName: "Liberty" };
     state.codes = [];
     state.pages = [];
-    state.competitions = [];
-    state.templates = [];
-    state.sites = loaded[0];
-    state.posDrafts = loaded[1];
-    state.staff = [];
-  } else if (identity && owner) {
-    state.settings = { workspaceName: "Liberty" };
-    state.codes = [];
-    state.pages = loaded[2] || [];
     state.competitions = [];
     state.templates = [];
     state.sites = loaded[0];
@@ -4347,7 +4439,7 @@ async function enter() {
     if (stayOrLand(allowedNav)) render();
     return;
   }
-  if (restorePendingPageDraft()) return;
+  if (restorePendingEditorDraft()) return;
   if (!location.hash || location.hash === "#") location.replace("#/home");
   else render();
 }

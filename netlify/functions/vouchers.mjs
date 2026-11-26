@@ -1,8 +1,13 @@
 import crypto from "node:crypto";
 import { codes, competitionsStore, conditionalIncrement, json, visitorHash, vouchersStore } from "../lib/lib.mjs";
-import { actorFrom, canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
+import { canSeeSite, forbidden, originBlocked, unauthorised } from "../lib/access.mjs";
+import { actorFromRequest, officeActor } from "../lib/identity.mjs";
+import { previewReadOnly } from "../lib/preview-deploy.mjs";
+
 import { auditView, issueVoucher, QR_IP_CAP, redeemVoucher, voucherConfig } from "../lib/vouchers.mjs";
 import { melbourneDate } from "../lib/competitions.mjs";
+
+const PREVIEW_BLOCKED = "This is a preview for review. Nothing can be saved here.";
 
 async function parentOffer(record) {
   if (record.source === "qr") {
@@ -45,8 +50,10 @@ export default async (req, context) => {
     if (!issued?.token) return json(503, { error: "Could not issue a voucher" });
     return json(200, { id: issued.id, token: issued.token, created: !!issued.created });
   }
-  const actor = await actorFrom(req);
+  const actor = officeActor(await actorFromRequest(req));
   if (!actor) return unauthorised();
+  if (actor.role !== "head" && actor.role !== "manager") return forbidden();
+  if (previewReadOnly(req, context)) return json(403, { error: PREVIEW_BLOCKED });
   if (path === "/api/vouchers" && req.method === "GET") {
     const { blobs } = await store.list({ prefix: "audit/" });
     const rows = (await Promise.all(blobs.map((b) => store.get(b.key, { type: "json" })))).filter(Boolean);
