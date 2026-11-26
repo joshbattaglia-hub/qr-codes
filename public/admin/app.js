@@ -2003,6 +2003,20 @@ function siteVisibilityChip(site) {
   return site.inPicker ? '<span class="muted">In picker</span>' : '<span class="muted">Visible</span>';
 }
 function usesOwnSiteDetails(type) { return type === "commission_agent" || type === "unattended"; }
+function operatingModelTag(model) {
+  if (model === "viva") return '<span class="op-tag op-tag-viva" data-testid="op-tag-viva">VIVA</span>';
+  if (model === "loc_ca") return '<span class="op-tag op-tag-loc-ca" data-testid="op-tag-loc-ca">LOC CA</span>';
+  return '<span class="op-tag-none" data-testid="op-tag-none">None</span>';
+}
+function operatingModelOptions(selected) {
+  const opt = (id, label) => '<option value="' + id + '"' + (selected === id ? " selected" : "") + ">" + label + "</option>";
+  return opt("", "None") + opt("viva", "VIVA") + opt("loc_ca", "LOC CA");
+}
+function syncOperatingModelPreview(root) {
+  const box = (root || document).querySelector("[data-testid=site-form-op-preview]");
+  const sel = (root || document).querySelector('[name="operatingModel"]');
+  if (box && sel) box.innerHTML = operatingModelTag(sel.value);
+}
 function csvDownloadTypes() {
   return [...document.querySelectorAll('input[name="csv-type"]:checked')].map((el) => el.value);
 }
@@ -2041,12 +2055,13 @@ async function paintSiteDetails() {
     + [['unattended', 'Shell Express / 24Xpress (Unattended)'], ['company', 'VEA Retail (retail sites)'], ['commission_agent', 'LOC CA (retail sites)']].map(([id, label]) => '<label class="check"><input type="checkbox" name="picker-type" value="' + id + '" data-testid="picker-type-' + id + '"' + (types.includes(id) ? " checked" : "") + '> ' + label + '</label>').join("")
     + '</div>'
     + '<div class="form-actions"><button class="btn" type="button" data-act="picker-types-save" data-testid="picker-types-save">Save picker types</button></div><p id="picker-types-note" class="small" role="status"></p>'
-    + '<h3 id="sites-manager">Site list</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.hidden || 0)) + ' hidden, ' + esc(String(c.removed || 0)) + ' removed. ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1). ' + esc(String(c.emailOverrides || 0)) + ' have their own contact email; the rest show ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '.</p>'
+    + '<h3 id="sites-manager">Site list</h3><p class="muted small" data-testid="site-detail-counts">' + esc(String(c.total || 0)) + ' sites: ' + esc(String(c.company || 0)) + ' VEA Retail, ' + esc(String(c.agents || 0)) + ' LOC CA, ' + esc(String(c.unattended || 0)) + ' Unattended, ' + esc(String(c.untyped || 0)) + ' not set (shown as VEA Retail). ' + esc(String(c.hidden || 0)) + ' hidden, ' + esc(String(c.removed || 0)) + ' removed. ' + esc(String(c.withCoordinates || 0)) + ' have a map point for "Use my location". ' + esc(String(c.phoneOverrides || 0)) + ' have their own phone; the rest show ' + esc(data.defaultPhone || "") + ' (maintenance line 1). ' + esc(String(c.emailOverrides || 0)) + ' have their own contact email; the rest show ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '. Operating model: ' + esc(String(c.viva || 0)) + ' VIVA, ' + esc(String(c.locCa || 0)) + ' LOC CA, ' + esc(String(c.untagged || 0)) + ' untagged.</p>'
     + '<div class="asset-dims sites-filters"><label class="field"><span>Search</span><input id="site-mgr-search" type="search" placeholder="Name, site number or address" data-testid="site-mgr-search"></label>'
     + '<label class="field"><span>Type</span><select id="site-mgr-type" data-testid="site-mgr-type"><option value="all">All types</option><option value="company">VEA Retail</option><option value="commission_agent">LOC CA</option><option value="unattended">Unattended</option><option value="untyped">Not set</option></select></label>'
-    + '<label class="field"><span>Visibility</span><select id="site-mgr-visibility" data-testid="site-mgr-visibility"><option value="visible">Visible</option><option value="hidden">Hidden</option><option value="removed">Removed</option><option value="held">Held</option><option value="all">All</option></select></label></div>'
+    + '<label class="field"><span>Visibility</span><select id="site-mgr-visibility" data-testid="site-mgr-visibility"><option value="visible">Visible</option><option value="hidden">Hidden</option><option value="removed">Removed</option><option value="held">Held</option><option value="all">All</option></select></label>'
+    + '<label class="field"><span>Operating model</span><select id="site-mgr-model" data-testid="site-mgr-model"><option value="all">All models</option><option value="viva">VIVA</option><option value="loc_ca">LOC CA</option><option value="none">None</option></select></label></div>'
     + '<div class="asset-actions"><button class="btn" type="button" data-act="site-add-open" data-testid="site-add-open">➕ Add site</button></div>'
-    + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Address</th><th>Phone</th><th>Email</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
+    + '<div class="table-wrap visitor-sheet-wrap" data-testid="sites-table-wrap"><table class="visitor-sheet sites-sheet" data-testid="sites-table"><thead><tr><th>Site</th><th>Number</th><th>Type</th><th>Operating model</th><th>Address</th><th>Phone</th><th>Email</th><th>Trading name</th><th>ABN</th><th>Map</th><th>Status</th><th></th></tr></thead><tbody id="sites-table-body"></tbody></table></div>'
     + '<p id="sites-table-empty" class="muted small" hidden>No sites match these filters.</p>'
     + '<section class="sites-csv-download" data-testid="csv-download">'
     + '<h3 id="csv-download">Include in CSV download</h3><p class="muted small">These ticks are only for the download, not for the visitor sign-in list above. Same columns as the import, so you can edit the file and bring it back. Tick the types to include. All ticked is the full list. Hidden sites are included; removed and held sites are not. The ticks start as the visitor sign-in types, so Unattended only is the usual starting point.</p>'
@@ -2054,10 +2069,14 @@ async function paintSiteDetails() {
     + [['company', 'VEA Retail'], ['commission_agent', 'LOC CA'], ['unattended', 'Unattended']].map(([id, label]) => '<label class="check"><input type="checkbox" name="csv-type" value="' + id + '" data-testid="csv-type-' + id + '"' + ((types.length ? types : ["unattended"]).includes(id) ? " checked" : "") + '> ' + label + '</label>').join("")
     + '</div>'
     + '<div class="row csv-type-presets"><button class="text-btn" type="button" data-act="csv-types-unattended" data-testid="csv-types-unattended">Unattended only</button><button class="text-btn" type="button" data-act="csv-types-all" data-testid="csv-types-all">All types</button></div>'
+    + '<p class="muted small">Optionally also limit the file by operating model. If none of these are ticked, every model is included (including untagged sites).</p>'
+    + '<div class="picker-type-checks" data-testid="csv-models">'
+    + [['viva', 'VIVA'], ['loc_ca', 'LOC CA'], ['none', 'None']].map(([id, label]) => '<label class="check"><input type="checkbox" name="csv-model" value="' + id + '" data-testid="csv-model-' + id + '"> ' + label + '</label>').join("")
+    + '</div>'
     + '<div class="row"><button class="btn ghost" type="button" id="site-details-download" data-act="site-details-download" data-testid="site-details-download">Download current list as CSV</button></div>'
     + '<p id="csv-types-hint" class="muted small" hidden data-testid="csv-types-hint">Tick at least one site type to download.</p>'
     + '</section>'
-    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it (for contact_email, that means the default address). The word <code>HIDE</code> in contact_email shows no email on that site. Older files without a contact_email column still work. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
+    + '<h3>Import site details (CSV)</h3><p class="muted small">Columns: <code>' + esc((data.columns || []).join(",")) + '</code>. Rows match on <code>loc</code> (or the exact site name when loc is blank). A blank cell leaves that field as it is; the word <code>CLEAR</code> empties it (for contact_email, that means the default address). The word <code>HIDE</code> in contact_email shows no email on that site. Older files without a contact_email column still work. site_type is <code>company</code> (VEA Retail), <code>commission_agent</code> (LOC CA) or <code>unattended</code>. operating_model is <code>VIVA</code>, <code>LOC CA</code>, blank (keep) or <code>CLEAR</code> (remove the tag). Existing sites are not renamed. A row that matches no site is added as a new site after you preview and Apply. Preview always comes first.</p>'
     + '<label class="field"><span>CSV file</span><input id="site-details-file" type="file" accept=".csv,text/csv,text/plain" data-testid="site-details-file"></label>'
     + '<label class="field"><span>Or paste CSV</span><textarea id="site-details-csv" rows="5" spellcheck="false" placeholder="' + esc((data.columns || []).join(",")) + '" data-testid="site-details-csv"></textarea></label>'
     + '<div class="row"><button class="btn" type="button" data-act="site-details-preview" data-testid="site-details-preview-btn">Preview changes</button><button class="btn ghost" type="button" id="site-details-apply" data-act="site-details-apply" disabled data-testid="site-details-apply">Apply previewed changes</button></div>'
@@ -2085,18 +2104,22 @@ async function paintSiteDetails() {
   document.getElementById("site-mgr-search")?.addEventListener("input", redraw);
   document.getElementById("site-mgr-type")?.addEventListener("change", redraw);
   document.getElementById("site-mgr-visibility")?.addEventListener("change", redraw);
+  document.getElementById("site-mgr-model")?.addEventListener("change", redraw);
   paintSitesTable();
 }
 function filteredVisitorSites() {
   const q = (document.getElementById("site-mgr-search")?.value || "").trim().toLowerCase();
   const type = document.getElementById("site-mgr-type")?.value || "all";
   const vis = document.getElementById("site-mgr-visibility")?.value || "visible";
+  const model = document.getElementById("site-mgr-model")?.value || "all";
   return (state.visitorSites || []).filter((site) => {
     if (type === "untyped" && site.siteType) return false;
     if (type !== "all" && type !== "untyped" && site.siteType !== type) return false;
     if (vis !== "all" && (site.visibility || "visible") !== vis) return false;
+    if (model === "none" && site.operatingModel) return false;
+    if (model !== "all" && model !== "none" && site.operatingModel !== model) return false;
     if (!q) return true;
-    const blob = [site.name, site.loc, site.address, site.tradingName, site.abn, site.phone, site.contactEmail].join(" ").toLowerCase();
+    const blob = [site.name, site.loc, site.address, site.tradingName, site.abn, site.phone, site.contactEmail, site.operatingModel === "viva" ? "VIVA" : site.operatingModel === "loc_ca" ? "LOC CA" : "None"].join(" ").toLowerCase();
     return blob.includes(q);
   });
 }
@@ -2117,8 +2140,13 @@ function paintSitesTable() {
             : '<button class="btn ghost" type="button" data-act="site-hide" data-id="' + esc(site.id) + '" data-testid="site-hide">Hide</button>')
           + '<button class="btn ghost" type="button" data-act="site-remove" data-id="' + esc(site.id) + '" data-name="' + esc(site.name) + '" data-testid="site-remove">🗑️ Remove</button>');
     const phone = site.phone || state.visitorSitesDefaultPhone || "";
+    const canEditModel = !held && !removed;
+    const modelCell = '<div class="op-model-cell">' + operatingModelTag(site.operatingModel) + (canEditModel
+      ? '<label class="sr-only" for="op-model-' + esc(site.id) + '">Operating model for ' + esc(site.name) + '</label><select class="op-model-select" id="op-model-' + esc(site.id) + '" data-testid="site-op-model" data-id="' + esc(site.id) + '">' + operatingModelOptions(site.operatingModel || "") + '</select>'
+      : "") + '</div>';
     return '<tr data-testid="site-row" data-id="' + esc(site.id) + '" data-visibility="' + esc(site.visibility || "visible") + '">'
       + '<td>' + esc(site.name) + '</td><td>' + esc(site.loc || "") + '</td><td>' + siteTypeChip(site.siteType) + '</td>'
+      + '<td>' + modelCell + '</td>'
       + '<td class="site-address">' + esc(site.address || "") + '</td><td>' + esc(phone) + '</td>'
       + '<td>' + esc(site.contactEmail === "HIDE" ? "Hidden" : (site.contactEmail || state.visitorSitesDefaultContactEmail || "")) + '</td>'
       + '<td>' + esc(site.tradingName || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td><td>' + esc(site.abn || (usesOwnSiteDetails(site.siteType) ? "" : "—")) + '</td>'
@@ -2142,6 +2170,8 @@ function siteFormHtml(site) {
     + '<label class="field"><span>Site name</span><input name="name" id="site-form-name" required maxlength="120" value="' + esc(site?.name || "") + '" data-testid="site-form-name"' + described("name") + '>' + siteFieldError("name") + '</label>'
     + '<label class="field"><span>Site number</span><input name="loc" id="site-form-loc" maxlength="40" value="' + esc(site?.loc || "") + '" placeholder="Optional" data-testid="site-form-loc"' + described("loc") + '>' + siteFieldError("loc") + '</label>'
     + '<label class="field"><span>Type</span><select name="siteType" id="site-form-type" data-testid="site-form-type"' + described("siteType") + '>' + opt("unattended", "Unattended") + opt("company", "VEA Retail") + opt("commission_agent", "LOC CA") + '</select>' + siteFieldError("siteType") + '</label>'
+    + '<label class="field"><span>Operating model</span><select name="operatingModel" id="site-form-operating-model" data-testid="site-form-operating-model"' + described("operatingModel") + '>' + operatingModelOptions(site?.operatingModel || "") + '</select>' + siteFieldError("operatingModel") + '</label>'
+    + '<p class="op-model-preview-row"><span data-testid="site-form-op-preview">' + operatingModelTag(site?.operatingModel || "") + '</span><span class="muted small">This label is for you. It does not change who appears on visitor sign-in. VIVA sites often use the shared 1111 ABN until the real number is known.</span></p>'
     + '<label class="field"><span>Address</span><input name="address" id="site-form-address" maxlength="240" value="' + esc(site?.address || "") + '" data-testid="site-form-address"' + described("address") + '>' + siteFieldError("address") + '</label>'
     + '<div class="split"><label class="field"><span>Latitude</span><input name="lat" id="site-form-lat" inputmode="decimal" value="' + esc(site?.lat != null ? String(site.lat) : "") + '" data-testid="site-form-lat"' + described("lat") + '>' + siteFieldError("lat") + '</label>'
     + '<label class="field"><span>Longitude</span><input name="lng" id="site-form-lng" inputmode="decimal" value="' + esc(site?.lng != null ? String(site.lng) : "") + '" data-testid="site-form-lng"' + described("lng") + '>' + siteFieldError("lng") + '</label></div>'
@@ -2215,6 +2245,8 @@ function clearFieldIssue(input) {
 }
 
 function wireSiteFormType() {
+  syncOperatingModelPreview(document.getElementById("modal"));
+  document.getElementById("site-form-operating-model")?.addEventListener("change", () => syncOperatingModelPreview(document.getElementById("modal")));
   const sel = document.getElementById("site-form-type");
   if (!sel) return;
   const sync = () => {
@@ -2246,6 +2278,7 @@ function siteFormBody(form) {
     hideContactEmail: !!form.querySelector('[name="hideContactEmail"]')?.checked,
     tradingName: fd.get("tradingName") || "",
     abn: fd.get("abn") || "",
+    operatingModel: fd.get("operatingModel") || "",
   };
 }
 function siteDetailPreview(body) {
@@ -2691,7 +2724,8 @@ async function visitorAction(button) {
   if (act === "site-details-download") {
     const types = csvDownloadTypes();
     if (!types.length) { syncCsvDownloadButton(); return; }
-    const query = types.map((type) => "types=" + encodeURIComponent(type)).join("&");
+    const models = [...document.querySelectorAll('input[name="csv-model"]:checked')].map((el) => el.value);
+    const query = types.map((type) => "types=" + encodeURIComponent(type)).concat(models.map((model) => "models=" + encodeURIComponent(model))).join("&");
     const response = await fetch("/api/visitor-log/site-details.csv?" + query, { credentials: "same-origin" });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -3602,6 +3636,19 @@ document.body.addEventListener("change", (e) => {
   if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
   if (e.target.closest && (e.target.closest("[data-testid=site-edit-form]") || e.target.closest("[data-testid=site-add-form]"))) {
     clearFieldIssue(e.target);
+    if (e.target && e.target.name === "operatingModel") syncOperatingModelPreview(e.target.closest("form") || document.getElementById("modal"));
+  }
+  if (e.target && e.target.matches && e.target.matches("[data-testid=site-op-model]")) {
+    const sel = e.target;
+    const id = sel.dataset.id;
+    if (id) {
+      Promise.resolve(api("/api/visitor-log/sites/" + encodeURIComponent(id) + "/operating-model", { method: "POST", body: JSON.stringify({ operatingModel: sel.value }) })).then((body) => {
+        const i = (state.visitorSites || []).findIndex((s) => s.id === id);
+        if (i >= 0 && body) state.visitorSites[i] = { ...state.visitorSites[i], ...body };
+        toast("Operating model saved");
+        paintSitesTable();
+      }).catch((err) => toast.error(err.message));
+    }
   }
   if (e.target.id === "compare-select") {
     state.compareMode = e.target.value === "prev" ? "prev" : e.target.value === "code" ? "code" : "none";

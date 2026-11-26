@@ -12,8 +12,10 @@ export const COORDS_ERROR = "lat/lng must both be set to a point in Australia (f
 export const NAME_ERROR = "A site name is required.";
 export const TYPE_ERROR = "Type must be VEA Retail, LOC CA or Unattended.";
 export const TYPE_REQUIRED = "Choose a site type.";
+export const OPERATING_MODEL_ERROR = "Operating model must be VIVA, LOC CA, or blank.";
 export const SITE_TYPES = ["company", "commission_agent", "unattended"];
-export const SITE_FORM_FIELD_ORDER = ["name", "loc", "siteType", "address", "lat", "lng", "phone", "contactEmail", "tradingName", "abn"];
+export const OPERATING_MODELS = ["viva", "loc_ca"];
+export const SITE_FORM_FIELD_ORDER = ["name", "loc", "siteType", "operatingModel", "address", "lat", "lng", "phone", "contactEmail", "tradingName", "abn"];
 const CONTACT_EMAIL_HIDDEN = "HIDE";
 const CONTACT_EMAIL_RE = /^[a-z0-9._%+'’-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 
@@ -76,12 +78,24 @@ export function validCoords(lat, lng) {
   return { lat: Math.round(la * 10000) / 10000, lng: Math.round(ln * 10000) / 10000 };
 }
 
+export function normaliseOperatingModel(value) {
+  const text = unguardCsvCell(String(value ?? "")).trim();
+  if (!text) return "";
+  const upper = text.toUpperCase();
+  if (["CLEAR", "NONE", "BLANK", "UNTAGGED", "UNSET", "-"].includes(upper)) return "";
+  const key = upper.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  if (key === "viva" || key === "viva_energy") return "viva";
+  if (key === "loc_ca" || key === "locca" || key === "ca") return "loc_ca";
+  return null;
+}
+
 export function validateSiteForm(body) {
   const fields = {};
   if (!String(body?.name ?? "").trim()) fields.name = NAME_ERROR;
   const type = String(body?.siteType ?? "").trim();
   if (!type) fields.siteType = TYPE_REQUIRED;
   else if (!SITE_TYPES.includes(type)) fields.siteType = TYPE_ERROR;
+  if (body?.operatingModel != null && String(body.operatingModel).trim() !== "" && normaliseOperatingModel(body.operatingModel) === null) fields.operatingModel = OPERATING_MODEL_ERROR;
   if (normaliseAbn(body?.abn) === null) fields.abn = ABN_ERROR;
   if (normaliseSitePhone(body?.phone) === null) fields.phone = PHONE_ERROR;
   if (!body?.hideContactEmail && normaliseContactEmail(body?.contactEmail) === null) fields.contactEmail = EMAIL_ERROR;
@@ -121,6 +135,7 @@ export function fieldsFromMessages(messages) {
     else if (/site name is required|already uses that name|name already exists/i.test(msg)) fields.name = msg;
     else if (/already uses that site number|site number already exists|site number was taken/i.test(msg)) fields.loc = msg;
     else if (/Type must be|Choose a site type/i.test(msg)) fields.siteType = msg;
+    else if (/Operating model must be/i.test(msg)) fields.operatingModel = msg;
   }
   return fields;
 }

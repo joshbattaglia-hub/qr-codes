@@ -5,7 +5,7 @@ export { previewReadOnly };
 import { actorFromRequest } from "../lib/identity.mjs";
 import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
-  archiveManagedSite, createManagedSite, geocodeManagedSite, hideManagedSite, importSiteDetails, saveCompanyDetails, saveDefaultContactEmailSetting, savePickerTypeSetting, siteDetailCsv, siteDetailSettings, updateManagedSite,
+  archiveManagedSite, createManagedSite, geocodeManagedSite, hideManagedSite, importSiteDetails, saveCompanyDetails, saveDefaultContactEmailSetting, savePickerTypeSetting, siteDetailCsv, siteDetailSettings, updateManagedOperatingModel, updateManagedSite,
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -69,7 +69,8 @@ export default async (req, context) => {
   }
   if (path === "/api/visitor-log/site-details.csv" && req.method === "GET") {
     const typesParam = url.searchParams.has("types") ? url.searchParams.getAll("types") : undefined;
-    const result = await siteDetailCsv(actor, typesParam);
+    const modelsParam = url.searchParams.has("models") ? url.searchParams.getAll("models") : undefined;
+    const result = await siteDetailCsv(actor, typesParam, modelsParam);
     if (result.status !== 200) return json(result.status, { error: result.error }, PRIVATE);
     return new Response(result.body, { status: 200, headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=\"site-details.csv\"", ...PRIVATE } });
   }
@@ -143,6 +144,12 @@ export default async (req, context) => {
   if (path === "/api/visitor-log/sites" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await createManagedSite(actor, body);
+    return json(result.status, adminPayload(result), PRIVATE);
+  }
+  const siteOp = path.match(/^\/api\/visitor-log\/sites\/(s[a-f0-9]{8})\/operating-model$/);
+  if (siteOp) {
+    const body = await req.json().catch(() => ({}));
+    const result = await updateManagedOperatingModel(actor, siteOp[1], body);
     return json(result.status, adminPayload(result), PRIVATE);
   }
   const siteOne = path.match(/^\/api\/visitor-log\/sites\/(s[a-f0-9]{8})$/);

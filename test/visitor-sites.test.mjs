@@ -521,6 +521,7 @@ test("preview deploys refuse site manager writes and picker-type changes; geocod
     ["/api/visitor-log/picker-types", { types: ["company"] }],
     ["/api/visitor-log/sites/s00000a06/hide", {}],
     ["/api/visitor-log/sites/s00000a06/remove", { confirm: "REMOVE" }],
+    ["/api/visitor-log/sites/s00000a06/operating-model", { operatingModel: "viva" }],
   ]) {
     const res = await post(path, body);
     assert.equal(res.status, 403, path);
@@ -757,4 +758,69 @@ test("site and company APIs return a fields map so the admin can show ABN errors
   const phone = await j(H.call("POST", "/api/visitor-log/sites/s00000a06", { cookie: owner, body: { name: "Synthetic Unattended Moe", siteType: "unattended", phone: "not-a-phone" } }));
   assert.equal(phone.status, 400);
   assert.equal(phone.body.fields.phone, "That phone number is not valid.");
+});
+
+test("operating model: VIVA and LOC CA tags are stored, filterable, importable, and do not change the visitor picker", async () => {
+  assert.equal(sd.normaliseOperatingModel("VIVA"), "viva");
+  assert.equal(sd.normaliseOperatingModel("CA"), "loc_ca");
+  assert.equal(sd.normaliseOperatingModel("LOC CA"), "loc_ca");
+  assert.equal(sd.normaliseOperatingModel("NONE"), "");
+  assert.equal(sd.normaliseOperatingModel("CLEAR"), "");
+  assert.equal(sd.normaliseOperatingModel("franchise"), null);
+  assert.equal(sd.operatingModelLabel("viva"), "VIVA");
+  assert.equal(sd.operatingModelLabel("loc_ca"), "LOC CA");
+
+  const setViva = await j(H.call("POST", "/api/visitor-log/sites/s00000a06", { cookie: owner, body: { name: "Synthetic Unattended Moe", siteType: "unattended", operatingModel: "VIVA" } }));
+  assert.equal(setViva.status, 200, JSON.stringify(setViva.body));
+  assert.equal(setViva.body.operatingModel, "viva");
+  const inline = await j(H.call("POST", "/api/visitor-log/sites/s00000a06/operating-model", { cookie: owner, body: { operatingModel: "loc_ca" } }));
+  assert.equal(inline.status, 200, JSON.stringify(inline.body));
+  assert.equal(inline.body.operatingModel, "loc_ca");
+  const stored = await lib.sitesStore().get("s00000a06", { type: "json" });
+  assert.equal(stored.operatingModel, "loc_ca");
+  assert.equal(stored.name, "Synthetic Unattended Moe", "inline change does not touch other fields");
+  const cleared = await j(H.call("POST", "/api/visitor-log/sites/s00000a06/operating-model", { cookie: owner, body: { operatingModel: "" } }));
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.operatingModel, "");
+  assert.equal((await lib.sitesStore().get("s00000a06", { type: "json" })).operatingModel, undefined);
+
+  await j(H.call("POST", "/api/visitor-log/sites/s00000a06/operating-model", { cookie: owner, body: { operatingModel: "viva" } }));
+  const picker = (await j(H.call("GET", "/api/visit/sites"))).body;
+  assert.equal(picker.picker, "unattended");
+  const moe = picker.sites.find((s) => s.name === "Synthetic Unattended Moe");
+  assert.ok(moe, "a tagged Unattended site stays on the sign-in list");
+  assert.equal("operatingModel" in moe, false, "the visitor list does not include the operating model");
+  assert.ok(!picker.sites.some((s) => s.type === "company" || s.type === "commission_agent"));
+
+  const bad = await j(H.call("POST", "/api/visitor-log/sites/s00000a06/operating-model", { cookie: owner, body: { operatingModel: "franchise" } }));
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.fields.operatingModel, sd.OPERATING_MODEL_ERROR);
+
+  const csv = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended", { cookie: owner }));
+  assert.equal(csv.status, 200);
+  assert.equal(csv.body.split("\n")[0], sd.CSV_COLUMNS.join(","));
+  assert.ok(csv.body.split("\n")[0].includes("operating_model"));
+  const moeLine = csv.body.split("\n").find((line) => line.includes("Synthetic Unattended Moe"));
+  assert.match(moeLine, /VIVA/);
+  const onlyViva = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended&models=viva", { cookie: owner }));
+  assert.equal(onlyViva.status, 200);
+  assert.ok(onlyViva.body.includes("Synthetic Unattended Moe"));
+  const onlyCa = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended&models=loc_ca", { cookie: owner }));
+  assert.ok(!onlyCa.body.includes("Synthetic Unattended Moe"));
+  const onlyNone = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended&models=none", { cookie: owner }));
+  assert.ok(!onlyNone.body.includes("Synthetic Unattended Moe"));
+  assert.ok(onlyNone.body.includes("Synthetic Hidden Unattended") || onlyNone.body.split("\n").length > 1);
+
+  const keep = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,abn\nSynthetic Unattended Moe,1111", dryRun: true } }));
+  assert.equal(keep.status, 200);
+  assert.ok(!("operating_model" in (keep.body.rows[0].changes || {})), "an older CSV without the column leaves the tag alone");
+  const change = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,operating_model\nSynthetic Unattended Moe,LOC CA", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(change.status, 200, JSON.stringify(change.body));
+  assert.equal(change.body.written, 1);
+  assert.equal((await lib.sitesStore().get("s00000a06", { type: "json" })).operatingModel, "loc_ca");
+  const clear = await j(H.call("POST", "/api/visitor-log/site-details/import", { cookie: owner, body: { csv: "site_name,operating_model\nSynthetic Unattended Moe,CLEAR", dryRun: false, confirm: "APPLY" } }));
+  assert.equal(clear.status, 200);
+  assert.equal((await lib.sitesStore().get("s00000a06", { type: "json" })).operatingModel, undefined);
+  const details = await j(H.call("GET", "/api/visitor-log/site-details", { cookie: owner }));
+  assert.ok("viva" in details.body.counts && "locCa" in details.body.counts && "untagged" in details.body.counts);
 });
