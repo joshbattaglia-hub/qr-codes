@@ -18,3 +18,22 @@ export const TOOL_ICONS = {
   settings: "⚙️",
 };
 export const OTHER_TOOLS_ICON = "🧰";
+
+/** Sidebar labels, matching public/admin/index.html. */
+export const TOOL_LABELS = {
+  home: "Home",
+  links: "Links",
+  qrcodes: "QR Codes",
+  pages: "Pages",
+  analytics: "Analytics",
+  competitions: "Competitions",
+  pos: "POS setup",
+  assets: "Asset Barcodes",
+  warehouse: "Warehouse Stickers",
+  visitors: "Visitor log",
+  tickets: "Support",
+  users: "Users",
+  sites: "Sites",
+  domains: "Custom domains",
+  settings: "Settings",
+};
