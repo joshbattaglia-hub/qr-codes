@@ -9,6 +9,7 @@ import {
 } from "../lib/visitor-log.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
+const adminPayload = (result) => result.body || { error: result.error, ...(result.errors ? { errors: result.errors } : {}), ...(result.fields ? { fields: result.fields } : {}) };
 
 export default async (req, context) => {
   if (previewReadOnly(req, context)) return json(403, { error: "This is a preview for review. Nothing can be saved here." }, { "cache-control": "private, no-store" });
@@ -29,42 +30,42 @@ export default async (req, context) => {
     const body = await req.json().catch(() => ({}));
     if (body.confirm !== "CHECK") return json(400, { error: "Confirm the connection check." }, PRIVATE);
     const result = await sheetConnectionCheck(actor);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/sheet-photo-backfill") {
     if (!(await visitorSettingsCapability(actor))) return json(403, { error: "Visitor log access is not granted." }, PRIVATE);
     if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
     const body = await req.json().catch(() => ({}));
     const result = await idPhotoBackfill(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/notify-recipients") {
     if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
     const body = await req.json().catch(() => ({}));
     const result = await changeNotificationRecipients(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/building-maintenance") {
     if (req.method === "GET") {
       const result = await listBuildingMaintenance(actor);
-      return json(result.status, result.body || { error: result.error }, PRIVATE);
+      return json(result.status, adminPayload(result), PRIVATE);
     }
     if (req.method !== "POST") return json(405, { error: "Not found" }, PRIVATE);
     const body = await req.json().catch(() => ({}));
     const result = await changeBuildingMaintenance(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/settings" && req.method === "GET") {
     const result = await notificationSettings(actor);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/maintenance" && req.method === "GET") {
     const result = await maintenanceSettings(actor);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/site-details" && req.method === "GET") {
     const result = await siteDetailSettings(actor);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/site-details.csv" && req.method === "GET") {
     const typesParam = url.searchParams.has("types") ? url.searchParams.getAll("types") : undefined;
@@ -74,11 +75,11 @@ export default async (req, context) => {
   }
   if (path === "/api/visitor-log/sites/geocode" && req.method === "GET") {
     const result = await geocodeManagedSite(actor, url.searchParams.get("address") || "");
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/visits" && req.method === "GET") {
     const result = await listVisits(actor, url.searchParams);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/export" && req.method === "GET") {
     const result = await exportVisits(actor);
@@ -88,7 +89,7 @@ export default async (req, context) => {
   const one = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})$/);
   if (one && req.method === "GET") {
     const result = await readVisit(actor, one[1]);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   const photo = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})\/photo$/);
   if (photo && req.method === "GET") {
@@ -102,64 +103,64 @@ export default async (req, context) => {
     const body = await req.json().catch(() => ({}));
     if (body.confirm !== "DELETE") return json(400, { error: "Type DELETE to remove the record." }, PRIVATE);
     const result = await deleteVisit(actor, remove[1]);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   const recover = path.match(/^\/api\/visitor-log\/visits\/(v[a-f0-9]{32})\/recover$/);
   if (recover) {
     const result = await recoverReceipt(actor, recover[1]);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/company" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await saveCompanyDetails(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/contact-email" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await saveDefaultContactEmailSetting(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/site-details/import" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await importSiteDetails(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/maintenance" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await saveMaintenanceSettings(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/settings" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await saveNotificationSettings(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/picker-types" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await savePickerTypeSetting(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/sites" && req.method === "POST") {
     const body = await req.json().catch(() => ({}));
     const result = await createManagedSite(actor, body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   const siteOne = path.match(/^\/api\/visitor-log\/sites\/(s[a-f0-9]{8})$/);
   if (siteOne) {
     const body = await req.json().catch(() => ({}));
     const result = await updateManagedSite(actor, siteOne[1], body);
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   const siteHide = path.match(/^\/api\/visitor-log\/sites\/(s[a-f0-9]{8})\/(hide|unhide)$/);
   if (siteHide) {
     const result = await hideManagedSite(actor, siteHide[1], siteHide[2] === "hide");
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   const siteArchive = path.match(/^\/api\/visitor-log\/sites\/(s[a-f0-9]{8})\/(remove|restore)$/);
   if (siteArchive) {
     const body = await req.json().catch(() => ({}));
     const result = await archiveManagedSite(actor, siteArchive[1], { ...body, archived: siteArchive[2] === "remove" });
-    return json(result.status, result.body || { error: result.error }, PRIVATE);
+    return json(result.status, adminPayload(result), PRIVATE);
   }
   return json(404, { error: "Not found" }, PRIVATE);
 };

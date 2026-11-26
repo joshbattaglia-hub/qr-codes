@@ -532,6 +532,13 @@ dialog::backdrop{background:var(--modal-back)}
   .theme-pop,#pop-theme{display:none !important}
 }
 
+
+.field-error{color:var(--red);font-weight:500;margin:2px 0 0;font-size:13px;line-height:1.35}
+.field-error[hidden]{display:none}
+.field input[aria-invalid="true"],.field textarea[aria-invalid="true"],.field select[aria-invalid="true"]{border-color:var(--red)}
+#site-form-error{margin:0 0 12px}
+#site-form-error:empty,#site-form-error[hidden]{display:none;min-height:0;margin:0}
+#company-field-error-abn{margin:0 0 8px}
 .modal-card:has([data-testid="site-add-form"], [data-testid="site-edit-form"]){width:min(640px,calc(100% - 24px))}
 .modal-card .site-form-end-space{height:8px;flex:0 0 auto}
 .modal-card [data-testid="site-add-form"] #site-own-details,

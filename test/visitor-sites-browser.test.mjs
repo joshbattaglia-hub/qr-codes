@@ -573,3 +573,134 @@ test("admin: default contact email, edit-form email field, and Settings footer; 
   await shot(settings, "admin-settings-footer-1440.png", '[data-testid="footer-settings"]');
   await settings.close();
 });
+
+test("site Edit and Add dialogs and the VEA Retail form show ABN errors under the field, inside the dialog", { skip: SKIP, timeout: 90000 }, async () => {
+  await boot();
+  const shotDir = "/workspace/qr-codes-data/inline-errors-screenshots";
+  fs.mkdirSync(shotDir, { recursive: true });
+  const ABN_MSG = /That ABN is not valid/;
+  async function openEdit(page) {
+    await page.evaluate(() => {
+      const row = [...document.querySelectorAll("[data-testid=site-row]")].find((r) => r.textContent.includes("Synthetic Unattended Ballarat"));
+      row?.querySelector('[data-testid="site-edit"]')?.click();
+    });
+    await page.waitForSelector('[data-testid="site-edit-form"]', { timeout: 8000 });
+  }
+  async function fillAbn(page, value) {
+    await page.$eval('[data-testid="site-form-abn"]', (el) => { el.focus(); el.value = ""; el.dispatchEvent(new Event("input", { bubbles: true })); });
+    await page.type('[data-testid="site-form-abn"]', value);
+  }
+  async function errorLayout(page) {
+    return page.evaluate(() => {
+      const err = document.querySelector('[data-testid="site-field-error-abn"]');
+      const input = document.querySelector('[data-testid="site-form-abn"]');
+      const card = document.querySelector(".modal-card");
+      if (!err || !input || !card) return { missing: true };
+      const er = err.getBoundingClientRect();
+      const ir = input.getBoundingClientRect();
+      const cr = card.getBoundingClientRect();
+      return {
+        text: err.textContent,
+        hidden: err.hidden,
+        underField: er.top >= ir.bottom - 2,
+        insideCard: er.top >= cr.top - 1 && er.bottom <= cr.bottom + 1 && er.left >= cr.left - 1 && er.right <= cr.right + 1,
+        aria: input.getAttribute("aria-invalid"),
+        described: (input.getAttribute("aria-describedby") || "").includes("site-field-error-abn"),
+        focused: document.activeElement === input,
+      };
+    });
+  }
+
+  const wide = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, theme: "crazy", log: false });
+  await wide.waitForSelector('[data-testid="sites-table"]', { timeout: 8000 });
+  await openEdit(wide);
+  await fillAbn(wide, "99702180390");
+  await wide.click('[data-testid="site-form-save"]');
+  await wide.waitForSelector('[data-testid="site-field-error-abn"]:not([hidden])', { timeout: 8000 });
+  await H.wait(400);
+  const client = await errorLayout(wide);
+  assert.match(client.text, ABN_MSG);
+  assert.equal(client.hidden, false);
+  assert.equal(client.underField, true, "client ABN error should sit under the field");
+  assert.equal(client.insideCard, true, "client ABN error should stay inside the dialog");
+  assert.equal(client.aria, "true");
+  assert.equal(client.described, true);
+  assert.equal(client.focused, true);
+  await wide.screenshot({ path: path.join(shotDir, "edit-abn-error-1440.png"), fullPage: false });
+  await wide.$eval(".modal-card", (el) => el.scrollIntoView({ block: "center" }));
+  const card = await wide.$(".modal-card");
+  await card.screenshot({ path: path.join(shotDir, "edit-abn-error-1440-dialog.png") });
+  const postsBefore = await wide.evaluate(() => window.__sitePosts || 0);
+  await wide.evaluate(() => { window.__sitePosts = 0; const orig = window.fetch; window.fetch = function(url, opts) { if (opts && String(opts.method || "GET").toUpperCase() === "POST" && String(url).includes("/api/visitor-log/sites")) window.__sitePosts++; return orig.apply(this, arguments); }; });
+  await wide.click('[data-testid="site-form-save"]');
+  await H.wait(200);
+  assert.equal(await wide.evaluate(() => window.__sitePosts), 0, "invalid ABN must not be posted");
+  await wide.type('[data-testid="site-form-abn"]', "x");
+  assert.equal(await wide.$eval('[data-testid="site-field-error-abn"]', (el) => el.hidden || !el.textContent), true, "editing the ABN clears the error");
+  assert.equal(await wide.$eval('[data-testid="site-form-abn"]', (el) => el.getAttribute("aria-invalid")), null);
+  await wide.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+  await wide.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+  await wide.click('[data-testid="site-add-open"]');
+  await wide.waitForSelector('[data-testid="site-add-form"]');
+  await wide.type('[data-testid="site-form-name"]', "Synthetic Preview Add");
+  await fillAbn(wide, "99702180390");
+  await wide.click('[data-testid="site-form-save"]');
+  await wide.waitForSelector('[data-testid="site-field-error-abn"]:not([hidden])', { timeout: 8000 });
+  assert.match(await wide.$eval('[data-testid="site-field-error-abn"]', (el) => el.textContent), ABN_MSG);
+  await wide.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+  await wide.waitForFunction(() => document.getElementById("modal").classList.contains("hidden"), { timeout: 8000 });
+
+  const companyVal = await wide.$eval('[data-testid="company-abn"]', (el) => el.value);
+  await wide.$eval('[data-testid="company-abn"]', (el) => { el.value = ""; el.dispatchEvent(new Event("input", { bubbles: true })); });
+  await wide.type('[data-testid="company-abn"]', "99702180390");
+  await wide.click('[data-act="company-save"]');
+  await wide.waitForSelector('[data-testid="company-field-error-abn"]:not([hidden])', { timeout: 8000 });
+  assert.match(await wide.$eval('[data-testid="company-field-error-abn"]', (el) => el.textContent), ABN_MSG);
+  assert.equal(await wide.$eval('[data-testid="company-abn"]', (el) => el.getAttribute("aria-invalid")), "true");
+  await wide.$eval('[data-testid="company-abn"]', (el, v) => { el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); }, companyVal);
+  await wide.close();
+
+  const short = await H.openPage(browser, owner, "visitors/sites", { w: 1280, h: 700, theme: "crazy", log: false });
+  await short.waitForSelector('[data-testid="sites-table"]', { timeout: 8000 });
+  await openEdit(short);
+  await fillAbn(short, "99702180390");
+  await short.click('[data-testid="site-form-save"]');
+  await short.waitForSelector('[data-testid="site-field-error-abn"]:not([hidden])', { timeout: 8000 });
+  await H.wait(400);
+  const shortLayout = await errorLayout(short);
+  assert.match(shortLayout.text, ABN_MSG);
+  assert.equal(shortLayout.insideCard, true, "on a short viewport the ABN error stays inside the dialog");
+  assert.equal(shortLayout.underField, true);
+  await short.screenshot({ path: path.join(shotDir, "edit-abn-error-1280x700.png"), fullPage: false });
+  const shortCard = await short.$(".modal-card");
+  await shortCard.screenshot({ path: path.join(shotDir, "edit-abn-error-1280x700-dialog.png") });
+  await short.close();
+
+  const server = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, theme: "crazy", log: false });
+  await server.waitForSelector('[data-testid="sites-table"]', { timeout: 8000 });
+  await openEdit(server);
+  await server.evaluate(() => {
+    const orig = window.fetch.bind(window);
+    window.fetch = async (url, opts = {}) => {
+      if (String(opts.method || "GET").toUpperCase() === "POST" && String(url).includes("/api/visitor-log/sites/")) {
+        return new Response(JSON.stringify({
+          error: "That ABN is not valid. It needs 11 digits that pass the ABN check.",
+          fields: { abn: "That ABN is not valid. It needs 11 digits that pass the ABN check." },
+        }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return orig(url, opts);
+    };
+  });
+  await fillAbn(server, "1111");
+  await server.click('[data-testid="site-form-save"]');
+  await server.waitForSelector('[data-testid="site-field-error-abn"]:not([hidden])', { timeout: 8000 });
+  const fromServer = await errorLayout(server);
+  assert.match(fromServer.text, ABN_MSG);
+  assert.equal(fromServer.insideCard, true, "a 400 from the server still shows under the ABN field");
+  assert.equal(fromServer.aria, "true");
+  assert.equal(fromServer.focused, true);
+  assert.equal(await server.$eval('[data-testid="site-form-abn"]', (el) => el.value), "1111", "the 1111 placeholder is still accepted by the client check");
+  await server.$eval('.modal-card [data-act="close-modal"]', (el) => el.click());
+  await server.close();
+});

@@ -5,6 +5,7 @@ import { countryGroupKey } from "./country.mjs";
 import { paintTickets, ticketAction, ticketShell } from "./tickets-ui.mjs";
 import { TOOL_ICONS } from "./tool-icons.mjs";
 import { anticipate, normaliseEmail, optimistic, reducedMotion, showNote, skeleton, trapTab, wireTidyInputs } from "./ux.mjs";
+import { issuesFromApiError, SITE_FORM_FIELD_ORDER, validateCompanyForm, validateDefaultContactEmail, validateSiteForm } from "./site-form-validate.mjs";
 
 const PUBLIC_FALLBACK = "https://expresshelp.site";
 const DEVICE_OPTIONS = [
@@ -73,7 +74,13 @@ async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers, credentials: "same-origin" });
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && path !== "/api/auth") { showLogin(); throw new Error("Unauthorized"); }
-  if (!r.ok) throw new Error(d.error || "Request failed (" + r.status + ")");
+  if (!r.ok) {
+    const err = new Error(d.error || "Request failed (" + r.status + ")");
+    err.status = r.status;
+    err.fields = d.fields;
+    err.errors = d.errors;
+    throw err;
+  }
   return d;
 }
 function base() { return (state.settings?.publicUrl || PUBLIC_FALLBACK).replace(/\/$/, ""); }
@@ -2021,11 +2028,13 @@ async function paintSiteDetails() {
   state.visitorSitesDefaultContactEmail = data.defaultContactEmail || "pumprepairs@libertyretail.com.au";
   box.removeAttribute("aria-busy");
   box.innerHTML = '<h3 id="company-details">Company details for VEA Retail sites</h3><p class="muted small">Liberty\'s trading name and ABN, shown on every VEA Retail site. Leave blank until you have them: blank fields are simply not shown. LOC CA and Unattended sites each have their own trading name and ABN, edited on the site.</p>'
-    + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
-    + '<label class="field"><span>ABN</span><input id="company-abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn"></label></div>'
+    + '<div class="split"><label class="field"><span>Trading name</span><input id="company-trading-name" name="tradingName" maxlength="120" placeholder="Not set yet" value="' + esc(data.company?.tradingName || "") + '" data-testid="company-trading-name"></label>'
+    + '<label class="field"><span>ABN</span><input id="company-abn" name="abn" inputmode="numeric" maxlength="14" placeholder="11 digits" value="' + esc(data.company?.abn || "") + '" data-testid="company-abn" aria-describedby="company-field-error-abn"></label></div>'
+    + '<p class="field-error" id="company-field-error-abn" data-testid="company-field-error-abn" hidden></p>'
     + '<div class="form-actions"><button class="btn primary-cta" type="button" data-act="company-save">Save company details</button></div><p id="company-note" class="small" role="status"></p>'
     + '<h3 id="default-contact-email">Default contact email</h3><p class="muted small">Shown under the phone number on the visitor sign-in and sign-out card, and under the maintenance numbers after sign-in. A site can use a different address, or hide the email. If you have not set one, visitors see pumprepairs@libertyretail.com.au.</p>'
-    + '<label class="field"><span>Contact email</span><input id="default-contact-email-input" type="email" maxlength="120" value="' + esc(state.visitorSitesDefaultContactEmail || "") + '" placeholder="pumprepairs@libertyretail.com.au" data-testid="default-contact-email"></label>'
+    + '<label class="field"><span>Contact email</span><input id="default-contact-email-input" name="email" type="email" maxlength="120" value="' + esc(state.visitorSitesDefaultContactEmail || "") + '" placeholder="pumprepairs@libertyretail.com.au" data-testid="default-contact-email" aria-describedby="contact-email-field-error"></label>'
+    + '<p class="field-error" id="contact-email-field-error" data-testid="contact-email-field-error" hidden></p>'
     + '<div class="form-actions"><button class="btn" type="button" data-act="contact-email-save" data-testid="contact-email-save">Save default contact email</button></div><p id="contact-email-note" class="small" role="status"></p>'
     + '<h3 id="picker-types">Show on visitor sign-in</h3><p class="muted small">Tick the site types visitors can pick on sign-in and sign-out. The default is Shell Express / 24Xpress (Unattended) only. Hidden and removed sites never appear, even if their type is ticked. VEA Retail and LOC CA here are the 90 retail sites, not the Unattended group.</p>'
     + '<div class="picker-type-checks" data-testid="picker-types">'
@@ -2119,30 +2128,92 @@ function paintSitesTable() {
   }).join("");
   if (empty) empty.hidden = rows.length > 0;
 }
+function siteFieldError(id) {
+  return '<p class="field-error" id="site-field-error-' + id + '" data-testid="site-field-error-' + id + '" hidden></p>';
+}
 function siteFormHtml(site) {
   const type = site?.siteType || "unattended";
   const own = usesOwnSiteDetails(type);
   const opt = (id, label) => '<option value="' + id + '"' + (type === id ? " selected" : "") + ">" + label + "</option>";
+  const described = (id) => ' aria-describedby="site-field-error-' + id + '"';
   return '<h2 id="modal-title">' + (site ? "Edit site" : "Add site") + '</h2><form data-act="' + (site ? "site-save" : "site-add") + '" data-testid="' + (site ? "site-edit-form" : "site-add-form") + '">'
     + (site ? '<input type="hidden" name="id" value="' + esc(site.id) + '">' : "")
-    + '<label class="field"><span>Site name</span><input name="name" required maxlength="120" value="' + esc(site?.name || "") + '" data-testid="site-form-name"></label>'
-    + '<label class="field"><span>Site number</span><input name="loc" maxlength="40" value="' + esc(site?.loc || "") + '" placeholder="Optional" data-testid="site-form-loc"></label>'
-    + '<label class="field"><span>Type</span><select name="siteType" id="site-form-type" data-testid="site-form-type">' + opt("unattended", "Unattended") + opt("company", "VEA Retail") + opt("commission_agent", "LOC CA") + '</select></label>'
-    + '<label class="field"><span>Address</span><input name="address" id="site-form-address" maxlength="240" value="' + esc(site?.address || "") + '" data-testid="site-form-address"></label>'
-    + '<div class="split"><label class="field"><span>Latitude</span><input name="lat" id="site-form-lat" inputmode="decimal" value="' + esc(site?.lat != null ? String(site.lat) : "") + '" data-testid="site-form-lat"></label>'
-    + '<label class="field"><span>Longitude</span><input name="lng" id="site-form-lng" inputmode="decimal" value="' + esc(site?.lng != null ? String(site.lng) : "") + '" data-testid="site-form-lng"></label></div>'
+    + '<p class="err" id="site-form-error" data-testid="site-form-error" role="alert" hidden></p>'
+    + '<label class="field"><span>Site name</span><input name="name" id="site-form-name" required maxlength="120" value="' + esc(site?.name || "") + '" data-testid="site-form-name"' + described("name") + '>' + siteFieldError("name") + '</label>'
+    + '<label class="field"><span>Site number</span><input name="loc" id="site-form-loc" maxlength="40" value="' + esc(site?.loc || "") + '" placeholder="Optional" data-testid="site-form-loc"' + described("loc") + '>' + siteFieldError("loc") + '</label>'
+    + '<label class="field"><span>Type</span><select name="siteType" id="site-form-type" data-testid="site-form-type"' + described("siteType") + '>' + opt("unattended", "Unattended") + opt("company", "VEA Retail") + opt("commission_agent", "LOC CA") + '</select>' + siteFieldError("siteType") + '</label>'
+    + '<label class="field"><span>Address</span><input name="address" id="site-form-address" maxlength="240" value="' + esc(site?.address || "") + '" data-testid="site-form-address"' + described("address") + '>' + siteFieldError("address") + '</label>'
+    + '<div class="split"><label class="field"><span>Latitude</span><input name="lat" id="site-form-lat" inputmode="decimal" value="' + esc(site?.lat != null ? String(site.lat) : "") + '" data-testid="site-form-lat"' + described("lat") + '>' + siteFieldError("lat") + '</label>'
+    + '<label class="field"><span>Longitude</span><input name="lng" id="site-form-lng" inputmode="decimal" value="' + esc(site?.lng != null ? String(site.lng) : "") + '" data-testid="site-form-lng"' + described("lng") + '>' + siteFieldError("lng") + '</label></div>'
     + '<div class="row"><button class="btn ghost" type="button" data-act="site-geocode" data-testid="site-geocode">📍 Find coordinates</button></div><p id="site-geocode-note" class="small" role="status"></p>'
-    + '<label class="field"><span>Phone</span><input name="phone" maxlength="24" value="' + esc(site?.phone || "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultPhone || "the default") + '" data-testid="site-form-phone"></label>'
-    + '<label class="field"><span>Contact email</span><input name="contactEmail" id="site-form-contact-email" type="email" maxlength="120" value="' + esc(site?.contactEmail && site.contactEmail !== "HIDE" ? site.contactEmail : "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '" data-testid="site-form-contact-email"></label>'
+    + '<label class="field"><span>Phone</span><input name="phone" id="site-form-phone" maxlength="24" value="' + esc(site?.phone || "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultPhone || "the default") + '" data-testid="site-form-phone"' + described("phone") + '>' + siteFieldError("phone") + '</label>'
+    + '<label class="field"><span>Contact email</span><input name="contactEmail" id="site-form-contact-email" type="email" maxlength="120" value="' + esc(site?.contactEmail && site.contactEmail !== "HIDE" ? site.contactEmail : "") + '" placeholder="Leave blank for ' + esc(state.visitorSitesDefaultContactEmail || "pumprepairs@libertyretail.com.au") + '" data-testid="site-form-contact-email"' + described("contactEmail") + '>' + siteFieldError("contactEmail") + '</label>'
     + '<label class="check"><input type="checkbox" name="hideContactEmail" id="site-form-hide-email" data-testid="site-form-hide-email"' + (site?.contactEmail === "HIDE" ? " checked" : "") + '> Don\'t show a contact email on this site</label>'
     + '<div id="site-own-details"' + (own ? "" : " hidden") + '><p class="muted small">This type shows its own trading name and ABN on the visitor form. Leave blank until you have them.</p>'
-    + '<div class="split"><label class="field"><span>Trading name</span><input name="tradingName" maxlength="120" value="' + esc(site?.tradingName || "") + '" data-testid="site-form-trading-name"></label>'
-    + '<label class="field"><span>ABN</span><input name="abn" inputmode="numeric" maxlength="14" value="' + esc(site?.abn || "") + '" placeholder="11 digits" data-testid="site-form-abn"></label></div></div>'
+    + '<div class="split"><label class="field"><span>Trading name</span><input name="tradingName" id="site-form-trading-name" maxlength="120" value="' + esc(site?.tradingName || "") + '" data-testid="site-form-trading-name"' + described("tradingName") + '>' + siteFieldError("tradingName") + '</label>'
+    + '<label class="field"><span>ABN</span><input name="abn" id="site-form-abn" inputmode="numeric" maxlength="14" value="' + esc(site?.abn || "") + '" placeholder="11 digits" data-testid="site-form-abn"' + described("abn") + '>' + siteFieldError("abn") + '</label></div></div>'
     + '<p id="site-central-note" class="muted small"' + (own ? " hidden" : "") + '>VEA Retail sites show the company trading name and ABN set on this page, not a per-site value.</p>'
     + '<div class="site-form-end-space"></div>'
-    + '<div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn" type="submit" data-testid="site-form-save">' + (site ? "Save site" : "Add site") + '</button></div>'
-    + '<p class="err" id="site-form-error" role="alert"></p></form>';
+    + '<div class="row end"><button class="btn ghost" type="button" data-act="close-modal">Cancel</button><button class="btn" type="submit" data-testid="site-form-save">' + (site ? "Save site" : "Add site") + '</button></div></form>';
 }
+function setControlInvalid(input, errorEl, message) {
+  if (!input) return;
+  if (message) {
+    input.setAttribute("aria-invalid", "true");
+    if (errorEl) {
+      errorEl.hidden = false;
+      errorEl.textContent = message;
+    }
+  } else {
+    input.removeAttribute("aria-invalid");
+    if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+  }
+}
+function clearSiteFormIssues(root) {
+  if (!root) return;
+  root.querySelectorAll(".field-error").forEach((el) => { el.hidden = true; el.textContent = ""; });
+  root.querySelectorAll("[aria-invalid]").forEach((el) => el.removeAttribute("aria-invalid"));
+  const summary = root.querySelector("#site-form-error");
+  if (summary) { summary.hidden = true; summary.textContent = ""; }
+}
+function showSiteFormIssues(root, issues) {
+  clearSiteFormIssues(root);
+  const fields = issues?.fields || {};
+  for (const key of Object.keys(fields)) {
+    const input = root.querySelector('[name="' + key + '"]');
+    const errorEl = root.querySelector('#site-field-error-' + key) || root.querySelector('[data-testid="site-field-error-' + key + '"]');
+    setControlInvalid(input, errorEl, fields[key]);
+  }
+  const summary = root.querySelector("#site-form-error");
+  if (summary && issues?.summary) {
+    summary.hidden = false;
+    summary.textContent = issues.summary;
+  }
+  const firstKey = SITE_FORM_FIELD_ORDER.find((k) => fields[k]);
+  const first = firstKey ? root.querySelector('[name="' + firstKey + '"]') : (issues?.summary ? summary : null);
+  if (first) {
+    first.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    if (typeof first.focus === "function") first.focus({ preventScroll: true });
+  }
+}
+function clearFieldIssue(input) {
+  if (!(input instanceof HTMLElement)) return;
+  const name = input.getAttribute("name") || (input.id === "company-abn" ? "abn" : input.id === "default-contact-email-input" ? "email" : "");
+  if (name === "hideContactEmail") {
+    const form = input.closest("form");
+    const email = form && form.querySelector('[name="contactEmail"]');
+    if (email) clearFieldIssue(email);
+    return;
+  }
+  if (!name) return;
+  input.removeAttribute("aria-invalid");
+  const root = input.closest("form") || input.closest("#site-details-body") || document;
+  const err = input.id === "company-abn" ? document.getElementById("company-field-error-abn")
+    : input.id === "default-contact-email-input" ? document.getElementById("contact-email-field-error")
+    : (root.querySelector("#site-field-error-" + name) || root.querySelector('[data-testid="site-field-error-' + name + '"]'));
+  if (err) { err.hidden = true; err.textContent = ""; }
+}
+
 function wireSiteFormType() {
   const sel = document.getElementById("site-form-type");
   if (!sel) return;
@@ -2562,7 +2633,25 @@ async function visitorAction(button) {
   }
   if (act === "company-save") {
     const note = document.getElementById("company-note");
-    const body = await api("/api/visitor-log/company", { method: "POST", body: JSON.stringify({ tradingName: document.getElementById("company-trading-name")?.value || "", abn: document.getElementById("company-abn")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
+    const abnInput = document.getElementById("company-abn");
+    const abnErr = document.getElementById("company-field-error-abn");
+    const payload = { tradingName: document.getElementById("company-trading-name")?.value || "", abn: abnInput?.value || "" };
+    const local = validateCompanyForm(payload);
+    if (Object.keys(local.fields).length) {
+      setControlInvalid(abnInput, abnErr, local.fields.abn || "");
+      if (note) note.textContent = "";
+      if (abnInput) { abnInput.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" }); abnInput.focus({ preventScroll: true }); }
+      return;
+    }
+    setControlInvalid(abnInput, abnErr, "");
+    const body = await api("/api/visitor-log/company", { method: "POST", body: JSON.stringify(payload) }).catch((err) => {
+      const issues = issuesFromApiError(err);
+      setControlInvalid(abnInput, abnErr, issues.fields.abn || "");
+      if (issues.summary) showNote(note, issues.summary, "error");
+      else if (note) note.textContent = "";
+      if (issues.fields.abn && abnInput) { abnInput.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" }); abnInput.focus({ preventScroll: true }); }
+      return null;
+    });
     if (!body) return;
     document.getElementById("company-abn").value = body.abn || "";
     showNote(note, "Saved. VEA Retail sites now show " + ([body.tradingName, body.abn ? "ABN " + body.abn : ""].filter(Boolean).join(", ") || "no trading name or ABN") + ".", "ok");
@@ -2571,10 +2660,27 @@ async function visitorAction(button) {
   }
   if (act === "contact-email-save") {
     const note = document.getElementById("contact-email-note");
-    const body = await api("/api/visitor-log/contact-email", { method: "POST", body: JSON.stringify({ email: document.getElementById("default-contact-email-input")?.value || "" }) }).catch((err) => { showNote(note, err.message, "error"); return null; });
+    const input = document.getElementById("default-contact-email-input");
+    const emailErr = document.getElementById("contact-email-field-error");
+    const email = input?.value || "";
+    const local = validateDefaultContactEmail(email);
+    if (Object.keys(local.fields).length) {
+      setControlInvalid(input, emailErr, local.fields.email || "");
+      if (note) note.textContent = "";
+      if (input) { input.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" }); input.focus({ preventScroll: true }); }
+      return;
+    }
+    setControlInvalid(input, emailErr, "");
+    const body = await api("/api/visitor-log/contact-email", { method: "POST", body: JSON.stringify({ email }) }).catch((err) => {
+      const issues = issuesFromApiError(err);
+      setControlInvalid(input, emailErr, issues.fields.email || "");
+      if (issues.summary) showNote(note, issues.summary, "error");
+      else if (note) note.textContent = "";
+      if (issues.fields.email && input) { input.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" }); input.focus({ preventScroll: true }); }
+      return null;
+    });
     if (!body) return;
     state.visitorSitesDefaultContactEmail = body.email || "pumprepairs@libertyretail.com.au";
-    const input = document.getElementById("default-contact-email-input");
     if (input) input.value = state.visitorSitesDefaultContactEmail;
     showNote(note, "Saved. Visitors will see " + (body.email || "pumprepairs@libertyretail.com.au") + " unless a site has its own address.", "ok");
     toast("Default contact email saved");
@@ -2664,16 +2770,23 @@ async function visitorAction(button) {
   }
   if (act === "site-add" || act === "site-save") {
     const form = button.closest("form") || document.querySelector("#modal form");
-    const err = document.getElementById("site-form-error");
     if (!form) return;
     const id = form.querySelector('[name="id"]')?.value;
     const path = act === "site-save" && id ? "/api/visitor-log/sites/" + encodeURIComponent(id) : "/api/visitor-log/sites";
+    const payload = siteFormBody(form);
+    const local = validateSiteForm(payload);
+    if (Object.keys(local.fields).length) {
+      showSiteFormIssues(form, local);
+      return;
+    }
     try {
-      await api(path, { method: "POST", body: JSON.stringify(siteFormBody(form)) });
+      await api(path, { method: "POST", body: JSON.stringify(payload) });
       closeModal();
       toast(act === "site-save" ? "Site saved" : "Site added");
       await paintSiteDetails();
-    } catch (e) { if (err) err.textContent = e.message; else toast.error(e.message); }
+    } catch (e) {
+      showSiteFormIssues(form, issuesFromApiError(e));
+    }
     return;
   }
   if (act === "site-hide" || act === "site-unhide") {
@@ -3481,9 +3594,15 @@ document.body.addEventListener("submit", (e) => {
 });
 document.body.addEventListener("input", (e) => {
   if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
+  if (e.target.closest && (e.target.closest("[data-testid=site-edit-form]") || e.target.closest("[data-testid=site-add-form]") || e.target.id === "company-abn" || e.target.id === "company-trading-name" || e.target.id === "default-contact-email-input")) {
+    clearFieldIssue(e.target);
+  }
 });
 document.body.addEventListener("change", (e) => {
   if (e.target.closest && e.target.closest("#asset-form")) paintAsset();
+  if (e.target.closest && (e.target.closest("[data-testid=site-edit-form]") || e.target.closest("[data-testid=site-add-form]"))) {
+    clearFieldIssue(e.target);
+  }
   if (e.target.id === "compare-select") {
     state.compareMode = e.target.value === "prev" ? "prev" : e.target.value === "code" ? "code" : "none";
     if (state.compareMode !== "code") { state.compareSlug = ""; state.compareReady = false; }
