@@ -21,6 +21,22 @@ export const PICKER_SITE_TYPE = "unattended";
 export const SITE_TYPE_LABEL = { company: "VEA Retail", commission_agent: "LOC CA", unattended: "Unattended" };
 /** Only VEA Retail (and untyped sites, which count as VEA Retail) use the central trading name and ABN. LOC CA and Unattended use their own. */
 export const usesCompanyDetails = (type) => type !== "commission_agent" && type !== "unattended";
+/** Admin label for how a site is run. Separate from site type, which still drives the visitor sign-in list. */
+export const OPERATING_MODELS = ["viva", "loc_ca"];
+export const OPERATING_MODEL_LABEL = { viva: "VIVA", loc_ca: "LOC CA" };
+/** VIVA, LOC CA, or "" for none. Spreadsheet "CA" and "VIVA" are accepted. CLEAR/NONE empty it. Invalid values are null. */
+export function normaliseOperatingModel(value) {
+  const text = unguardCsvCell(String(value ?? "")).trim();
+  if (!text) return "";
+  const upper = text.toUpperCase();
+  if (["CLEAR", "NONE", "BLANK", "UNTAGGED", "UNSET", "-"].includes(upper)) return "";
+  const key = upper.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  if (key === "viva" || key === "viva_energy") return "viva";
+  if (key === "loc_ca" || key === "locca" || key === "ca") return "loc_ca";
+  return null;
+}
+export const operatingModelLabel = (model) => OPERATING_MODEL_LABEL[model] || "";
+export const OPERATING_MODEL_ERROR = "Operating model must be VIVA, LOC CA, or blank.";
 export const DEFAULT_SITE_PHONE = "03 9113 7191";
 /** Shown under the phone on the visitor site card when a site has no override. */
 export const DEFAULT_CONTACT_EMAIL = "pumprepairs@libertyretail.com.au";
@@ -30,7 +46,7 @@ export const CONTACT_EMAIL_HIDDEN = "HIDE";
 export const COMPANY_KEY = "company-details";
 export const PICKER_TYPES_KEY = "visitor-picker-types";
 export const DEFAULT_PICKER_TYPES = ["unattended"];
-export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "contact_email", "address", "lat", "lng"];
+export const CSV_COLUMNS = ["loc", "site_name", "site_type", "trading_name", "abn", "phone", "contact_email", "address", "lat", "lng", "operating_model"];
 const SITE_ID = /^s[a-f0-9]{8}$/;
 const CACHE_MS = 60 * 1000;
 const GEOCODE_UA = "ExpressHelp-site-manager/1.0 (https://expresshelp.site; admin address geocode only; no visitor data)";
@@ -146,6 +162,7 @@ export function siteDetailFields(site) {
     address: clean(site?.address, 240),
     lat: coords ? coords.lat : null,
     lng: coords ? coords.lng : null,
+    operatingModel: normaliseOperatingModel(site?.operatingModel) || "",
   };
 }
 
@@ -348,6 +365,7 @@ const HEADER_ALIASES = {
   address: ["address", "physical_address", "site_address"],
   lat: ["lat", "latitude"],
   lng: ["lng", "lon", "long", "longitude"],
+  operating_model: ["operating_model", "operatingmodel", "operating_model_tag", "model", "op_model", "site_operating_model"],
 };
 function headerKey(cell) {
   const k = String(cell || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
@@ -433,6 +451,12 @@ export function planDetailImport(records, csvText) {
         if (!coords) errors.push("lat/lng must both be set to a point in Australia (for example -37.8136, 144.9631).");
         else { set("lat", coords.lat); set("lng", coords.lng); }
       }
+    }
+    const modelRaw = get("operating_model");
+    if (modelRaw) {
+      const operatingModel = modelRaw.toUpperCase() === CLEAR ? "" : normaliseOperatingModel(modelRaw);
+      if (operatingModel === null) errors.push("operating_model must be VIVA, LOC CA, or CLEAR.");
+      else set("operatingModel", operatingModel, "operating_model");
     }
     const nextType = "siteType" in patch ? patch.siteType : current.siteType;
     const nextTn = "tradingName" in patch ? patch.tradingName : current.tradingName;
@@ -561,16 +585,40 @@ export function csvTypeBucket(site) {
   return siteDetailFields(site).siteType || "company";
 }
 
+/**
+ * Operating models to include in the site-details CSV. Missing/undefined means every model (including none).
+ * Accepts a string, comma-separated list, or array; labels such as "VIVA", "LOC CA" and "None" are allowed.
+ */
+export function parseCsvModels(raw) {
+  if (raw == null) return { models: null };
+  const parts = (Array.isArray(raw) ? raw : [raw]).flatMap((value) => String(value).split(/[,+]/)).map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return { error: "Tick at least one operating model: VIVA, LOC CA or None." };
+  const models = [];
+  for (const part of parts) {
+    if (["NONE", "BLANK", "UNTAGGED", "UNSET"].includes(part.toUpperCase())) {
+      if (!models.includes("")) models.push("");
+      continue;
+    }
+    const model = normaliseOperatingModel(part);
+    if (model === null || model === "") return { error: "Operating model \"" + part + "\" is not valid. Use VIVA, LOC CA or None." };
+    if (!models.includes(model)) models.push(model);
+  }
+  return { models };
+}
+
 /** Current site list as the import CSV, so it can be filled in and brought back. Hidden sites are included; removed and held sites are not. */
-export async function detailCsv(types) {
+export async function detailCsv(types, models) {
   const parsed = parseCsvTypes(types === undefined ? undefined : types);
   if (parsed.error) return parsed;
+  const parsedModels = parseCsvModels(models === undefined ? undefined : models);
+  if (parsedModels.error) return parsedModels;
   const allow = new Set(parsed.types);
-  const records = (await allSiteRecords()).filter((r) => !r.hold && !r.visitorArchived && allow.has(csvTypeBucket(r))).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const allowModels = parsedModels.models == null ? null : new Set(parsedModels.models);
+  const records = (await allSiteRecords()).filter((r) => !r.hold && !r.visitorArchived && allow.has(csvTypeBucket(r)) && (!allowModels || allowModels.has(siteDetailFields(r).operatingModel || ""))).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const lines = [CSV_COLUMNS.join(",")];
   for (const r of records) {
     const f = siteDetailFields(r);
-    lines.push([r.loc || "", r.name, f.siteType, f.tradingName, f.abn, f.phone, f.contactEmail || "", f.address, f.lat ?? "", f.lng ?? ""].map(csvCell).join(","));
+    lines.push([r.loc || "", r.name, f.siteType, f.tradingName, f.abn, f.phone, f.contactEmail || "", f.address, f.lat ?? "", f.lng ?? "", operatingModelLabel(f.operatingModel)].map(csvCell).join(","));
   }
   return lines.join("\n") + "\n";
 }
@@ -606,6 +654,9 @@ export async function adminSiteDetails({ readFirstMaintenance } = {}) {
     withCoordinates: active.filter((s) => s.lat != null).length,
     phoneOverrides: active.filter((s) => s.phone).length,
     emailOverrides: active.filter((s) => s.contactEmail).length,
+    viva: active.filter((s) => s.operatingModel === "viva").length,
+    locCa: active.filter((s) => s.operatingModel === "loc_ca").length,
+    untagged: active.filter((s) => !s.operatingModel).length,
     hidden: sites.filter((s) => s.visibility === "hidden").length,
     removed: sites.filter((s) => s.visibility === "removed").length,
     held: sites.filter((s) => s.visibility === "held").length,
@@ -658,7 +709,14 @@ export function parseSiteInput(body) {
     if (!coords) errors.push("lat/lng must both be set to a point in Australia (for example -37.8136, 144.9631).");
     else { lat = coords.lat; lng = coords.lng; }
   }
-  return { errors, name, loc, fields: { siteType, tradingName, abn, phone, contactEmail, address, lat, lng } };
+  const fields = { siteType, tradingName, abn, phone, contactEmail, address, lat, lng };
+  const modelRaw = body && (body.operatingModel != null ? body.operatingModel : body.operating_model);
+  if (body && (Object.prototype.hasOwnProperty.call(body, "operatingModel") || Object.prototype.hasOwnProperty.call(body, "operating_model"))) {
+    const operatingModel = normaliseOperatingModel(modelRaw);
+    if (operatingModel === null) errors.push(OPERATING_MODEL_ERROR);
+    else fields.operatingModel = operatingModel || "";
+  }
+  return { errors, name, loc, fields };
 }
 
 
@@ -675,6 +733,7 @@ export function fieldsFromSiteErrors(errors) {
     else if (/site name is required|already uses that name|name already exists/i.test(msg)) fields.name = msg;
     else if (/already uses that site number|site number already exists|site number was taken/i.test(msg)) fields.loc = msg;
     else if (/Type must be|Choose a site type/i.test(msg)) fields.siteType = msg;
+    else if (/Operating model must be/i.test(msg)) fields.operatingModel = msg;
   }
   return fields;
 }
@@ -771,6 +830,22 @@ export async function updateVisitorSite(id, body) {
   if (gateError) return clashResult(gateError);
   const next = applyFields(current, parsed);
   await store.setJSON(current.id, next);
+  cache = null;
+  return { status: 200, body: await viewed(next) };
+}
+
+/** Change only the operating model tag. Other site fields are left as they are. */
+export async function updateVisitorOperatingModel(id, body) {
+  const current = await loadManagedSite(id);
+  if (!current) return { status: 404, error: "That site was not found." };
+  if (current.hold) return { status: 400, error: "Held sites are managed in the head-office site import, not here." };
+  const raw = body?.operatingModel != null ? body.operatingModel : body?.operating_model;
+  const model = normaliseOperatingModel(raw);
+  if (model === null) return { status: 400, error: OPERATING_MODEL_ERROR, fields: { operatingModel: OPERATING_MODEL_ERROR } };
+  const next = { ...current, detailsUpdatedAt: new Date(clock()).toISOString() };
+  if (model) next.operatingModel = model;
+  else delete next.operatingModel;
+  await sitesStore().setJSON(current.id, next);
   cache = null;
   return { status: 200, body: await viewed(next) };
 }

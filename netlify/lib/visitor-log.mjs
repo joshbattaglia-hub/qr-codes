@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, createVisitorSite, detailCsv, geocodeSiteAddress, previewDetailImport, publicSiteDirectory, readCompany, readDefaultContactEmail, saveCompany, saveDefaultContactEmail, savePickerTypes, setSiteArchived, setSiteHidden, siteLabel, siteSnapshot, updateVisitorSite, visitSiteType } from "./site-details.mjs";
+import { adminSiteDetails, agentKey, agentLabel, applyDetailImport, createVisitorSite, detailCsv, geocodeSiteAddress, previewDetailImport, publicSiteDirectory, readCompany, readDefaultContactEmail, saveCompany, saveDefaultContactEmail, savePickerTypes, setSiteArchived, setSiteHidden, siteLabel, siteSnapshot, updateVisitorOperatingModel, updateVisitorSite, visitSiteType } from "./site-details.mjs";
 import { conditionalIncrement, env, publicBase, rateStore, visitorStore } from "./lib.mjs";
 import { deliver } from "./mail.mjs";
 import { reencodeVisitorPhoto } from "./visitor-image.mjs";
@@ -1031,9 +1031,9 @@ export async function importSiteDetails(actor, body) {
   return { status: 200, body: { dryRun: !apply, written: report.written || 0, summary: report.summary, ignoredColumns: report.ignoredColumns, rows: report.plan.map(({ patch, ...row }) => row) } };
 }
 
-export async function siteDetailCsv(actor, types) {
+export async function siteDetailCsv(actor, types, models) {
   if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
-  const csv = await detailCsv(types);
+  const csv = await detailCsv(types, models);
   if (csv && typeof csv === "object" && csv.error) return { status: 400, error: csv.error };
   return { status: 200, body: csv };
 }
@@ -1056,6 +1056,13 @@ export async function updateManagedSite(actor, id, body) {
   if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
   const result = await updateVisitorSite(id, body);
   if (result.status === 200) await audit("site-update", actor.id || actor.email || "", "", result.body.id + " " + (result.body.name || ""));
+  return result;
+}
+
+export async function updateManagedOperatingModel(actor, id, body) {
+  if (!(await visitorSettingsCapability(actor))) return { status: 403, error: "Visitor log access is not granted." };
+  const result = await updateVisitorOperatingModel(id, body);
+  if (result.status === 200) await audit("site-operating-model", actor.id || actor.email || "", "", result.body.id + " " + (result.body.name || "") + " " + (result.body.operatingModel || "none"));
   return result;
 }
 

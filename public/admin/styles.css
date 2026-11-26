@@ -539,6 +539,16 @@ dialog::backdrop{background:var(--modal-back)}
 #site-form-error{margin:0 0 12px}
 #site-form-error:empty,#site-form-error[hidden]{display:none;min-height:0;margin:0}
 #company-field-error-abn{margin:0 0 8px}
+
+/* Operating model tags: label text is always on the tag, with contrast against the colour. */
+.op-tag{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.04em;line-height:1.2;white-space:nowrap;vertical-align:middle}
+.op-tag-viva{background:linear-gradient(90deg,#0a316b 0%,#1d5fc9 50%,#6eb0ff 100%);color:#fff;text-shadow:0 1px 1px rgba(0,20,50,.55)}
+.op-tag-loc-ca{background:linear-gradient(90deg,#c8102e 0 8px,#fff 8px 16px,#003087 16px 24px,#f4f6fb 24px 100%);color:#0b1b3a;border:1px solid #c5c9d4;padding-left:28px;text-shadow:none}
+.op-tag-none{display:inline-block;color:var(--muted);font-size:12px;font-weight:600}
+.op-model-cell{display:flex;align-items:center;gap:8px;min-width:9.5rem;flex-wrap:wrap}
+.op-model-select{width:auto;min-width:6.5rem;max-width:8.5rem;padding:4px 8px;font-weight:600;font-size:13px}
+.op-model-preview-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+html[data-theme="dark"] .op-tag-loc-ca{border-color:#3a4150}
 .modal-card:has([data-testid="site-add-form"], [data-testid="site-edit-form"]){width:min(640px,calc(100% - 24px))}
 .modal-card .site-form-end-space{height:8px;flex:0 0 auto}
 .modal-card [data-testid="site-add-form"] #site-own-details,

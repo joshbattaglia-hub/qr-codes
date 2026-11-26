@@ -52,3 +52,12 @@ test("issuesFromApiError puts field messages inline and leaves 403-style notes i
   assert.equal(clash.summary, "");
   assert.deepEqual(v.fieldsFromMessages([ABN_MSG]), sd.fieldsFromSiteErrors([ABN_MSG]));
 });
+
+test("operating model values are accepted or rejected the same way on the client", () => {
+  assert.equal(v.normaliseOperatingModel("VIVA"), "viva");
+  assert.equal(v.normaliseOperatingModel("LOC CA"), "loc_ca");
+  assert.equal(v.normaliseOperatingModel(""), "");
+  assert.equal(v.normaliseOperatingModel("nope"), null);
+  assert.equal(v.validateSiteForm({ name: "Synthetic Site", siteType: "unattended", operatingModel: "viva" }).fields.operatingModel, undefined);
+  assert.equal(v.validateSiteForm({ name: "Synthetic Site", siteType: "unattended", operatingModel: "nope" }).fields.operatingModel, v.OPERATING_MODEL_ERROR);
+});
