@@ -773,9 +773,10 @@ function listHtml(kind) {
   const body = rows.map((c) => {
     const href = (qr ? "qrcodes/" : "links/") + encodeURIComponent(c.slug);
     const count = qr ? c.scans || 0 : c.clicks || 0;
-    const title = "<strong>" + esc(c.name || c.slug) + "</strong><div class='muted small'>/r/" + esc(c.slug) + "</div>";
+    const pathLabel = c.protected ? String(c.url || "").replace(/^https?:\/\/[^/]+/, "") || c.slug : "/r/" + c.slug;
+    const title = "<strong>" + esc(c.name || c.slug) + "</strong><div class='muted small'>" + esc(pathLabel) + "</div>";
     const cells = qr
-      ? "<td><span class='mini'>" + qrSvg(c.slug, styleOf(c), "") + "</span></td><td>" + title + "</td>"
+      ? "<td>" + (c.protected ? "<span class='muted small'>Printed</span>" : "<span class='mini'>" + qrSvg(c.slug, styleOf(c), "") + "</span>") + "</td><td>" + title + "</td>"
       : "<td>" + title + "</td><td class='break'>" + esc(shortUrl(c.slug)) + "</td>";
     return '<tr class="clickable" data-go="' + href + '">' + cells + "<td class='break'>" + esc(c.url) + "</td><td class='num'>" + num(count) + "</td><td>" + tagsHtml(c.tags, 3) + "</td><td>" + esc(formatCreated(c.created)) + "</td><td>" + statusBadge(c) + "</td></tr>";
   }).join("");
@@ -783,25 +784,34 @@ function listHtml(kind) {
     '<div class="card table-wrap">' + (rows.length ? "<table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table>" : '<div class="empty"><div class="empty-mark">L</div><h2>Nothing here yet</h2><p class="muted">' + (state.search ? "No matches for that search." : "Create one from Home.") + "</p></div>") + "</div>";
 }
 function pageHead(code, qr) {
-  const dl = qr
+  const locked = !!code.protected;
+  const dl = locked
+    ? '<button type="button" data-act="dl-csv">Analytics CSV</button>'
+    : qr
     ? '<button type="button" data-act="dl-png">PNG</button><button type="button" data-act="dl-svg">SVG</button><button type="button" data-act="dl-csv">Analytics CSV</button>'
     : '<button type="button" data-act="dl-csv">Analytics CSV</button><button type="button" data-act="copy-link">Copy short link</button>';
+  const more = locked
+    ? ""
+    : '<div class="menu-wrap"><button class="icon-btn" type="button" data-act="toggle-menu" data-menu="more" aria-label="More">⋯</button><div id="menu-more" class="pop menu hidden">' +
+      '<button type="button" data-act="edit">Edit destination</button><button type="button" data-act="copy-link">Copy short link</button>' +
+      '<button type="button" data-act="pause">' + (code.paused ? "Resume" : "Pause") + '</button><button type="button" data-act="del">Delete</button></div></div>';
   return '<div class="page-head"><button class="icon-btn" type="button" data-go="' + (qr ? "qrcodes" : "links") + '" aria-label="Back">←</button>' +
     "<h1>" + esc(code.name || code.slug) + " " + (code.paused ? '<span class="badge">Paused</span>' : "") + "</h1>" +
-    '<div class="menu-wrap"><button class="icon-btn" type="button" data-act="toggle-menu" data-menu="more" aria-label="More">⋯</button><div id="menu-more" class="pop menu hidden">' +
-    '<button type="button" data-act="edit">Edit destination</button><button type="button" data-act="copy-link">Copy short link</button>' +
-    '<button type="button" data-act="pause">' + (code.paused ? "Resume" : "Pause") + '</button><button type="button" data-act="del">Delete</button></div></div>' +
+    more +
     '<div class="menu-wrap"><button class="btn ghost" type="button" data-act="toggle-menu" data-menu="download">Download ▾</button><div id="menu-download" class="pop menu hidden">' + dl + "</div></div></div>";
 }
 function detailsCard(code, qr) {
+  const locked = !!code.protected;
   const tags = (code.tags || []).length
-    ? (code.tags || []).map((t) => '<span class="chip">' + esc(t) + ' <button type="button" data-act="del-tag" data-tag="' + esc(t) + '" aria-label="Remove tag">×</button></span>').join("")
+    ? (code.tags || []).map((t) => '<span class="chip">' + esc(t) + (locked ? "" : ' <button type="button" data-act="del-tag" data-tag="' + esc(t) + '" aria-label="Remove tag">×</button>') + '</span>').join("")
     : '<span class="muted">No tags</span>';
   const rows = qr
     ? kv("Scan destination", "Website / URL") + kv("Destination", '<a href="' + esc(code.url) + '" target="_blank" rel="noreferrer">' + esc(code.url) + "</a>")
     : kv("Short link", '<a href="' + esc(shortUrl(code.slug)) + '" target="_blank" rel="noreferrer">' + esc(shortUrl(code.slug)) + "</a>") + kv("Destination", '<a href="' + esc(code.url) + '" target="_blank" rel="noreferrer">' + esc(code.url) + "</a>");
-  return '<div class="card" data-testid="' + (qr ? "qr-details" : "link-details") + '"><div class="card-head"><h2>Details</h2><button class="text-btn" type="button" data-act="edit">Edit</button></div><div class="kv">' +
-    rows + '<div class="k">Tags</div><div><div class="chips">' + tags + '</div><form data-act="add-tag" class="row" style="margin-top:8px"><input name="tag" type="text" maxlength="40" placeholder="Add a tag" aria-label="Add a tag" style="flex:1;border:1px solid var(--input-line);border-radius:8px;padding:8px 10px"><button class="btn ghost" type="submit">Add</button></form></div>' +
+  return '<div class="card" data-testid="' + (qr ? "qr-details" : "link-details") + '"><div class="card-head"><h2>Details</h2>' + (locked ? "" : '<button class="text-btn" type="button" data-act="edit">Edit</button>') + '</div>' +
+    (locked ? '<p class="muted small" data-testid="visit-scan-locked">This counts page opens of the printed visitor QR. It cannot be deleted, and the printed codes stay on this address.</p>' : "") +
+    '<div class="kv">' +
+    rows + '<div class="k">Tags</div><div><div class="chips">' + tags + '</div>' + (locked ? "" : '<form data-act="add-tag" class="row" style="margin-top:8px"><input name="tag" type="text" maxlength="40" placeholder="Add a tag" aria-label="Add a tag" style="flex:1;border:1px solid var(--input-line);border-radius:8px;padding:8px 10px"><button class="btn ghost" type="submit">Add</button></form>') + '</div>' +
     kv("Site", esc(siteName(code.siteId))) +
     kv("Link check", esc(code.health?.status || state.detail?.health?.status || "unchecked") + (code.health?.checkedAt || state.detail?.health?.checkedAt ? " · " + esc(code.health?.checkedAt || state.detail?.health?.checkedAt) : "")) +
     kv("Created on", esc(formatCreated(code.created))) +
@@ -811,6 +821,10 @@ function detailsCard(code, qr) {
 function kv(k, v) { return '<div class="k">' + k + "</div><div class='break'>" + v + "</div>"; }
 function qrSide(code) {
   const logo = code.logoData || "";
+  if (code.protected) {
+    const path = String(code.url || "").replace(/^https?:\/\/[^/]+/, "") || code.slug;
+    return '<div class="card" data-testid="qr-preview"><p class="muted small">Printed QR destination</p><div class="muted small break" style="margin-top:8px">' + esc(path) + "</div></div>";
+  }
   return '<div class="card" data-testid="qr-preview"><div class="qr-stage">' + qrSvg(code.slug, styleOf(code), logo) + "</div>" +
     '<div class="muted small break" style="margin-top:8px">' + esc(shortUrl(code.slug)) + "</div>" +
     '<button class="text-btn" type="button" data-act="customize">Customize</button>' +
@@ -829,6 +843,7 @@ function linkSide(code) {
   return '<div class="card empty"><div class="empty-mark">L</div><h2>No QR code yet</h2><p class="muted">Create one that points at this same short link.</p><button class="btn" type="button" data-act="make-qr">Create QR code</button><button class="btn ghost wide" type="button" data-act="check-link">Check destination</button></div>';
 }
 function routingCard(code) {
+  if (code.protected) return "";
   const rules = code.rules || [];
   const list = rules.map((rule, i) => {
     const label = rule.type === "device" ? (DEVICE_OPTIONS.find((d) => d[0] === rule.value)?.[1] || rule.value) : rule.value;
@@ -2056,7 +2071,11 @@ async function paintVisitor() {
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   if (location) params.set("location", location);
-  const listed = await fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json());
+  const period = state.visitorScanPeriod || "today";
+  const [listed, scanStats] = await Promise.all([
+    fetch("/api/visitor-log/visits?" + params.toString(), { credentials: "same-origin" }).then((res) => res.json()),
+    fetch("/api/visitor-log/scan-stats?period=" + encodeURIComponent(period), { credentials: "same-origin" }).then((res) => res.json()).catch(() => null),
+  ]);
   const rows = (listed.visits || []).map((visit) => {
     const notes = [visit.issues ? "In: " + visit.issues : "", visit.signOutIssues ? "Out: " + visit.signOutIssues : ""].filter(Boolean).join(" · ");
     const state = visit.signedOutAt ? "Signed out" : "On site";
@@ -2073,9 +2092,27 @@ async function paintVisitor() {
       + '<td>' + (visit.cardReturned ? "Yes" : "No") + '</td>'
       + '<td>' + photo + (visit.onSite && !viewOnly ? ' <button class="btn ghost btn-xs" type="button" data-act="visitor-recover" data-id="' + esc(visit.id) + '">Receipt</button>' : "") + '</td></tr>';
   }).join("");
+  const scanNote = (scanStats && scanStats.note) || "This counts page opens, which can include refreshes.";
+  const rateText = (row) => row && row.rate == null ? "—" : String(row.rate) + "% completed";
+  const scanRow = (row, testid) => {
+    if (!row) return "";
+    return '<div data-testid="' + testid + '"><h3>' + esc(row.name) + '</h3><p class="visitor-scan-metric">' + num(row.scans) + ' <span>scans</span> · ' + num(row.completed) + ' <span>completed</span> · ' + esc(rateText(row)) + "</p></div>";
+  };
+  const periodBtns = [["today", "Today"], ["7", "7 days"], ["30", "30 days"]].map((pair) => {
+    const on = period === pair[0];
+    return '<button type="button" class="' + (on ? "on" : "") + '" data-act="visitor-scan-period" data-period="' + pair[0] + '" aria-pressed="' + (on ? "true" : "false") + '">' + pair[1] + "</button>";
+  }).join("");
+  const range = scanStats && scanStats.from && scanStats.to
+    ? (scanStats.from === scanStats.to ? scanStats.from : scanStats.from + " – " + scanStats.to)
+    : "";
+  const scanCard = '<section class="card visitor-scan-stats" data-testid="visitor-scan-stats"><div class="card-head"><h2>Scans and completed visits</h2><div class="seg visitor-scan-period" role="group" aria-label="Scan period">' + periodBtns + "</div></div>"
+    + (range ? '<p class="muted small" data-testid="visitor-scan-range">' + esc(range) + "</p>" : "")
+    + '<div class="visitor-scan-grid">' + scanRow(scanStats && scanStats.signIn, "visitor-scan-sign-in") + scanRow(scanStats && scanStats.signOut, "visitor-scan-sign-out") + "</div>"
+    + '<p class="muted small" data-testid="visitor-scan-note">' + esc(scanNote) + "</p></section>";
   box.innerHTML = visitorTabs("logs", !canSettings)
     + (vrole === "maintenance" ? '<p class="muted" data-testid="visitor-view-only">View-only. You can open visits and ID photos. Every ID photo view is logged.</p>' : "")
     + (noPhotos ? '<p class="muted" data-testid="visitor-view-only">View-only, without ID photos.</p>' : "")
+    + scanCard
     + '<div class="asset-dims visitor-filters"><label class="field"><span>On site or history</span><select id="visitor-status"><option value="all">All</option><option value="in">On site</option><option value="out">Signed out</option></select></label>'
     + '<label class="field"><span>From</span><input id="visitor-from" type="date" value="' + esc(from) + '"></label>'
     + '<label class="field"><span>To</span><input id="visitor-to" type="date" value="' + esc(to) + '"></label>'
@@ -2640,6 +2677,10 @@ async function paintVisitorRecord(id) {
 async function visitorAction(button) {
   const act = button.dataset.act;
   if (act === "visitor-filter") return paintVisitor();
+  if (act === "visitor-scan-period") {
+    state.visitorScanPeriod = button.dataset.period || "today";
+    return paintVisitor();
+  }
   if (act === "visitor-export") {
     const response = await fetch("/api/visitor-log/export", { credentials: "same-origin" });
     if (!response.ok) throw new Error("Export was not available");
@@ -3619,6 +3660,10 @@ async function handleAction(el) {
   if (act === "dl-workspace-csv") { downloadWorkspaceCsv(); return; }
   const code = state.detail?.code;
   if (!code && act !== "pick-compare") return;
+  if ((act === "del" || act === "confirm-del" || act === "pause" || act === "edit" || act === "make-link" || act === "customize" || act === "code-poster") && code && code.protected) {
+    toast("This visitor scan entry can't be changed or deleted.");
+    return;
+  }
   if (act === "edit") return openEdit();
   if (act === "customize") return openCustomize();
   if (act === "copy-link") return copyText(shortUrl(code.slug));

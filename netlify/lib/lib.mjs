@@ -1,6 +1,7 @@
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 import { countryGroupKey, countryWriteKey, groupCountryMap } from "../../public/admin/country.mjs";
+import { isVisitScanSlug } from "./visit-scan-paths.mjs";
 
 /** Product calendar for scan buckets. Matches the Liberty / expresshelp.site audience. */
 export const METRICS_TZ = "Australia/Sydney";
@@ -458,6 +459,7 @@ export function normalizeCode(c) {
     logoData: typeof c.logoData === "string" ? c.logoData : "",
     rules: Array.isArray(c.rules) ? c.rules : [],
     siteId: typeof c.siteId === "string" ? c.siteId : "",
+    protected: isVisitScanSlug(c.slug),
   };
 }
 
