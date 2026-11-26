@@ -266,6 +266,14 @@ tr.clickable:hover{background:var(--surface-hover)}
 .visitor-state{font-weight:600}.visitor-state.in{color:var(--state-in)}.visitor-state.out{color:var(--state-out)}
 .btn.btn-xs{padding:2px 8px;min-height:0;font-size:12px}
 .visitor-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.visitor-scan-stats{margin:0 0 16px}
+.visitor-scan-stats .card-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.visitor-scan-period button{min-height:44px;min-width:44px}
+.visitor-scan-grid{display:grid;grid-template-columns:1fr;gap:12px;margin:8px 0}
+@media (min-width:720px){.visitor-scan-grid{grid-template-columns:1fr 1fr}}
+.visitor-scan-grid h3{margin:0 0 4px;font-size:15px}
+.visitor-scan-metric{margin:0;font-size:18px;font-weight:650}
+.visitor-scan-metric span{font-weight:500;font-size:14px}
 .visitor-filters .field{margin:0}
 @media (max-width:640px){.visitor-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .sites-filters{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:8px;margin:12px 0}

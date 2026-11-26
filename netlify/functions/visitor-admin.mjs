@@ -7,6 +7,7 @@ import {
   changeBuildingMaintenance, changeNotificationRecipients, listBuildingMaintenance, visitorRole, deleteVisit, exportVisits, idPhotoBackfill, listVisits, maintenanceSettings, notificationSettings, readPhoto, readVisit, recoverReceipt, saveMaintenanceSettings, saveNotificationSettings, sheetConnectionCheck, visitorCapability, visitorReadiness, visitorSettingsCapability,
   archiveManagedSite, createManagedSite, geocodeManagedSite, hideManagedSite, importSiteDetails, saveCompanyDetails, saveDefaultContactEmailSetting, savePickerTypeSetting, siteDetailCsv, siteDetailSettings, updateManagedOperatingModel, updateManagedSite,
 } from "../lib/visitor-log.mjs";
+import { visitScanStats } from "../lib/visit-scans.mjs";
 
 const PRIVATE = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
 const adminPayload = (result) => result.body || { error: result.error, ...(result.errors ? { errors: result.errors } : {}), ...(result.fields ? { fields: result.fields } : {}) };
@@ -76,6 +77,10 @@ export default async (req, context) => {
   }
   if (path === "/api/visitor-log/sites/geocode" && req.method === "GET") {
     const result = await geocodeManagedSite(actor, url.searchParams.get("address") || "");
+    return json(result.status, adminPayload(result), PRIVATE);
+  }
+  if (path === "/api/visitor-log/scan-stats" && req.method === "GET") {
+    const result = await visitScanStats(actor, url.searchParams.get("period"));
     return json(result.status, adminPayload(result), PRIVATE);
   }
   if (path === "/api/visitor-log/visits" && req.method === "GET") {

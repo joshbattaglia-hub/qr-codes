@@ -4,6 +4,7 @@ import {
   normalizeCode, publicCode, statsForList, groupedCountryStats, publicBase, healthStore,
 } from "../lib/lib.mjs";
 import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { isVisitScanSlug } from "../lib/visit-scan-paths.mjs";
 import { validateVoucher } from "../lib/vouchers.mjs";
 import { posterHtml } from "../lib/posters.mjs";
 
@@ -51,6 +52,7 @@ export default async (req, context) => {
     let s = String(body.slug || "").trim().toLowerCase();
     if (s) {
       if (!validSlug(s)) return json(400, { error: "Slug: 2–41 chars, a-z, 0-9 and hyphens" });
+      if (isVisitScanSlug(s)) return json(409, { error: "This slug is reserved for visitor scan analytics." });
       if (await store.get(s)) return json(409, { error: "Slug already in use" });
     } else {
       do s = gen(); while (await store.get(s));
@@ -78,6 +80,10 @@ export default async (req, context) => {
     const raw = await stats().get(codeSlug, { type: "json" });
     const health = await healthStore().get(codeSlug, { type: "json" }).catch(() => null);
     return json(200, { code: publicCode(existing, { logo: true }), stats: groupedCountryStats(raw), health: health || null });
+  }
+
+  if (isVisitScanSlug(codeSlug) && (req.method === "PATCH" || req.method === "DELETE")) {
+    return json(403, { error: "This visitor scan entry can't be changed or deleted. Sign-in and sign-out pages will keep working." });
   }
 
   if (req.method === "PATCH") {

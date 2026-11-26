@@ -2,6 +2,7 @@
   command = "echo static"
   publish = "public"
   functions = "netlify/functions"
+# Pretty visit URLs stay on these addresses. An edge function records scans, then this rewrite serves the HTML.
 [[redirects]]
   from = "/visit/sign-in"
   to = "/visit/sign-in.html"

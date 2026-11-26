@@ -1,7 +1,8 @@
 import { footerHtml, loadFooter } from "../lib/footer.mjs";
 import {
-  codes, stats, parseUA, readGeo, recordHit, resolveDestination, channelFor, dayKey, visitorHash, validUrl, normalizeCode,
+  codes, stats, parseUA, readGeo, recordHit, resolveDestination, channelFor, dayKey, visitorHash, validUrl, normalizeCode, publicBase,
 } from "../lib/lib.mjs";
+import { isVisitScanSlug, visitScanPublicPath } from "../lib/visit-scan-paths.mjs";
 
 const inactive = async () => {
   const foot = footerHtml(await loadFooter());
@@ -13,6 +14,10 @@ const inactive = async () => {
 
 export default async (req, context) => {
   const slug = (context.params?.slug || new URL(req.url).pathname.split("/").pop() || "").toLowerCase();
+  if (isVisitScanSlug(slug)) {
+    const path = visitScanPublicPath(slug);
+    return new Response(null, { status: 302, headers: { location: publicBase() + path, "cache-control": "no-store" } });
+  }
   const code = await codes().get(slug, { type: "json" }).catch(() => null);
   if (!code || code.paused) return inactive();
   const normalized = normalizeCode(code);
