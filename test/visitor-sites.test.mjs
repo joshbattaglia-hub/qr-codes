@@ -311,6 +311,13 @@ test("labels: visitors and admins see VEA Retail, LOC CA and Unattended, never t
   const app = fs.readFileSync("public/admin/app.js", "utf8");
   for (const t of ["VEA Retail sites", "All LOC CA sites", "Unattended sites", "LOC CA sites", ">VEA Retail</span>", "LOC CA site", ">Unattended</span>"]) assert.ok(app.includes(t), t);
   for (const t of [">Company sites<", "All commission agents", ">Liberty</span>", '"Commission agents"']) assert.ok(!app.includes(t), t);
+  assert.match(app, /Show on visitor sign-in/);
+  assert.match(app, /Shell Express \/ 24Xpress \(Unattended\)/);
+  assert.match(app, /VEA Retail \(retail sites\)/);
+  assert.match(app, /LOC CA \(retail sites\)/);
+  assert.match(app, /Include in CSV download/);
+  assert.match(app, /90 retail sites/);
+  assert.match(app, /actElRaw && actElRaw\.tagName === "FORM"/);
 });
 
 test("CSV import can add a new Unattended site after preview, and will not add a name that already exists", async () => {

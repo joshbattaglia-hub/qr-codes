@@ -271,6 +271,7 @@ tr.clickable:hover{background:var(--surface-hover)}
 .sites-filters{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:8px;margin:12px 0}
 .sites-filters .field{margin:0}
 .picker-type-checks{display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0}
+.sites-csv-download{margin-top:28px;padding-top:20px;border-top:1px solid var(--line)}
 .csv-type-presets{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0 0 8px}
 .csv-type-presets .text-btn{min-height:44px;min-width:44px;padding:8px 4px}
 .sites-sheet{min-width:1100px}

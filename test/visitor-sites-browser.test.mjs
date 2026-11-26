@@ -385,6 +385,12 @@ test("Sites CSV download has type ticks, defaults to Unattended (the picker type
   await boot();
   const p = await H.openPage(browser, owner, "visitors/sites", { w: 1440, h: 900, log: false });
   await p.waitForSelector('[data-testid="csv-types"]', { timeout: 8000 });
+  assert.equal(await p.$eval("#picker-types", (e) => e.textContent.trim()), "Show on visitor sign-in");
+  const pickerLabels = await p.$$eval('[data-testid="picker-types"] label', (els) => els.map((e) => e.textContent.replace(/\s+/g, " ").trim()));
+  assert.deepEqual(pickerLabels, ["Shell Express / 24Xpress (Unattended)", "VEA Retail (retail sites)", "LOC CA (retail sites)"]);
+  assert.match(await p.$eval("#picker-types + p", (e) => e.textContent), /90 retail sites/);
+  assert.equal(await p.$eval("#csv-download", (e) => e.textContent.trim()), "Include in CSV download");
+  assert.ok(await p.$('[data-testid="csv-download"]'), "the CSV ticks sit in a separate section");
   assert.equal(await p.$eval('[data-testid="csv-type-unattended"]', (e) => e.checked), true, "Unattended starts ticked, matching the picker");
   assert.equal(await p.$eval('[data-testid="csv-type-company"]', (e) => e.checked), false);
   assert.equal(await p.$eval('[data-testid="csv-type-commission_agent"]', (e) => e.checked), false);
