@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { clearCookie, env, identities, json, sitesStore } from "./lib.mjs";
 import { actorFrom, clearStaffCookie, hashPassword, jsonCookies, verifyPassword } from "./access.mjs";
+import { isOwner } from "./users.mjs";
 import { APPROVER_FACTS, PREPARER_CLASSES } from "./pos-approval.mjs";
 import { actorFromSession, readSession, rotateSession, sessionCookie } from "./entra.mjs";
 import { clearOtpCookie, deleteOtpSession, otpFromRequest } from "./otp.mjs";
@@ -80,6 +81,13 @@ export async function identityFromCookie(req) {
 }
 
 /** Entra wins, then an email-code session, then a fixture identity, then the shared password. Scopes are not combined. */
+/** The owner signed in with an email code has the same head-office tool rights as the head-office password. */
+export function officeActor(actor) {
+  if (!actor) return null;
+  if (isOwner(actor)) return { ...actor, role: "head", siteIds: null };
+  return actor;
+}
+
 export async function actorFromRequest(req) {
   const entra = await entraActor(req);
   if (entra.actor) return entra.actor;

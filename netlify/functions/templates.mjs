@@ -2,10 +2,14 @@ import crypto from "node:crypto";
 import {
   competitionsStore, json, pagesStore, publicBase, templatesStore, validSlug,
 } from "../lib/lib.mjs";
-import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFromRequest, officeActor } from "../lib/identity.mjs";
+import { previewReadOnly } from "../lib/preview-deploy.mjs";
 import { applyCompetitionPatch, defaultCompetition, publicCompetition } from "../lib/competitions.mjs";
 import { applyPagePatch, defaultPage, publicPage } from "../lib/pages.mjs";
 import { competitionSnapshot, pageSnapshot } from "../lib/templates.mjs";
+
+const PREVIEW_BLOCKED = "This is a preview for review. Nothing can be saved here.";
 
 const gen = () => Array.from(crypto.randomBytes(6), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
 
@@ -13,10 +17,12 @@ function publicTemplate(template) {
   return { id: template.id, name: template.name, kind: template.kind, siteId: template.siteId || "", created: template.created };
 }
 
-export default async (req) => {
+export default async (req, context) => {
   if (originBlocked(req)) return forbidden();
-  const actor = await actorFrom(req);
+  const actor = officeActor(await actorFromRequest(req));
   if (!actor) return unauthorised();
+  if (actor.role !== "head" && actor.role !== "manager") return forbidden();
+  if (previewReadOnly(req, context)) return json(403, { error: PREVIEW_BLOCKED });
   const path = new URL(req.url).pathname.replace(/\/+$/, "") || "/";
   const store = templatesStore();
   if (path === "/api/templates" && req.method === "GET") {

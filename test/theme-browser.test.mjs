@@ -68,7 +68,8 @@ test("themes in a real browser: toggle, keyboard, per-account memory, early appl
         if (u.pathname === "/api/warehouse") return via(await wh.warehouseOverview(actor));
         if (u.pathname === "/api/warehouse/sheets" && r.method() === "POST") return via(await wh.issueSheet(actor, JSON.parse(r.postData() || "{}")));
         if (u.pathname === "/api/tickets/access") return send(403, { role: "none" });
-        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts") return send(200, []);
+        if (u.pathname === "/api/sites" || u.pathname === "/api/pos-drafts" || u.pathname === "/api/pages" || u.pathname === "/api/codes" || u.pathname === "/api/competitions" || u.pathname === "/api/templates") return send(200, []);
+        if (u.pathname === "/api/settings") return send(200, { workspaceName: "Liberty", defaultFg: "#111827", defaultBg: "#ffffff", publicUrl: "https://expresshelp.site" });
         if (u.pathname.startsWith("/api/")) return send(403, { error: "Forbidden" });
         const file = u.pathname === "/admin/" ? "public/admin/index.html" : "public" + u.pathname;
         if (fs.existsSync(file) && fs.statSync(file).isFile()) return r.respond({ contentType: file.endsWith(".css") ? "text/css" : /\.m?js$/.test(file) ? "text/javascript" : file.endsWith(".woff2") ? "font/woff2" : "text/html", body: fs.readFileSync(file) });

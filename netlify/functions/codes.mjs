@@ -3,10 +3,14 @@ import {
   codes, stats, json, validSlug, readSettings, buildCode, applyPatch,
   normalizeCode, publicCode, statsForList, groupedCountryStats, publicBase, healthStore,
 } from "../lib/lib.mjs";
-import { actorFrom, assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { assignmentResponse, assignSite, canSeeSite, forbidden, originBlocked, siteOf, unauthorised } from "../lib/access.mjs";
+import { actorFromRequest, officeActor } from "../lib/identity.mjs";
+import { previewReadOnly } from "../lib/preview-deploy.mjs";
 import { isVisitScanSlug } from "../lib/visit-scan-paths.mjs";
 import { validateVoucher } from "../lib/vouchers.mjs";
 import { posterHtml } from "../lib/posters.mjs";
+
+const PREVIEW_BLOCKED = "This is a preview for review. Nothing can be saved here.";
 
 const gen = () => Array.from(crypto.randomBytes(6), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
 
@@ -23,8 +27,10 @@ export default async (req, context) => {
   const oneMatch = path.match(/^\/api\/codes\/([^/]+)$/);
   const codeSlug = decodeURIComponent((posterMatch || oneMatch)?.[1] || "").toLowerCase();
   if (originBlocked(req)) return forbidden();
-  const actor = await actorFrom(req);
+  const actor = officeActor(await actorFromRequest(req));
   if (!actor) return unauthorised();
+  if (actor.role !== "head" && actor.role !== "manager") return forbidden();
+  if (previewReadOnly(req, context)) return json(403, { error: PREVIEW_BLOCKED });
 
   if (req.method === "GET" && path === "/api/codes") {
     const { blobs } = await store.list();
