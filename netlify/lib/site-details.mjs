@@ -122,7 +122,7 @@ export async function readCompany() {
 }
 export async function saveCompany(body) {
   const abn = normaliseAbn(body?.abn);
-  if (abn === null) return { status: 400, error: "That ABN is not valid. It needs 11 digits that pass the ABN check." };
+  if (abn === null) return { status: 400, error: "That ABN is not valid. It needs 11 digits that pass the ABN check.", fields: { abn: "That ABN is not valid. It needs 11 digits that pass the ABN check." } };
   const tradingName = clean(body?.tradingName, 120);
   const next = { abn, tradingName, updatedAt: new Date(clock()).toISOString() };
   await settingsStore().setJSON(COMPANY_KEY, next);
@@ -192,7 +192,7 @@ export async function readDefaultContactEmail() {
 export async function saveDefaultContactEmail(body) {
   const raw = body?.email != null ? body.email : body?.contactEmail;
   const email = normaliseContactEmail(raw);
-  if (email === null) return { status: 400, error: "That email is not valid." };
+  if (email === null) return { status: 400, error: "That email is not valid.", fields: { email: "That email is not valid." } };
   const next = { email: email || DEFAULT_CONTACT_EMAIL, updatedAt: new Date(clock()).toISOString() };
   if (email === CONTACT_EMAIL_HIDDEN) next.email = CONTACT_EMAIL_HIDDEN;
   await settingsStore().setJSON(CONTACT_EMAIL_KEY, next);
@@ -661,6 +661,33 @@ export function parseSiteInput(body) {
   return { errors, name, loc, fields: { siteType, tradingName, abn, phone, contactEmail, address, lat, lng } };
 }
 
+
+/** Map parse or uniqueness messages onto form field names for inline errors. */
+export function fieldsFromSiteErrors(errors) {
+  const fields = {};
+  for (const msg of errors || []) {
+    if (!msg) continue;
+    if (/ABN is not valid/i.test(msg)) fields.abn = msg;
+    else if (/phone number is not valid/i.test(msg)) fields.phone = msg;
+    else if (/contact email is not valid/i.test(msg)) fields.contactEmail = msg;
+    else if (/^That email is not valid/i.test(msg)) fields.email = msg;
+    else if (/lat\/lng must both/i.test(msg)) { fields.lat = msg; fields.lng = msg; }
+    else if (/site name is required|already uses that name|name already exists/i.test(msg)) fields.name = msg;
+    else if (/already uses that site number|site number already exists|site number was taken/i.test(msg)) fields.loc = msg;
+    else if (/Type must be|Choose a site type/i.test(msg)) fields.siteType = msg;
+  }
+  return fields;
+}
+
+function inputErrorResult(parsed, extra = []) {
+  const errors = [...parsed.errors, ...extra];
+  return { status: 400, error: errors[0], errors, fields: fieldsFromSiteErrors(errors) };
+}
+
+function clashResult(clash) {
+  return { status: 409, error: clash, fields: fieldsFromSiteErrors([clash]) };
+}
+
 async function uniquenessError(id, name, loc) {
   const records = await allSiteRecords();
   const nameKey = clean(name, 120).toLowerCase();
@@ -710,14 +737,14 @@ function applyFields(site, parsed) {
 export async function createVisitorSite(body) {
   const parsed = parseSiteInput(body);
   if (!parsed.fields.siteType) parsed.errors.push("Choose a site type.");
-  if (parsed.errors.length) return { status: 400, error: parsed.errors[0], errors: parsed.errors };
+  if (parsed.errors.length) return inputErrorResult(parsed);
   const clash = await uniquenessError("", parsed.name, parsed.loc);
-  if (clash) return { status: 409, error: clash };
+  if (clash) return clashResult(clash);
   const store = sitesStore();
   const id = await allocateSiteId(store);
   if (!id) return { status: 500, error: "Could not allocate a new site id." };
   const gateError = await setLocGate(store, id, parsed.loc);
-  if (gateError) return { status: 409, error: gateError };
+  if (gateError) return clashResult(gateError);
   const now = new Date(clock()).toISOString();
   const site = applyFields({ id, created: now }, parsed);
   const saved = await store.setJSON(id, site, { onlyIfNew: true });
@@ -736,12 +763,12 @@ export async function updateVisitorSite(id, body) {
   if (current.hold) return { status: 400, error: "Held sites are managed in the head-office site import, not here." };
   const parsed = parseSiteInput(body);
   if (!parsed.fields.siteType) parsed.errors.push("Choose a site type.");
-  if (parsed.errors.length) return { status: 400, error: parsed.errors[0], errors: parsed.errors };
+  if (parsed.errors.length) return inputErrorResult(parsed);
   const clash = await uniquenessError(current.id, parsed.name, parsed.loc);
-  if (clash) return { status: 409, error: clash };
+  if (clash) return clashResult(clash);
   const store = sitesStore();
   const gateError = await setLocGate(store, current.id, parsed.loc, current.loc);
-  if (gateError) return { status: 409, error: gateError };
+  if (gateError) return clashResult(gateError);
   const next = applyFields(current, parsed);
   await store.setJSON(current.id, next);
   cache = null;

@@ -116,6 +116,7 @@ test("public site directory: the visitor picker lists only Unattended sites, not
 test("company details: owner-only setting, ABN checked, saved centrally and shown on every company site", async () => {
   const bad = await j(H.call("POST", "/api/visitor-log/company", { cookie: owner, body: { abn: "51 824 753 557", tradingName: "X" } }));
   assert.equal(bad.status, 400);
+  assert.equal(bad.body.fields.abn, "That ABN is not valid. It needs 11 digits that pass the ABN check.");
   const anon = await j(H.call("POST", "/api/visitor-log/company", { body: { abn: SYN_LIBERTY_ABN } }));
   assert.equal(anon.status, 401);
   const ok = await j(H.call("POST", "/api/visitor-log/company", { cookie: owner, body: { abn: "51824753556", tradingName: "Synthetic Liberty Trading" } }));
@@ -742,4 +743,18 @@ test("contact email CSV: new column, blank keeps, CLEAR reverts to default, HIDE
   const dl = await j(H.call("GET", "/api/visitor-log/site-details.csv?types=unattended", { cookie: owner }));
   assert.equal(dl.body.split("\n")[0], sd.CSV_COLUMNS.join(","));
   assert.ok(dl.body.split("\n")[0].includes("contact_email"));
+});
+
+test("site and company APIs return a fields map so the admin can show ABN errors under the field", async () => {
+  const company = await j(H.call("POST", "/api/visitor-log/company", { cookie: owner, body: { abn: "99702180390", tradingName: "X" } }));
+  assert.equal(company.status, 400);
+  assert.equal(company.body.fields.abn, "That ABN is not valid. It needs 11 digits that pass the ABN check.");
+  assert.match(company.body.error, /ABN is not valid/);
+  const site = await j(H.call("POST", "/api/visitor-log/sites/s00000a06", { cookie: owner, body: { name: "Synthetic Unattended Moe", siteType: "unattended", abn: "99702180390" } }));
+  assert.equal(site.status, 400);
+  assert.equal(site.body.fields.abn, "That ABN is not valid. It needs 11 digits that pass the ABN check.");
+  assert.ok(Array.isArray(site.body.errors) && site.body.errors[0].includes("ABN"));
+  const phone = await j(H.call("POST", "/api/visitor-log/sites/s00000a06", { cookie: owner, body: { name: "Synthetic Unattended Moe", siteType: "unattended", phone: "not-a-phone" } }));
+  assert.equal(phone.status, 400);
+  assert.equal(phone.body.fields.phone, "That phone number is not valid.");
 });
